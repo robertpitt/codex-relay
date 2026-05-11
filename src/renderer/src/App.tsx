@@ -43,6 +43,12 @@ import type {
   TicketSummary,
   TicketType
 } from "@shared/types";
+import {
+  resolveTicketBlockers,
+  resolvedBlockerLabel,
+  ticketBlockerOptionLabel,
+  ticketContextLabel
+} from "@shared/blockers";
 import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "./components/AgentActivity";
 import { ClarificationPanel } from "./components/ClarificationPanel";
 import { GitMetadataPill, loadingGitMetadata } from "./components/GitMetadata";
@@ -202,6 +208,9 @@ const linesFromInput = (value: string): string[] =>
   value.split("\n");
 
 const linesToInput = (items: string[]): string => items.join("\n");
+
+const sameStringArray = (left: string[], right: string[]): boolean =>
+  left.length === right.length && left.every((item, index) => item === right[index]);
 
 const manualSubticketMarkdown = (childTitle: string, parentTitle: string): string => `# ${childTitle}
 
@@ -390,6 +399,8 @@ export function ProjectSidebar({
 function DroppableColumn({
   column,
   tickets,
+  allTickets,
+  columns,
   selectedTicketId,
   onOpen,
   onTicketFocus,
@@ -397,6 +408,8 @@ function DroppableColumn({
 }: {
   column: RelayColumn;
   tickets: TicketSummary[];
+  allTickets: TicketSummary[];
+  columns: RelayColumn[];
   selectedTicketId: string | null;
   onOpen: (ticketId: string) => void;
   onTicketFocus: (ticketId: string) => void;
@@ -415,6 +428,8 @@ function DroppableColumn({
           <DraggableCard
             key={ticket.id}
             ticket={ticket}
+            allTickets={allTickets}
+            columns={columns}
             selected={ticket.id === selectedTicketId}
             onOpen={onOpen}
             onFocus={onTicketFocus}
@@ -434,12 +449,16 @@ function DroppableColumn({
 
 function DraggableCard({
   ticket,
+  allTickets,
+  columns,
   selected,
   onOpen,
   onFocus,
   onTicketButtonRef
 }: {
   ticket: TicketSummary;
+  allTickets: TicketSummary[];
+  columns: RelayColumn[];
   selected: boolean;
   onOpen: (ticketId: string) => void;
   onFocus: (ticketId: string) => void;
@@ -453,6 +472,8 @@ function DraggableCard({
   const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
   const showRunStatus = ticket.runStatus !== "idle";
   const showRelationship = ticket.ticketType === "epic" || Boolean(ticket.parentEpicId);
+  const blockerState = useMemo(() => resolveTicketBlockers(ticket, allTickets, columns), [allTickets, columns, ticket]);
+  const showBlockerState = blockerState.isBlocked || blockerState.warnings.length > 0;
   return (
     <article ref={setNodeRef} style={style} className={clsx("ticket-card", isDragging && "dragging", selected && "keyboard-selected")}>
       <button
@@ -464,10 +485,20 @@ function DraggableCard({
       >
         <div className="card-title">{ticket.title}</div>
         <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
-        {(showRelationship || showPriority || showRunStatus) && (
+        {(showRelationship || showPriority || showRunStatus || showBlockerState) && (
           <div className="card-meta">
             {ticket.ticketType === "epic" && <span className="ticket-type-pill epic">Epic</span>}
             {ticket.parentEpicId && <span className="ticket-type-pill subticket">Subticket</span>}
+            {blockerState.isBlocked && (
+              <span className="ticket-blocker-pill active" title={blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
+                Blocked
+              </span>
+            )}
+            {blockerState.warnings.length > 0 && (
+              <span className="ticket-blocker-pill warning" title={blockerState.warnings.join(" ")}>
+                Blocker Warning
+              </span>
+            )}
             {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
             {showRunStatus && <span className={clsx("run-pill", ticket.runStatus)}>{runLabel(ticket.runStatus)}</span>}
           </div>
@@ -650,6 +681,8 @@ function BoardView({
               key={column.id}
               column={column}
               tickets={orderedTickets.filter((ticket) => ticket.status === column.id)}
+              allTickets={board.tickets}
+              columns={board.columns}
               selectedTicketId={selectedTicketId}
               onOpen={onOpenTicket}
               onTicketFocus={setSelectedTicketId}
@@ -1345,6 +1378,7 @@ function TicketDetail({
   const [priority, setPriority] = useState<TicketPriority>("medium");
   const [status, setStatus] = useState("todo");
   const [labels, setLabels] = useState("");
+  const [blockedByIds, setBlockedByIds] = useState<string[]>([]);
   const [markdown, setMarkdown] = useState("");
   const [busy, setBusy] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
@@ -1385,6 +1419,7 @@ function TicketDetail({
       setPriority(record.frontMatter.priority);
       setStatus(record.frontMatter.status);
       setLabels(record.frontMatter.labels.join(", "));
+      setBlockedByIds(record.frontMatter.blockedByIds ?? []);
       setMarkdown(record.markdown);
       setRunId(record.frontMatter.lastRunId);
       setClarifications(questions);
@@ -1396,6 +1431,7 @@ function TicketDetail({
       setTicket(null);
       setClarifications([]);
       setPersistedEvents([]);
+      setBlockedByIds([]);
       setDetailError(message);
       setToast({ kind: "error", message });
     }
@@ -1421,6 +1457,7 @@ function TicketDetail({
     setNewSubticketLabels("");
     setLinkSubticketId("");
     setSubticketBusy(false);
+    setBlockedByIds([]);
   }, [projectPath, ticketId]);
 
   useEffect(() => {
@@ -1495,6 +1532,20 @@ function TicketDetail({
     () => (ticket?.frontMatter.parentEpicId ? board.tickets.find((item) => item.id === ticket.frontMatter.parentEpicId) ?? null : null),
     [board.tickets, ticket?.frontMatter.parentEpicId]
   );
+  const parentEpicBlockers = useMemo(
+    () => (parentEpic ? resolveTicketBlockers(parentEpic, board.tickets, board.columns) : null),
+    [board.columns, board.tickets, parentEpic]
+  );
+  const blockerResolution = useMemo(
+    () => (ticket ? resolveTicketBlockers({ id: ticket.frontMatter.id, blockedByIds }, board.tickets, board.columns) : null),
+    [blockedByIds, board.columns, board.tickets, ticket]
+  );
+  const blockerCandidates = useMemo(() => {
+    if (!ticket) return [];
+    return board.tickets
+      .filter((item) => item.id !== ticket.frontMatter.id)
+      .sort((a, b) => ticketBlockerOptionLabel(a, board.tickets, board.columns).localeCompare(ticketBlockerOptionLabel(b, board.tickets, board.columns)));
+  }, [board.columns, board.tickets, ticket]);
   const linkableTickets = useMemo(() => {
     if (!ticket || ticket.frontMatter.ticketType !== "epic") return [];
     const linkedIds = new Set(linkedSubtickets.map((item) => item.id));
@@ -1556,11 +1607,13 @@ function TicketDetail({
       priority !== ticket.frontMatter.priority ||
       status !== ticket.frontMatter.status ||
       labels !== ticket.frontMatter.labels.join(", ") ||
+      !sameStringArray(blockedByIds, ticket.frontMatter.blockedByIds ?? []) ||
       markdown !== ticket.markdown ||
       Object.values(answerDrafts).some((answer) => answer.trim().length > 0)
     );
   }, [
     answerDrafts,
+    blockedByIds,
     busy,
     labels,
     linkSubticketId,
@@ -1592,6 +1645,10 @@ function TicketDetail({
 
   const save = async (): Promise<void> => {
     if (!ticket) return;
+    if (blockerResolution && blockerResolution.selfBlockerIds.length > 0) {
+      setToast({ kind: "error", message: "Remove the self blocker before saving this ticket." });
+      return;
+    }
     setBusy(true);
     try {
       await getRelayApi().ticket.save({
@@ -1604,7 +1661,8 @@ function TicketDetail({
             title,
             priority,
             status,
-            labels: labelsFromInput(labels)
+            labels: labelsFromInput(labels),
+            blockedByIds
           }
         }
       });
@@ -1706,6 +1764,16 @@ function TicketDetail({
       const cursor = ticketUpdateInputRef.current?.value.length ?? 0;
       ticketUpdateInputRef.current?.setSelectionRange(cursor, cursor);
     });
+  };
+
+  const toggleBlocker = (blockerId: string): void => {
+    setBlockedByIds((current) =>
+      current.includes(blockerId) ? current.filter((candidate) => candidate !== blockerId) : [...current, blockerId]
+    );
+  };
+
+  const removeBlocker = (blockerId: string): void => {
+    setBlockedByIds((current) => current.filter((candidate) => candidate !== blockerId));
   };
 
   const cancelRun = async (): Promise<void> => {
@@ -1851,7 +1919,14 @@ function TicketDetail({
       <aside className="detail-panel">
         <header className="detail-header">
           <div>
-            <span className={clsx("run-pill", ticket.frontMatter.runStatus)}>{runLabel(ticket.frontMatter.runStatus)}</span>
+            <div className="detail-status-row">
+              <span className={clsx("run-pill", ticket.frontMatter.runStatus)}>{runLabel(ticket.frontMatter.runStatus)}</span>
+              {blockerResolution?.isBlocked && (
+                <span className="ticket-blocker-pill active" title={blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
+                  Blocked
+                </span>
+              )}
+            </div>
             <h2>{ticket.frontMatter.title}</h2>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close ticket detail">
@@ -1914,6 +1989,94 @@ function TicketDetail({
           </div>
         )}
 
+        {blockerResolution?.isBlocked && (
+          <div className="ticket-update-error warning" role="alert">
+            <AlertTriangle size={16} />
+            <span>
+              Blocked by {blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before starting
+              Codex.
+            </span>
+          </div>
+        )}
+
+        {blockerResolution && blockerResolution.warnings.length > 0 && (
+          <div className="ticket-update-error warning" role="status">
+            <AlertTriangle size={16} />
+            <span>{blockerResolution.warnings.join(" ")}</span>
+          </div>
+        )}
+
+        <section className="epic-link-panel blocker-panel">
+          <header>
+            <h3>Blockers</h3>
+            {blockerResolution?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+          </header>
+          <div className="blocker-summary-list">
+            {blockedByIds.length === 0 ? (
+              <p>No blockers selected.</p>
+            ) : (
+              <>
+                {blockerResolution?.resolvedBlockers.map((blocker) => (
+                  <div className={clsx("blocker-row", blocker.active && "active")} key={blocker.id}>
+                    <button className="blocker-main" onClick={() => onOpenTicket(blocker.id)}>
+                      <strong>{blocker.title}</strong>
+                      <span>{blocker.contextLabel}</span>
+                      <em>{blocker.columnName}</em>
+                    </button>
+                    <button className="icon-button" onClick={() => removeBlocker(blocker.id)} aria-label={`Remove ${blocker.title} blocker`}>
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+                {blockerResolution?.missingBlockerIds.map((blockerId) => (
+                  <div className="blocker-row warning" key={blockerId}>
+                    <div className="blocker-main static">
+                      <strong>{blockerId}</strong>
+                      <span>Missing blocker reference</span>
+                      <em>Warning</em>
+                    </div>
+                    <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label={`Remove missing blocker ${blockerId}`}>
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+                {blockerResolution?.selfBlockerIds.map((blockerId) => (
+                  <div className="blocker-row warning" key={blockerId}>
+                    <div className="blocker-main static">
+                      <strong>{blockerId}</strong>
+                      <span>Self blocker reference</span>
+                      <em>Invalid</em>
+                    </div>
+                    <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label="Remove self blocker">
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+          <div className="blocker-picker" role="group" aria-label="Ticket blockers">
+            {blockerCandidates.length === 0 ? (
+              <p>No other tickets available.</p>
+            ) : (
+              blockerCandidates.map((candidate) => (
+                <label className={clsx("blocker-option", blockedByIds.includes(candidate.id) && "selected")} key={candidate.id}>
+                  <input
+                    type="checkbox"
+                    checked={blockedByIds.includes(candidate.id)}
+                    onChange={() => toggleBlocker(candidate.id)}
+                  />
+                  <span>
+                    <strong>{candidate.title}</strong>
+                    <small>{ticketContextLabel(candidate, board.tickets)}</small>
+                  </span>
+                  <em>{statusName(board.columns, candidate.status)}</em>
+                </label>
+              ))
+            )}
+          </div>
+        </section>
+
         {parentEpic && (
           <section className="epic-link-panel">
             <header>
@@ -1922,6 +2085,8 @@ function TicketDetail({
             <button className="subticket-row parent" onClick={() => onOpenTicket(parentEpic.id)}>
               <strong>{parentEpic.title}</strong>
               <span>{statusName(board.columns, parentEpic.status)}</span>
+              {parentEpicBlockers?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+              {parentEpicBlockers && parentEpicBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
               <em className={clsx("priority", parentEpic.priority)}>{parentEpic.priority}</em>
             </button>
           </section>
@@ -1940,23 +2105,28 @@ function TicketDetail({
               {linkedSubtickets.length === 0 ? (
                 <p>No subtickets linked.</p>
               ) : (
-                linkedSubtickets.map((subticket) => (
-                  <div className="subticket-item" key={subticket.id}>
-                    <button className="subticket-row" onClick={() => onOpenTicket(subticket.id)}>
-                      <strong>{subticket.title}</strong>
-                      <span>{statusName(board.columns, subticket.status)}</span>
-                      <em className={clsx("priority", subticket.priority)}>{subticket.priority}</em>
-                    </button>
-                    <button
-                      className="icon-button"
-                      onClick={() => void unlinkChildTicket(subticket.id)}
-                      disabled={subticketBusy}
-                      aria-label={`Unlink ${subticket.title}`}
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                ))
+                linkedSubtickets.map((subticket) => {
+                  const subticketBlockers = resolveTicketBlockers(subticket, board.tickets, board.columns);
+                  return (
+                    <div className="subticket-item" key={subticket.id}>
+                      <button className="subticket-row" onClick={() => onOpenTicket(subticket.id)}>
+                        <strong>{subticket.title}</strong>
+                        <span>{statusName(board.columns, subticket.status)}</span>
+                        {subticketBlockers.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+                        {subticketBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
+                        <em className={clsx("priority", subticket.priority)}>{subticket.priority}</em>
+                      </button>
+                      <button
+                        className="icon-button"
+                        onClick={() => void unlinkChildTicket(subticket.id)}
+                        disabled={subticketBusy}
+                        aria-label={`Unlink ${subticket.title}`}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
             {addTicketsOpen && (
@@ -1994,7 +2164,7 @@ function TicketDetail({
                       <option value="">{linkableTickets.length === 0 ? "No available task tickets" : "Select a ticket"}</option>
                       {linkableTickets.map((candidate) => (
                         <option value={candidate.id} key={candidate.id}>
-                          {candidate.title}
+                          {ticketBlockerOptionLabel(candidate, board.tickets, board.columns)}
                         </option>
                       ))}
                     </select>

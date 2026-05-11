@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krc2jhhsq5p6ngv45qdff683
 title: Audit and tighten TypeScript typing across Relay core boundaries
 ticketType: task
-status: review
-position: 1000
+status: completed
+position: 32000
 priority: medium
 labels:
   - typescript
@@ -14,7 +14,7 @@ labels:
 parentEpicId: null
 subticketIds: []
 createdAt: '2026-05-11T17:50:18.681Z'
-updatedAt: '2026-05-11T18:04:26.539Z'
+updatedAt: '2026-05-11T18:08:58.267Z'
 codexThreadId: 019e1829-aa6f-74e2-a32c-49ffcbebd3e3
 runStatus: completed
 lastRunId: run_01krc2kag9q3mygxazdjmvazxz

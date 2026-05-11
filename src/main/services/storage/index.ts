@@ -30,6 +30,7 @@ import {
   type TicketSummary,
   type TicketType
 } from "../../../shared/types";
+import { uniqueTicketIds } from "../../../shared/blockers";
 import { BackendClock, type BackendEffect, runBackendEffect } from "../runtime";
 import { showElectronItemInFolder } from "../../electron";
 import {
@@ -340,25 +341,14 @@ export const readBoard = async (projectPath: string, lastOpenedAt?: string): Pro
   };
 };
 
-const uniqueTicketIds = (ticketIds: string[]): string[] => {
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const ticketId of ticketIds) {
-    const trimmed = ticketId.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    unique.push(trimmed);
-  }
-  return unique;
-};
-
 const normalizeFrontMatterRelationships = (frontMatter: TicketFrontMatter): TicketFrontMatter => {
   const ticketType = frontMatter.ticketType ?? "task";
   return {
     ...frontMatter,
     ticketType,
     parentEpicId: ticketType === "epic" ? null : frontMatter.parentEpicId ?? null,
-    subticketIds: ticketType === "epic" ? uniqueTicketIds(frontMatter.subticketIds ?? []) : []
+    subticketIds: ticketType === "epic" ? uniqueTicketIds(frontMatter.subticketIds ?? []) : [],
+    blockedByIds: uniqueTicketIds(frontMatter.blockedByIds ?? [])
   };
 };
 
@@ -374,6 +364,9 @@ const assertRelationshipShape = (frontMatter: TicketFrontMatter): void => {
   }
   if (frontMatter.ticketType === "epic" && frontMatter.subticketIds.includes(frontMatter.id)) {
     throw new Error("An epic cannot include itself as a subticket.");
+  }
+  if (frontMatter.blockedByIds.includes(frontMatter.id)) {
+    throw new Error("A ticket cannot block itself.");
   }
 };
 
@@ -609,9 +602,10 @@ const createSingleTicket = async (projectPath: string, input: TicketCreateInput)
   const board = await readBoard(projectPath);
   const lastPosition = Math.max(0, ...board.tickets.filter((ticket) => ticket.status === status).map((ticket) => ticket.position));
   const createdAt = nowIso();
+  const id = newId("tkt");
   const frontMatter: TicketFrontMatter = {
     schemaVersion: RELAY_SCHEMA_VERSION,
-    id: newId("tkt"),
+    id,
     title: input.title.trim(),
     ticketType,
     status,
@@ -620,6 +614,7 @@ const createSingleTicket = async (projectPath: string, input: TicketCreateInput)
     labels: input.labels.map((label) => label.trim()).filter(Boolean),
     parentEpicId: ticketType === "task" ? input.parentEpicId ?? null : null,
     subticketIds: [],
+    blockedByIds: uniqueTicketIds(input.blockedByIds ?? []),
     createdAt,
     updatedAt: createdAt,
     codexThreadId: null,
@@ -1011,7 +1006,8 @@ export const duplicateTicket = async (projectPath: string, ticketId: string): Pr
     labels: source.frontMatter.labels,
     markdown: source.markdown,
     status: source.frontMatter.status,
-    ticketType: source.frontMatter.ticketType
+    ticketType: source.frontMatter.ticketType,
+    blockedByIds: source.frontMatter.blockedByIds
   });
 };
 

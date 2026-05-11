@@ -105,6 +105,7 @@ export type TicketFrontMatter = {
   labels: string[];
   parentEpicId: string | null;
   subticketIds: string[];
+  blockedByIds: string[];
   createdAt: string;
   updatedAt: string;
   codexThreadId: string | null;
@@ -255,6 +256,7 @@ export type SubticketCreateInput = {
   labels: string[];
   markdown: string;
   status?: string;
+  blockedByIds?: string[];
 };
 
 export type TicketCreateInput = SubticketCreateInput & {

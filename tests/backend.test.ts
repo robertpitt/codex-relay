@@ -277,6 +277,99 @@ lastRunId:
   assert.equal(legacy.ticketType, "task");
   assert.equal(legacy.parentEpicId, null);
   assert.deepEqual(legacy.subticketIds, []);
+  assert.deepEqual(legacy.blockedByIds, []);
+});
+
+test("ticket blocker metadata persists and rejects direct self blockers", async () => {
+  const projectPath = await createProject();
+  const blocker = await createTicket(projectPath, {
+    title: "Blocker ticket",
+    priority: "medium",
+    labels: [],
+    markdown: "# Blocker ticket\n"
+  });
+  const blocked = await createTicket(projectPath, {
+    title: "Blocked ticket",
+    priority: "medium",
+    labels: [],
+    markdown: "# Blocked ticket\n",
+    blockedByIds: [blocker.frontMatter.id]
+  });
+
+  const reloaded = await readTicket(projectPath, blocked.frontMatter.id);
+  assert.deepEqual(reloaded.frontMatter.blockedByIds, [blocker.frontMatter.id]);
+  assert.equal((await readBoard(projectPath)).tickets.find((ticket) => ticket.id === blocked.frontMatter.id)?.blockedByIds[0], blocker.frontMatter.id);
+
+  await assert.rejects(
+    writeTicket(projectPath, {
+      ...reloaded,
+      frontMatter: {
+        ...reloaded.frontMatter,
+        blockedByIds: [reloaded.frontMatter.id]
+      }
+    }),
+    /cannot block itself/
+  );
+});
+
+test("codex preflight blocks active blockers and allows terminal blockers", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    columns: [
+      ...config.columns,
+      {
+        id: "blocked_done",
+        name: "Blocked Done",
+        position: 7000,
+        terminal: true
+      }
+    ]
+  });
+  const blocker = await createTicket(projectPath, {
+    title: "Finish first",
+    priority: "high",
+    labels: [],
+    markdown: "# Finish first\n"
+  });
+  const blocked = await createTicket(projectPath, {
+    title: "Wait for blocker",
+    priority: "medium",
+    labels: [],
+    markdown: "# Wait for blocker\n",
+    blockedByIds: [blocker.frontMatter.id]
+  });
+
+  const blockedPreflight = await preflightCodexRun({ projectPath, ticketId: blocked.frontMatter.id });
+  assert.equal(blockedPreflight.ok, false);
+  assert.match(blockedPreflight.errors.join(" "), /Blocked by active blocker/);
+  assert.match(blockedPreflight.errors.join(" "), /Finish first/);
+  assert.match(blockedPreflight.errors.join(" "), /Todo/);
+
+  await moveTicket({ projectPath, ticketId: blocker.frontMatter.id, targetStatus: "blocked_done" });
+  const unblockedPreflight = await preflightCodexRun({ projectPath, ticketId: blocked.frontMatter.id });
+  assert.equal(unblockedPreflight.ok, true);
+});
+
+test("missing blocker references warn without crashing board or preflight", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const ticket = await createTicket(projectPath, {
+    title: "Stale blocker",
+    priority: "medium",
+    labels: [],
+    markdown: "# Stale blocker\n",
+    blockedByIds: ["tkt_missing_blocker"]
+  });
+
+  const board = await readBoard(projectPath);
+  assert.equal(board.tickets.find((item) => item.id === ticket.frontMatter.id)?.blockedByIds[0], "tkt_missing_blocker");
+
+  const preflight = await preflightCodexRun({ projectPath, ticketId: ticket.frontMatter.id });
+  assert.equal(preflight.ok, true);
+  assert.match(preflight.warnings.join(" "), /Missing blocker reference/);
 });
 
 test("project summaries include ordered swimlane counts including empty lanes", async () => {

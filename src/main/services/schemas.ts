@@ -108,6 +108,7 @@ export const ticketFrontMatterSchema = z
     labels: z.array(z.string()).default([]),
     parentEpicId: z.string().nullable().default(null),
     subticketIds: z.array(z.string()).default([]),
+    blockedByIds: z.array(z.string()).default([]),
     createdAt: isoString,
     updatedAt: isoString,
     codexThreadId: z.string().nullable().default(null),
@@ -275,7 +276,8 @@ export const subticketCreateInputSchema = z
     priority: ticketPrioritySchema,
     labels: z.array(z.string()).default([]),
     markdown: z.string(),
-    status: z.string().optional()
+    status: z.string().optional(),
+    blockedByIds: z.array(z.string()).optional()
   })
   .passthrough() satisfies z.ZodType<SubticketCreateInput, z.ZodTypeDef, unknown>;
 

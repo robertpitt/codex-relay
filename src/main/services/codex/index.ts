@@ -26,6 +26,7 @@ import {
   type TicketDraftErrorCode,
   type TicketDraftErrorPayload
 } from "../../../shared/types";
+import { resolvedBlockerLabel, resolveTicketBlockers } from "../../../shared/blockers";
 import { extractClarificationRequest } from "../clarificationParser";
 import { type BackendEffect, type BackendServices, fromPromise, runBackendEffect } from "../runtime";
 import {
@@ -46,6 +47,7 @@ import {
   isGitRepository,
   newId,
   readClarificationQuestions,
+  readBoard,
   readProjectConfig,
   readTicket,
   ticketMarkdownFromDraft,
@@ -1035,6 +1037,20 @@ export const preflightCodexRun = async (input: StartRunInput): Promise<CodexRunP
     }
     if (ticket.frontMatter.ticketType === "epic") {
       errors.push("Epics are planning containers. Start Codex from a child task ticket instead.");
+    }
+
+    const board = await readBoard(projectPath);
+    const blockerState = resolveTicketBlockers(ticket.frontMatter, board.tickets, config.columns);
+    if (blockerState.selfBlockerIds.length > 0) {
+      errors.push("Ticket blocker metadata is invalid: a ticket cannot block itself.");
+    }
+    if (blockerState.activeBlockers.length > 0) {
+      errors.push(
+        `Blocked by active blocker(s): ${blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before starting Codex.`
+      );
+    }
+    if (blockerState.missingBlockerIds.length > 0) {
+      warnings.push(`Missing blocker reference(s): ${blockerState.missingBlockerIds.join(", ")}.`);
     }
 
     const activeRunId = activeRunIdForTicket(projectPath, ticketId);
