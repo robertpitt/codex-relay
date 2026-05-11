@@ -9,6 +9,7 @@ export const DEFAULT_COLUMNS: RelayColumn[] = [
 ];
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
+export type TicketType = "task" | "epic";
 export type RunStatus = "idle" | "drafting" | "running" | "blocked" | "failed" | "completed" | "cancelled";
 export type ProjectHealth = "ok" | "warning" | "error";
 export type ThemePreference = "system" | "light" | "dark";
@@ -90,10 +91,13 @@ export type TicketFrontMatter = {
   schemaVersion: number;
   id: string;
   title: string;
+  ticketType: TicketType;
   status: string;
   position: number;
   priority: TicketPriority;
   labels: string[];
+  parentEpicId: string | null;
+  subticketIds: string[];
   createdAt: string;
   updatedAt: string;
   codexThreadId: string | null;
@@ -134,7 +138,7 @@ export type BoardSnapshot = {
   invalidTickets: InvalidTicket[];
 };
 
-export type TicketDraft = {
+export type TicketDraftSubticket = {
   title: string;
   priority: TicketPriority;
   labels: string[];
@@ -145,6 +149,11 @@ export type TicketDraft = {
   acceptanceCriteria: string[];
   clarificationQuestions: string[];
   implementationNotes: string[];
+};
+
+export type TicketDraft = TicketDraftSubticket & {
+  ticketType: TicketType;
+  subtickets: TicketDraftSubticket[];
   research: TicketDraftResearch;
 };
 
@@ -230,13 +239,34 @@ export type AgentTicketUpdateStartResult = {
   threadId: string;
 };
 
-export type TicketCreateInput = {
+export type SubticketCreateInput = {
   title: string;
   priority: TicketPriority;
   labels: string[];
   markdown: string;
   status?: string;
 };
+
+export type TicketCreateInput = SubticketCreateInput & {
+  ticketType?: TicketType;
+  parentEpicId?: string | null;
+  subticketIds?: string[];
+  subtickets?: SubticketCreateInput[];
+};
+
+export type EpicSubticketCreateInput = {
+  projectPath: string;
+  epicId: string;
+  ticket: SubticketCreateInput;
+};
+
+export type EpicSubticketLinkInput = {
+  projectPath: string;
+  epicId: string;
+  ticketId: string;
+};
+
+export type EpicSubticketUnlinkInput = EpicSubticketLinkInput;
 
 export type TicketSaveInput = {
   projectPath: string;
@@ -351,6 +381,7 @@ export type StartRunInput = {
 export type CreateDraftInput = {
   projectPath: string;
   idea: string;
+  preferredTicketType?: TicketType;
 };
 
 export type RunLogLine = {
@@ -378,6 +409,9 @@ export type RelayApi = {
   ticket: {
     createDraft: (input: CreateDraftInput) => Promise<TicketDraftResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
+    createSubticket: (input: EpicSubticketCreateInput) => Promise<TicketRecord>;
+    linkSubticket: (input: EpicSubticketLinkInput) => Promise<BoardSnapshot>;
+    unlinkSubticket: (input: EpicSubticketUnlinkInput) => Promise<BoardSnapshot>;
     startAgentUpdate: (input: AgentTicketUpdateInput) => Promise<AgentTicketUpdateStartResult>;
     cancelAgentUpdate: (runId: string) => Promise<void>;
     references: (projectPath: string) => Promise<TicketReferenceCandidate[]>;

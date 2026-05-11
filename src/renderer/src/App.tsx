@@ -35,10 +35,12 @@ import type {
   RunStatus,
   TicketDraft,
   TicketDraftErrorPayload,
+  TicketDraftSubticket,
   TicketPriority,
   TicketReferenceCandidate,
   TicketRecord,
-  TicketSummary
+  TicketSummary,
+  TicketType
 } from "@shared/types";
 import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "./components/AgentActivity";
 import { ClarificationPanel } from "./components/ClarificationPanel";
@@ -131,6 +133,7 @@ export const getTicketReferenceMenuLayout = ({
 };
 
 const priorityOptions: TicketPriority[] = ["low", "medium", "high", "urgent"];
+const ticketTypeOptions: TicketType[] = ["task", "epic"];
 
 const initialCodexStatus: CodexStatus = {
   sdkAvailable: false,
@@ -173,6 +176,17 @@ const runLabel = (status: TicketSummary["runStatus"]): string => {
       return "Idle";
   }
 };
+
+const ticketTypeLabel = (ticketType: TicketType): string => (ticketType === "epic" ? "Epic" : "Task");
+
+const labelsFromInput = (value: string): string[] =>
+  value
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean);
+
+const statusName = (columns: RelayColumn[], status: string): string =>
+  columns.find((column) => column.id === status)?.name ?? status;
 
 const emptyColumnMessage = (columnName: string): { title: string; detail: string } => ({
   title: `${columnName} is clear`,
@@ -381,6 +395,7 @@ function DraggableCard({
   const hiddenLabelCount = ticket.labels.length - visibleLabels.length;
   const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
   const showRunStatus = ticket.runStatus !== "idle";
+  const showRelationship = ticket.ticketType === "epic" || Boolean(ticket.parentEpicId);
   return (
     <article ref={setNodeRef} style={style} className={clsx("ticket-card", isDragging && "dragging", selected && "keyboard-selected")}>
       <button
@@ -392,8 +407,10 @@ function DraggableCard({
       >
         <div className="card-title">{ticket.title}</div>
         <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
-        {(showPriority || showRunStatus) && (
+        {(showRelationship || showPriority || showRunStatus) && (
           <div className="card-meta">
+            {ticket.ticketType === "epic" && <span className="ticket-type-pill epic">Epic</span>}
+            {ticket.parentEpicId && <span className="ticket-type-pill subticket">Subticket</span>}
             {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
             {showRunStatus && <span className={clsx("run-pill", ticket.runStatus)}>{runLabel(ticket.runStatus)}</span>}
           </div>
@@ -600,6 +617,10 @@ function CreateTicketModal({
   setToast: (toast: Toast) => void;
 }): ReactElement {
   const [idea, setIdea] = useState("");
+  const [ticketType, setTicketType] = useState<TicketType>("task");
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualPriority, setManualPriority] = useState<TicketPriority>("medium");
+  const [manualLabels, setManualLabels] = useState("");
   const [draft, setDraft] = useState<TicketDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -618,11 +639,20 @@ function CreateTicketModal({
   const modalFooterRef = useRef<HTMLDivElement | null>(null);
   const ideaEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const draftMarkdown = useMemo(() => (draft ? markdownFromDraft(draft) : ""), [draft]);
+  const effectiveTicketType = draft?.ticketType ?? ticketType;
   const dialogTitle = draft?.title.trim() || "Create Ticket";
   const dialogSubtext = draft ? ticketDraftDialogSubtext(draft) : "Draft a clear implementation ticket from a rough idea.";
   const hasUnsavedInput = useMemo(
-    () => busy || saving || draft !== null || idea.trim().length > 0,
-    [busy, draft, idea, saving]
+    () =>
+      busy ||
+      saving ||
+      draft !== null ||
+      idea.trim().length > 0 ||
+      manualTitle.trim().length > 0 ||
+      manualLabels.trim().length > 0 ||
+      ticketType !== "task" ||
+      manualPriority !== "medium",
+    [busy, draft, idea, manualLabels, manualPriority, manualTitle, saving, ticketType]
   );
   const filteredTicketReferences = useMemo(
     () => filterTicketReferenceCandidates(ticketReferences, ticketReferenceMention?.token.query ?? ""),
@@ -830,7 +860,7 @@ function CreateTicketModal({
     setDraftMessageKind("info");
     setDraftMessage("Codex is drafting the ticket. If Codex is not authenticated or does not respond, this will time out after 90 seconds.");
     try {
-      const result = await window.relay.ticket.createDraft({ projectPath, idea: ideaSnapshot });
+      const result = await window.relay.ticket.createDraft({ projectPath, idea: ideaSnapshot, preferredTicketType: ticketType });
       if (draftRequestRef.current !== requestSequence) return;
       if (!result.ok) {
         setDraftFailure(result.error);
@@ -844,6 +874,7 @@ function CreateTicketModal({
       }
       const nextDraft = result.draft;
       setDraft(nextDraft);
+      setTicketType(nextDraft.ticketType);
       setTicketReferenceMention(null);
       setDraftFailure(null);
       setDraftProgress((current) =>
@@ -867,19 +898,45 @@ function CreateTicketModal({
   };
 
   const save = async (): Promise<void> => {
-    if (!draft) {
-      setToast({ kind: "error", message: "Draft a ticket with Codex before creating it." });
+    const title = draft?.title.trim() || manualTitle.trim();
+    if (!title) {
+      setToast({ kind: "error", message: "Enter a title before creating the ticket." });
       return;
     }
     setSaving(true);
     try {
-      await window.relay.ticket.createManual(projectPath, {
-        title: draft.title,
-        priority: draft.priority,
-        labels: draft.labels,
-        markdown: draftMarkdown
-      });
-      setToast({ kind: "success", message: "Ticket created." });
+      const manualMarkdown = `# ${title}
+
+${idea.trim() || "No additional details provided."}
+`;
+      await window.relay.ticket.createManual(
+        projectPath,
+        draft
+          ? {
+              title: draft.title,
+              priority: draft.priority,
+              labels: draft.labels,
+              markdown: draftMarkdown,
+              ticketType: draft.ticketType,
+              subtickets:
+                draft.ticketType === "epic"
+                  ? draft.subtickets.map((subticket) => ({
+                      title: subticket.title,
+                      priority: subticket.priority,
+                      labels: subticket.labels,
+                      markdown: markdownFromDraft(subticket)
+                    }))
+                  : []
+            }
+          : {
+              title,
+              priority: manualPriority,
+              labels: labelsFromInput(manualLabels),
+              markdown: manualMarkdown,
+              ticketType
+            }
+      );
+      setToast({ kind: "success", message: effectiveTicketType === "epic" ? "Epic created." : "Ticket created." });
       onCreated();
       onClose();
     } catch (error) {
@@ -908,14 +965,58 @@ function CreateTicketModal({
           </button>
         </header>
 
+        <div className="create-fields">
+          <div className="two-fields create-type-fields">
+            <label className="field">
+              <span>Type</span>
+              <select
+                value={ticketType}
+                onChange={(event) => {
+                  setTicketType(event.target.value as TicketType);
+                  setDraft(null);
+                  setDraftFailure(null);
+                  setDraftMessage(null);
+                }}
+              >
+                {ticketTypeOptions.map((option) => (
+                  <option value={option} key={option}>
+                    {ticketTypeLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Priority</span>
+              <select value={manualPriority} onChange={(event) => setManualPriority(event.target.value as TicketPriority)} disabled={Boolean(draft)}>
+                {priorityOptions.map((option) => (
+                  <option key={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="field">
+            <span>Title</span>
+            <input
+              value={manualTitle}
+              onChange={(event) => setManualTitle(event.target.value)}
+              placeholder={ticketType === "epic" ? "Epic title" : "Ticket title"}
+              disabled={Boolean(draft)}
+            />
+          </label>
+          <label className="field">
+            <span>Labels</span>
+            <input value={manualLabels} onChange={(event) => setManualLabels(event.target.value)} placeholder="frontend, auth" disabled={Boolean(draft)} />
+          </label>
+        </div>
+
         <div className="modal-grid">
           <label className="field">
-            <span>Idea</span>
+            <span>{draft ? "Original Idea" : "Details"}</span>
             <div className="ticket-reference-editor idea-reference-editor">
               <textarea
                 ref={ideaEditorRef}
                 value={idea}
-                placeholder="Describe what you want built..."
+                placeholder={ticketType === "epic" ? "Describe the larger outcome and key subtasks..." : "Describe what you want built..."}
                 aria-autocomplete="list"
                 aria-controls="idea-ticket-reference-menu"
                 aria-expanded={ideaTicketReferenceMenuOpen}
@@ -965,6 +1066,7 @@ function CreateTicketModal({
         {draft && (
           <div className="editor-stack">
             <div className="draft-meta" aria-label="Generated ticket metadata">
+              <span className={clsx("ticket-type-pill", draft.ticketType === "epic" ? "epic" : "task")}>{ticketTypeLabel(draft.ticketType)}</span>
               <span className="priority">{draft.priority}</span>
               {draft.labels.length > 0 && (
                 <div className="labels">
@@ -981,14 +1083,40 @@ function CreateTicketModal({
               onCopied={(kind) => setToast(copyToast(kind))}
               onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
             />
+            {draft.ticketType === "epic" && (
+              <div className="draft-subtickets" aria-label="Generated subtickets">
+                <h3>Generated Subtickets</h3>
+                {draft.subtickets.length === 0 ? (
+                  <p>No subtickets generated.</p>
+                ) : (
+                  draft.subtickets.map((subticket: TicketDraftSubticket, index) => (
+                    <div className="draft-subticket" key={`${subticket.title}-${index}`}>
+                      <div>
+                        <strong>{subticket.title}</strong>
+                        <span>{subticket.priority}</span>
+                      </div>
+                      <MarkdownBlock
+                        className="ticket-markdown-preview compact"
+                        source={markdownFromDraft(subticket)}
+                        title={`Subticket ${index + 1}`}
+                        onCopied={(kind) => setToast(copyToast(kind))}
+                        onCopyError={(error) =>
+                          setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })
+                        }
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         )}
 
         <div className="modal-footer" ref={modalFooterRef}>
           <button onClick={onClose}>Cancel</button>
-          <button className="primary-button" onClick={save} disabled={saving || !draft}>
+          <button className="primary-button" onClick={save} disabled={saving || (!draft && manualTitle.trim().length === 0)}>
             {saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
-            Create Ticket
+            {effectiveTicketType === "epic" ? "Create Epic" : "Create Ticket"}
           </button>
         </div>
       </section>
@@ -1002,6 +1130,7 @@ function TicketDetail({
   board,
   events,
   onClose,
+  onOpenTicket,
   onChanged,
   setToast
 }: {
@@ -1010,6 +1139,7 @@ function TicketDetail({
   board: BoardSnapshot;
   events: RendererRunEvent[];
   onClose: () => void;
+  onOpenTicket: (ticketId: string) => void;
   onChanged: () => void;
   setToast: (toast: Toast) => void;
 }): ReactElement {
@@ -1037,6 +1167,12 @@ function TicketDetail({
   const [ticketUpdateError, setTicketUpdateError] = useState<string | null>(null);
   const [ticketUpdateCancelling, setTicketUpdateCancelling] = useState(false);
   const [ticketUpdateLogViewerOpen, setTicketUpdateLogViewerOpen] = useState(false);
+  const [addTicketsOpen, setAddTicketsOpen] = useState(false);
+  const [newSubticketTitle, setNewSubticketTitle] = useState("");
+  const [newSubticketPriority, setNewSubticketPriority] = useState<TicketPriority>("medium");
+  const [newSubticketLabels, setNewSubticketLabels] = useState("");
+  const [linkSubticketId, setLinkSubticketId] = useState("");
+  const [subticketBusy, setSubticketBusy] = useState(false);
 
   const load = useCallback(async () => {
     setDetailError(null);
@@ -1079,6 +1215,12 @@ function TicketDetail({
     setTicketUpdateError(null);
     setTicketUpdateCancelling(false);
     setTicketUpdateLogViewerOpen(false);
+    setAddTicketsOpen(false);
+    setNewSubticketTitle("");
+    setNewSubticketPriority("medium");
+    setNewSubticketLabels("");
+    setLinkSubticketId("");
+    setSubticketBusy(false);
   }, [projectPath, ticketId]);
 
   useEffect(() => {
@@ -1125,6 +1267,33 @@ function TicketDetail({
     [events, ticketUpdateRunId]
   );
   const ticketUpdateActive = isAgentSessionActive(ticketUpdateStatus) || ticketUpdateCancelling;
+  const linkedSubtickets = useMemo(() => {
+    if (!ticket || ticket.frontMatter.ticketType !== "epic") return [];
+    const byId = new Map(board.tickets.map((item) => [item.id, item]));
+    const ordered = ticket.frontMatter.subticketIds.map((id) => byId.get(id)).filter((item): item is TicketSummary => Boolean(item));
+    const derived = board.tickets.filter(
+      (item) => item.parentEpicId === ticket.frontMatter.id && !ticket.frontMatter.subticketIds.includes(item.id)
+    );
+    return [...ordered, ...derived].sort((a, b) => {
+      const aIndex = ticket.frontMatter.subticketIds.indexOf(a.id);
+      const bIndex = ticket.frontMatter.subticketIds.indexOf(b.id);
+      if (aIndex >= 0 && bIndex >= 0) return aIndex - bIndex;
+      if (aIndex >= 0) return -1;
+      if (bIndex >= 0) return 1;
+      return a.position - b.position;
+    });
+  }, [board.tickets, ticket]);
+  const parentEpic = useMemo(
+    () => (ticket?.frontMatter.parentEpicId ? board.tickets.find((item) => item.id === ticket.frontMatter.parentEpicId) ?? null : null),
+    [board.tickets, ticket?.frontMatter.parentEpicId]
+  );
+  const linkableTickets = useMemo(() => {
+    if (!ticket || ticket.frontMatter.ticketType !== "epic") return [];
+    const linkedIds = new Set(linkedSubtickets.map((item) => item.id));
+    return board.tickets
+      .filter((item) => item.id !== ticket.frontMatter.id && item.ticketType === "task" && !linkedIds.has(item.id))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [board.tickets, linkedSubtickets, ticket]);
 
   useEffect(() => {
     if (!ticketUpdateRunId || ticketUpdateEndedAt) return;
@@ -1161,9 +1330,13 @@ function TicketDetail({
     if (!ticket) return Boolean(busy || submittingAnswerId || ticketUpdateActive || ticketUpdateRequest.trim());
     return (
       busy ||
+      subticketBusy ||
       Boolean(submittingAnswerId) ||
       ticketUpdateActive ||
       ticketUpdateRequest.trim().length > 0 ||
+      newSubticketTitle.trim().length > 0 ||
+      newSubticketLabels.trim().length > 0 ||
+      linkSubticketId.length > 0 ||
       title !== ticket.frontMatter.title ||
       priority !== ticket.frontMatter.priority ||
       status !== ticket.frontMatter.status ||
@@ -1171,7 +1344,23 @@ function TicketDetail({
       markdown !== ticket.markdown ||
       Object.values(answerDrafts).some((answer) => answer.trim().length > 0)
     );
-  }, [answerDrafts, busy, labels, markdown, priority, status, submittingAnswerId, ticket, ticketUpdateActive, ticketUpdateRequest, title]);
+  }, [
+    answerDrafts,
+    busy,
+    labels,
+    linkSubticketId,
+    markdown,
+    newSubticketLabels,
+    newSubticketTitle,
+    priority,
+    status,
+    submittingAnswerId,
+    subticketBusy,
+    ticket,
+    ticketUpdateActive,
+    ticketUpdateRequest,
+    title
+  ]);
 
   useShortcutOverlay({
     id: `ticket-detail:${ticketId}`,
@@ -1200,10 +1389,7 @@ function TicketDetail({
             title,
             priority,
             status,
-            labels: labels
-              .split(",")
-              .map((label) => label.trim())
-              .filter(Boolean)
+            labels: labelsFromInput(labels)
           }
         }
       });
@@ -1311,6 +1497,74 @@ function TicketDetail({
     onChanged();
   };
 
+  const createChildTicket = async (): Promise<void> => {
+    if (!ticket || ticket.frontMatter.ticketType !== "epic") return;
+    const childTitle = newSubticketTitle.trim();
+    if (!childTitle) {
+      setToast({ kind: "error", message: "Enter a subticket title." });
+      return;
+    }
+    setSubticketBusy(true);
+    try {
+      await window.relay.ticket.createSubticket({
+        projectPath,
+        epicId: ticket.frontMatter.id,
+        ticket: {
+          title: childTitle,
+          priority: newSubticketPriority,
+          labels: labelsFromInput(newSubticketLabels),
+          markdown: `# ${childTitle}
+
+## Context
+
+Subticket of ${ticket.frontMatter.title}.
+`
+        }
+      });
+      setNewSubticketTitle("");
+      setNewSubticketPriority("medium");
+      setNewSubticketLabels("");
+      setToast({ kind: "success", message: "Subticket added." });
+      onChanged();
+      await load();
+    } catch (error) {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to add subticket." });
+    } finally {
+      setSubticketBusy(false);
+    }
+  };
+
+  const linkExistingTicket = async (): Promise<void> => {
+    if (!ticket || ticket.frontMatter.ticketType !== "epic" || !linkSubticketId) return;
+    setSubticketBusy(true);
+    try {
+      await window.relay.ticket.linkSubticket({ projectPath, epicId: ticket.frontMatter.id, ticketId: linkSubticketId });
+      setLinkSubticketId("");
+      setToast({ kind: "success", message: "Ticket linked." });
+      onChanged();
+      await load();
+    } catch (error) {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to link ticket." });
+    } finally {
+      setSubticketBusy(false);
+    }
+  };
+
+  const unlinkChildTicket = async (childId: string): Promise<void> => {
+    if (!ticket || ticket.frontMatter.ticketType !== "epic") return;
+    setSubticketBusy(true);
+    try {
+      await window.relay.ticket.unlinkSubticket({ projectPath, epicId: ticket.frontMatter.id, ticketId: childId });
+      setToast({ kind: "success", message: "Subticket unlinked." });
+      onChanged();
+      await load();
+    } catch (error) {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to unlink subticket." });
+    } finally {
+      setSubticketBusy(false);
+    }
+  };
+
   if (detailError) {
     return (
       <aside className="detail-panel">
@@ -1378,6 +1632,101 @@ function TicketDetail({
             Save
           </button>
         </div>
+
+        {parentEpic && (
+          <section className="epic-link-panel">
+            <header>
+              <h3>Parent Epic</h3>
+            </header>
+            <button className="subticket-row parent" onClick={() => onOpenTicket(parentEpic.id)}>
+              <strong>{parentEpic.title}</strong>
+              <span>{statusName(board.columns, parentEpic.status)}</span>
+              <em className={clsx("priority", parentEpic.priority)}>{parentEpic.priority}</em>
+            </button>
+          </section>
+        )}
+
+        {ticket.frontMatter.ticketType === "epic" && (
+          <section className="epic-link-panel">
+            <header>
+              <h3>Subtickets</h3>
+              <button onClick={() => setAddTicketsOpen((open) => !open)} disabled={subticketBusy}>
+                {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                Add Tickets
+              </button>
+            </header>
+            <div className="subticket-list">
+              {linkedSubtickets.length === 0 ? (
+                <p>No subtickets linked.</p>
+              ) : (
+                linkedSubtickets.map((subticket) => (
+                  <div className="subticket-item" key={subticket.id}>
+                    <button className="subticket-row" onClick={() => onOpenTicket(subticket.id)}>
+                      <strong>{subticket.title}</strong>
+                      <span>{statusName(board.columns, subticket.status)}</span>
+                      <em className={clsx("priority", subticket.priority)}>{subticket.priority}</em>
+                    </button>
+                    <button
+                      className="icon-button"
+                      onClick={() => void unlinkChildTicket(subticket.id)}
+                      disabled={subticketBusy}
+                      aria-label={`Unlink ${subticket.title}`}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            {addTicketsOpen && (
+              <div className="add-subticket-panel">
+                <label className="field">
+                  <span>New Subticket</span>
+                  <input
+                    value={newSubticketTitle}
+                    onChange={(event) => setNewSubticketTitle(event.target.value)}
+                    placeholder="Subticket title"
+                  />
+                </label>
+                <div className="two-fields">
+                  <label className="field">
+                    <span>Priority</span>
+                    <select value={newSubticketPriority} onChange={(event) => setNewSubticketPriority(event.target.value as TicketPriority)}>
+                      {priorityOptions.map((option) => (
+                        <option key={option}>{option}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Labels</span>
+                    <input value={newSubticketLabels} onChange={(event) => setNewSubticketLabels(event.target.value)} />
+                  </label>
+                </div>
+                <button className="primary-button" onClick={() => void createChildTicket()} disabled={subticketBusy || newSubticketTitle.trim().length === 0}>
+                  {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                  Create Subticket
+                </button>
+                <div className="link-existing-row">
+                  <label className="field">
+                    <span>Link Existing</span>
+                    <select value={linkSubticketId} onChange={(event) => setLinkSubticketId(event.target.value)} disabled={linkableTickets.length === 0}>
+                      <option value="">{linkableTickets.length === 0 ? "No available task tickets" : "Select a ticket"}</option>
+                      {linkableTickets.map((candidate) => (
+                        <option value={candidate.id} key={candidate.id}>
+                          {candidate.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button onClick={() => void linkExistingTicket()} disabled={subticketBusy || !linkSubticketId}>
+                    <Plus size={16} />
+                    Link
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         <ClarificationPanel
           questions={clarifications}
@@ -1815,6 +2164,7 @@ function RelayApp(): ReactElement {
           board={board}
           events={selectedEvents}
           onClose={() => setOpenTicketId(null)}
+          onOpenTicket={setOpenTicketId}
           onChanged={refreshAll}
           setToast={setToast}
         />

@@ -2,8 +2,8 @@
 schemaVersion: 1
 id: tkt_01krbf6mtmq3nghfg9adr81xh4
 title: Add Epic Mode for Linked Subtickets and Agent-Created Epic Plans
-status: todo
-position: 11000
+status: completed
+position: 24000
 priority: medium
 labels:
   - feature
@@ -13,10 +13,10 @@ labels:
   - storage
   - ui
 createdAt: '2026-05-11T12:11:45.876Z'
-updatedAt: '2026-05-11T12:11:45.876Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T13:09:39.451Z'
+codexThreadId: 019e171b-f95e-73d3-a079-7bfcd65143af
+runStatus: completed
+lastRunId: run_01krbhqy7wqzvn8zerw31abnwz
 ---
 # Add Epic Mode for Linked Subtickets and Agent-Created Epic Plans
 
@@ -95,5 +95,47 @@ Relay should support an Epic ticket type for larger pieces of work. When creatin
 - File inspected: src/main/services/codex.ts - Matched terms: mode, create, tickets, idea; characters read: 12000; symbols: Thread, ThreadEvent, ThreadItem, ThreadOptions, ClarificationQuestion, CodexStatus
 
 ## Codex Handoff
+
+### 5/11/2026, 2:09:39 PM
+
+Implemented epic mode end to end.
+
+**Summary**
+- Added `task`/`epic` ticket typing plus `parentEpicId` and ordered `subticketIds` front matter.
+- Added backend create/link/unlink subticket operations, including nested-epic/self-link validation and cleanup when subtickets or epics are deleted.
+- Updated create UI with ticket type selection, manual ticket creation, epic draft review, and generated subticket review.
+- Added epic detail UI for parent/child navigation, creating subtickets, linking existing task tickets, and unlinking without deletion.
+- Updated Codex ticket drafting schema/prompt to support epic drafts with normal task subtickets.
+- Added regression coverage for epic drafts, persisted relationships, reload behavior, independent child status moves, unlink/delete behavior, nested epic rejection, and legacy tickets without epic metadata.
+
+**Files Changed**
+- `src/shared/types.ts`
+- `src/main/services/schemas.ts`
+- `src/main/services/storage.ts`
+- `src/main/services/codex.ts`
+- `src/main/index.ts`
+- `src/preload/index.ts`
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/lib/markdown.ts`
+- `src/renderer/src/styles.css`
+- `tests/backend.test.ts`
+- `tests/ticket-draft.test.ts`
+
+**Commands Run**
+- `find ...`, `sed ...`, `grep ...` for inspection
+- `git status --short`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+
+**Tests Run**
+- `npm run typecheck`: passed
+- `npm test`: passed, 51/51 tests
+- `npm run build`: passed
+
+**Remaining Risks / Follow-up**
+- I did not manually smoke-test the Electron UI; verification is via typecheck, test suite, and production build.
+- The worktree still has pre-existing unrelated `.relay` file/run changes that I did not modify or revert.
+
 
 No Codex run has been started.

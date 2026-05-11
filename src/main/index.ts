@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import type {
   AddProjectResult,
   ClarificationAnswerInput,
+  EpicSubticketCreateInput,
+  EpicSubticketLinkInput,
+  EpicSubticketUnlinkInput,
   TicketCreateInput,
   TicketDraftResult,
   GitMetadataOptions,
@@ -27,12 +30,14 @@ import { getLogPath, logError, logInfo, logWarn } from "./services/logger";
 import { readRegistry, removeProjectPath, upsertProjectPath } from "./services/registry";
 import {
   createTicket,
+  createSubticket,
   deleteTicket,
   duplicateTicket,
   answerClarificationQuestion,
   initializeProject,
   isTicketNotFoundError,
   listTicketReferenceCandidates,
+  linkSubticket,
   moveTicket,
   readBoard,
   readClarificationQuestions,
@@ -40,6 +45,7 @@ import {
   revealTicketFile,
   saveTicket,
   summarizeProject,
+  unlinkSubticket,
 } from "./services/storage";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -168,6 +174,16 @@ const registerIpc = (): void => {
 
   ipcMain.handle("ticket:createManual", async (_event, projectPath: string, input: TicketCreateInput) =>
     createTicket(projectPath, input)
+  );
+
+  ipcMain.handle("ticket:createSubticket", async (_event, input: EpicSubticketCreateInput) => createSubticket(input));
+
+  ipcMain.handle("ticket:linkSubticket", async (_event, input: EpicSubticketLinkInput) =>
+    linkSubticket(input.projectPath, input.epicId, input.ticketId)
+  );
+
+  ipcMain.handle("ticket:unlinkSubticket", async (_event, input: EpicSubticketUnlinkInput) =>
+    unlinkSubticket(input.projectPath, input.epicId, input.ticketId)
   );
 
   ipcMain.handle("ticket:startAgentUpdate", async (_event, input) => {

@@ -38,10 +38,13 @@ export const ticketFrontMatterSchema = z
     schemaVersion: z.literal(1),
     id: z.string().min(1),
     title: z.string().min(1),
+    ticketType: z.enum(["task", "epic"]).default("task"),
     status: z.string().min(1),
     position: z.number(),
     priority: z.enum(["low", "medium", "high", "urgent"]),
     labels: z.array(z.string()).default([]),
+    parentEpicId: z.string().nullable().default(null),
+    subticketIds: z.array(z.string()).default([]),
     createdAt: isoString,
     updatedAt: isoString,
     codexThreadId: z.string().nullable().default(null),
@@ -116,17 +119,24 @@ const ticketDraftResearchSchema = z.object({
   })
 });
 
-export const ticketDraftSchema = z.object({
-  title: z.string().min(1),
-  priority: z.enum(["low", "medium", "high", "urgent"]),
-  labels: z.array(z.string()).default([]),
-  context: z.string().default(""),
-  researchFindings: z.array(z.string()).default([]),
-  requirements: z.array(z.string()).default([]),
-  implementationPlan: z.array(z.string()).default([]),
-  acceptanceCriteria: z.array(z.string()).default([]),
-  clarificationQuestions: z.array(z.string()).default([]),
-  implementationNotes: z.array(z.string()).default([]),
+const ticketDraftBaseSchema = z
+  .object({
+    title: z.string().min(1),
+    priority: z.enum(["low", "medium", "high", "urgent"]),
+    labels: z.array(z.string()).default([]),
+    context: z.string().default(""),
+    researchFindings: z.array(z.string()).default([]),
+    requirements: z.array(z.string()).default([]),
+    implementationPlan: z.array(z.string()).default([]),
+    acceptanceCriteria: z.array(z.string()).default([]),
+    clarificationQuestions: z.array(z.string()).default([]),
+    implementationNotes: z.array(z.string()).default([])
+  })
+  .strict();
+
+export const ticketDraftSchema = ticketDraftBaseSchema.extend({
+  ticketType: z.enum(["task", "epic"]).default("task"),
+  subtickets: z.array(ticketDraftBaseSchema).default([]),
   research: ticketDraftResearchSchema.default({
     generatedAt: "",
     checkedUrls: [],
@@ -143,6 +153,14 @@ export const ticketDraftSchema = z.object({
       maxMatchesPerFile: 0
     }
   })
+}).superRefine((draft, context) => {
+  if (draft.ticketType === "task" && draft.subtickets.length > 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["subtickets"],
+      message: "Only epic ticket drafts can contain subtickets."
+    });
+  }
 });
 
 export const agentTicketUpdateSchema = z

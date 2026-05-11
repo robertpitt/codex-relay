@@ -938,6 +938,7 @@ kbd {
 
 .priority,
 .run-pill,
+.ticket-type-pill,
 .labels span {
   min-height: 21px;
   border: 0;
@@ -1018,6 +1019,17 @@ kbd {
 .priority.low {
   background: var(--relay-success-muted);
   color: var(--relay-success-text);
+}
+
+.ticket-type-pill.epic {
+  background: var(--relay-info-muted);
+  color: var(--relay-info-text);
+}
+
+.ticket-type-pill.subticket,
+.ticket-type-pill.task {
+  background: rgb(255 255 255 / 5.5%);
+  color: var(--relay-text-muted);
 }
 
 .run-pill.running,
@@ -1201,6 +1213,17 @@ kbd {
   align-items: end;
 }
 
+.create-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--relay-space-3);
+  margin-top: var(--relay-space-4);
+}
+
+.create-type-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
 .draft-actions {
   display: grid;
   gap: var(--relay-space-2);
@@ -1253,6 +1276,50 @@ kbd {
 
 .draft-meta .labels {
   margin: 0;
+}
+
+.draft-subtickets {
+  display: grid;
+  gap: var(--relay-space-2);
+}
+
+.draft-subtickets h3 {
+  margin: 0;
+  font-size: var(--relay-text-base);
+  font-weight: 560;
+}
+
+.draft-subtickets > p {
+  margin: 0;
+  color: var(--relay-text-muted);
+}
+
+.draft-subticket {
+  display: grid;
+  gap: var(--relay-space-2);
+  border-radius: var(--relay-radius-md);
+  background: rgb(255 255 255 / 3.5%);
+  padding: var(--relay-space-3);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+
+.draft-subticket > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--relay-space-2);
+}
+
+.draft-subticket strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.draft-subticket > div:first-child span {
+  color: var(--relay-text-muted);
+  font-size: var(--relay-text-sm);
 }
 
 .two-fields {
@@ -1641,6 +1708,121 @@ kbd {
 
 .detail-actions {
   margin-top: var(--relay-space-3);
+}
+
+.epic-link-panel {
+  margin-top: var(--relay-space-4);
+  overflow: hidden;
+  border-radius: var(--relay-radius-md);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 4%), transparent),
+    var(--relay-surface);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 5%);
+}
+
+.epic-link-panel header {
+  min-height: 40px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--relay-space-3);
+}
+
+.epic-link-panel h3 {
+  margin: 0;
+  font-size: var(--relay-text-base);
+  font-weight: 560;
+}
+
+.epic-link-panel header button {
+  min-height: 30px;
+}
+
+.subticket-list {
+  display: grid;
+  gap: var(--relay-space-2);
+  padding: 0 var(--relay-space-3) var(--relay-space-3);
+}
+
+.subticket-list > p {
+  margin: 0;
+  color: var(--relay-text-muted);
+  font-size: var(--relay-text-md);
+}
+
+.subticket-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--relay-space-2);
+  align-items: stretch;
+}
+
+.subticket-row {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--relay-space-2);
+  align-items: center;
+  justify-content: stretch;
+  border-radius: var(--relay-radius-md);
+  background: var(--relay-surface-2);
+  padding: 8px 10px;
+  text-align: left;
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+
+.subticket-row:hover {
+  background: var(--relay-surface-hover);
+  transform: none;
+}
+
+.subticket-row.parent {
+  margin: 0 var(--relay-space-3) var(--relay-space-3);
+  width: calc(100% - var(--relay-space-3) * 2);
+}
+
+.subticket-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--relay-text);
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subticket-row span {
+  color: var(--relay-text-muted);
+  font-size: var(--relay-text-sm);
+  white-space: nowrap;
+}
+
+.subticket-row em {
+  font-style: normal;
+  justify-self: end;
+}
+
+.add-subticket-panel {
+  display: grid;
+  gap: var(--relay-space-3);
+  border-top: 1px solid rgb(255 255 255 / 5%);
+  padding: var(--relay-space-3);
+}
+
+.add-subticket-panel > .primary-button {
+  justify-self: start;
+}
+
+.link-existing-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--relay-space-2);
+  align-items: end;
 }
 
 .clarification-panel {
@@ -2395,6 +2577,7 @@ kbd {
   }
 
   .modal-grid,
+  .create-fields,
   .two-fields {
     grid-template-columns: 1fr;
   }
@@ -2436,7 +2619,10 @@ kbd {
 
   .agent-metrics,
   .agent-recent-row,
-  .agent-log-item {
+  .agent-log-item,
+  .link-existing-row,
+  .subticket-item,
+  .subticket-row {
     grid-template-columns: 1fr;
   }
 

@@ -42,6 +42,47 @@ const validDraftJson = (title: string): string =>
     implementationNotes: ["Keep the change focused."]
   });
 
+const validEpicDraftJson = (): string =>
+  JSON.stringify({
+    title: "Account migration epic",
+    ticketType: "epic",
+    priority: "high",
+    labels: ["accounts"],
+    context: "Move account management to the new API.",
+    researchFindings: ["Inspected account service boundaries."],
+    requirements: ["Coordinate API, UI, and persistence changes."],
+    implementationPlan: ["Create child tickets for each independently shippable slice."],
+    acceptanceCriteria: ["All generated subtickets can be reviewed before storage."],
+    clarificationQuestions: [],
+    implementationNotes: ["Nested epics are not supported."],
+    subtickets: [
+      {
+        title: "Account API migration",
+        priority: "high",
+        labels: ["api"],
+        context: "Move account endpoints to the new API.",
+        researchFindings: ["API routes were identified."],
+        requirements: ["Preserve existing account behavior."],
+        implementationPlan: ["Update API handlers and tests."],
+        acceptanceCriteria: ["Account API tests pass."],
+        clarificationQuestions: [],
+        implementationNotes: []
+      },
+      {
+        title: "Account UI migration",
+        priority: "medium",
+        labels: ["frontend"],
+        context: "Point account screens at the new API.",
+        researchFindings: ["Account UI entry points were identified."],
+        requirements: ["Keep account status and error states visible."],
+        implementationPlan: ["Update data loading and interaction tests."],
+        acceptanceCriteria: ["Account UI can complete the migrated workflow."],
+        clarificationQuestions: [],
+        implementationNotes: []
+      }
+    ]
+  });
+
 test("ticket draft creation succeeds with a mocked Codex response", async () => {
   const projectPath = await createProject();
   let prompt = "";
@@ -287,4 +328,85 @@ test("ticket draft retry after timeout uses an independent Codex request", async
   assert.equal(signals[0].aborted, true);
   assert.equal(signals[1].aborted, false);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
+});
+
+test("ticket draft creation supports epic output with reviewable subtickets", async () => {
+  const projectPath = await createProject();
+  let prompt = "";
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "tdr_epic",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          run: async (nextPrompt: string) => {
+            prompt = nextPrompt;
+            return { finalResponse: validEpicDraftJson() };
+          }
+        })
+      }) as any
+  };
+
+  const draft = await createTicketDraft({ projectPath, idea: "Plan the account migration", preferredTicketType: "epic" }, dependencies);
+  const createInput = draftToCreateInput(draft);
+
+  assert.match(prompt, /selected Epic mode/);
+  assert.equal(draft.ticketType, "epic");
+  assert.equal(draft.subtickets.length, 2);
+  assert.equal(createInput.ticketType, "epic");
+  assert.equal(createInput.subtickets?.length, 2);
+  assert.match(createInput.markdown, /# Account migration epic/);
+  assert.match(createInput.subtickets?.[0].markdown ?? "", /# Account API migration/);
+  assert.equal((await readBoard(projectPath)).tickets.length, 0);
+});
+
+test("ticket draft rejects malformed task output that contains subtickets", async () => {
+  const projectPath = await createProject();
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "tdr_bad_task_children",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          run: async () => ({
+            finalResponse: JSON.stringify({
+              title: "Malformed task",
+              ticketType: "task",
+              priority: "medium",
+              labels: [],
+              context: "",
+              researchFindings: [],
+              requirements: [],
+              implementationPlan: [],
+              acceptanceCriteria: [],
+              clarificationQuestions: [],
+              implementationNotes: [],
+              subtickets: [
+                {
+                  title: "Should not be here",
+                  priority: "medium",
+                  labels: [],
+                  context: "",
+                  researchFindings: [],
+                  requirements: [],
+                  implementationPlan: [],
+                  acceptanceCriteria: [],
+                  clarificationQuestions: [],
+                  implementationNotes: []
+                }
+              ]
+            })
+          })
+        })
+      }) as any
+  };
+
+  await assert.rejects(
+    createTicketDraft({ projectPath, idea: "Return an invalid task with children" }, dependencies),
+    (error) => {
+      assert.ok(error instanceof TicketDraftServiceError);
+      assert.equal(error.code, "invalid_response");
+      return true;
+    }
+  );
 });

@@ -1,4 +1,4 @@
-import type { TicketDraft } from "@shared/types";
+import type { TicketDraft, TicketDraftSubticket } from "@shared/types";
 
 const list = (items: string[]): string =>
   items.length > 0 ? items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n") : "- None.";
@@ -24,11 +24,14 @@ const truncatePreviewText = (value: string, maxLength: number): string => {
   return `${value.slice(0, cutoff).trim().replace(/[.,;:!?-]+$/, "")}...`;
 };
 
-const researchMetadata = (draft: TicketDraft): string => {
+type TicketMarkdownDraft = TicketDraftSubticket & { research?: TicketDraft["research"] };
+
+const researchMetadata = (draft: TicketMarkdownDraft): string => {
   if (
-    draft.research.checkedUrls.length === 0 &&
-    draft.research.inspectedFiles.length === 0 &&
-    draft.research.limitations.length === 0
+    !draft.research ||
+    (draft.research.checkedUrls.length === 0 &&
+      draft.research.inspectedFiles.length === 0 &&
+      draft.research.limitations.length === 0)
   ) {
     return "- No research metadata recorded.";
   }
@@ -45,7 +48,7 @@ const researchMetadata = (draft: TicketDraft): string => {
   return [...urls, ...files, ...limitations].join("\n");
 };
 
-export const markdownFromDraft = (draft: TicketDraft): string => `# ${draft.title}
+export const markdownFromDraft = (draft: TicketMarkdownDraft): string => `# ${draft.title}
 
 ## Context
 

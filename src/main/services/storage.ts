@@ -18,14 +18,18 @@ import {
   type RelayColumn,
   type RelayEventSource,
   type RelayAuditEvent,
+  type EpicSubticketCreateInput,
   type TicketCreateInput,
   type TicketDraft,
+  type TicketDraftSubticket,
   type TicketFrontMatter,
+  type SubticketCreateInput,
   type TicketMoveInput,
   type TicketReferenceCandidate,
   type TicketRecord,
   type TicketSaveInput,
-  type TicketSummary
+  type TicketSummary,
+  type TicketType
 } from "../../shared/types";
 import { clarificationStoreSchema, projectConfigSchema, ticketFrontMatterSchema } from "./schemas";
 
@@ -319,6 +323,43 @@ export const readBoard = async (projectPath: string, lastOpenedAt?: string): Pro
 
 const ticketPath = (projectPath: string, ticketId: string): string => path.join(ticketsPath(projectPath), `${ticketId}.md`);
 
+const uniqueTicketIds = (ticketIds: string[]): string[] => {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const ticketId of ticketIds) {
+    const trimmed = ticketId.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    unique.push(trimmed);
+  }
+  return unique;
+};
+
+const normalizeFrontMatterRelationships = (frontMatter: TicketFrontMatter): TicketFrontMatter => {
+  const ticketType = frontMatter.ticketType ?? "task";
+  return {
+    ...frontMatter,
+    ticketType,
+    parentEpicId: ticketType === "epic" ? null : frontMatter.parentEpicId ?? null,
+    subticketIds: ticketType === "epic" ? uniqueTicketIds(frontMatter.subticketIds ?? []) : []
+  };
+};
+
+const assertRelationshipShape = (frontMatter: TicketFrontMatter): void => {
+  if (frontMatter.parentEpicId && frontMatter.parentEpicId === frontMatter.id) {
+    throw new Error("A ticket cannot be linked as its own epic.");
+  }
+  if (frontMatter.ticketType === "epic" && frontMatter.parentEpicId) {
+    throw new Error("Nested epics are not supported.");
+  }
+  if (frontMatter.ticketType === "task" && frontMatter.subticketIds.length > 0) {
+    throw new Error("Only epic tickets can own subtickets.");
+  }
+  if (frontMatter.ticketType === "epic" && frontMatter.subticketIds.includes(frontMatter.id)) {
+    throw new Error("An epic cannot include itself as a subticket.");
+  }
+};
+
 const slashPath = (value: string): string => value.split(path.sep).join("/");
 
 const relativeMarkdownPath = (fromDirectory: string, toFile: string): string => {
@@ -364,6 +405,53 @@ export const readTicket = async (projectPath: string, ticketId: string): Promise
   }
 };
 
+const assertEpicTicket = async (projectPath: string, epicId: string): Promise<TicketRecord> => {
+  const epic = await readTicket(projectPath, epicId);
+  if (epic.frontMatter.ticketType !== "epic") {
+    throw new Error(`Ticket ${epicId} is not an epic.`);
+  }
+  return epic;
+};
+
+const addSubticketIdToEpic = async (projectPath: string, epicId: string, ticketId: string): Promise<TicketRecord> => {
+  if (epicId === ticketId) {
+    throw new Error("An epic cannot include itself as a subticket.");
+  }
+  const epic = await assertEpicTicket(projectPath, epicId);
+  if (epic.frontMatter.subticketIds.includes(ticketId)) return epic;
+  return writeTicket(projectPath, {
+    ...epic,
+    frontMatter: {
+      ...epic.frontMatter,
+      subticketIds: [...epic.frontMatter.subticketIds, ticketId]
+    }
+  });
+};
+
+const removeSubticketIdFromEpic = async (projectPath: string, epicId: string, ticketId: string): Promise<TicketRecord | null> => {
+  try {
+    const epic = await assertEpicTicket(projectPath, epicId);
+    if (!epic.frontMatter.subticketIds.includes(ticketId)) return epic;
+    return writeTicket(projectPath, {
+      ...epic,
+      frontMatter: {
+        ...epic.frontMatter,
+        subticketIds: epic.frontMatter.subticketIds.filter((id) => id !== ticketId)
+      }
+    });
+  } catch (error) {
+    if (isTicketNotFoundError(error)) return null;
+    throw error;
+  }
+};
+
+const validateParentEpic = async (projectPath: string, frontMatter: TicketFrontMatter): Promise<void> => {
+  assertRelationshipShape(frontMatter);
+  if (frontMatter.parentEpicId) {
+    await assertEpicTicket(projectPath, frontMatter.parentEpicId);
+  }
+};
+
 const stringifyTicket = (ticket: TicketRecord): string => {
   const body = ticket.markdown.trimStart();
   return matter.stringify(body.endsWith("\n") ? body : `${body}\n`, ticket.frontMatter);
@@ -371,11 +459,13 @@ const stringifyTicket = (ticket: TicketRecord): string => {
 
 export const writeTicket = async (projectPath: string, ticket: TicketRecord): Promise<TicketRecord> => {
   const target = ticketPath(projectPath, ticket.frontMatter.id);
+  const frontMatter = normalizeFrontMatterRelationships(ticket.frontMatter);
+  assertRelationshipShape(frontMatter);
   const next: TicketRecord = {
     ...ticket,
     filePath: target,
     frontMatter: {
-      ...ticket.frontMatter,
+      ...frontMatter,
       updatedAt: nowIso()
     }
   };
@@ -383,14 +473,17 @@ export const writeTicket = async (projectPath: string, ticket: TicketRecord): Pr
   return next;
 };
 
-export const ticketMarkdownFromDraft = (draft: TicketDraft): string => {
+type TicketMarkdownDraft = TicketDraftSubticket & { research?: TicketDraft["research"] };
+
+export const ticketMarkdownFromDraft = (draft: TicketMarkdownDraft): string => {
   const list = (items: string[]): string =>
     items.length > 0 ? items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n") : "- None.";
   const researchMetadata = (): string => {
     if (
-      draft.research.checkedUrls.length === 0 &&
-      draft.research.inspectedFiles.length === 0 &&
-      draft.research.limitations.length === 0
+      !draft.research ||
+      (draft.research.checkedUrls.length === 0 &&
+        draft.research.inspectedFiles.length === 0 &&
+        draft.research.limitations.length === 0)
     ) {
       return "- No research metadata recorded.";
     }
@@ -446,11 +539,15 @@ No Codex run has been started.
 `;
 };
 
-export const createTicket = async (projectPath: string, input: TicketCreateInput): Promise<TicketRecord> => {
+const createSingleTicket = async (projectPath: string, input: TicketCreateInput): Promise<TicketRecord> => {
   const config = await readProjectConfig(projectPath);
   const status = input.status ?? "todo";
   if (!config.columns.some((column) => column.id === status)) {
     throw new Error(`Unknown ticket status: ${status}`);
+  }
+  const ticketType: TicketType = input.ticketType ?? "task";
+  if (ticketType === "epic" && input.parentEpicId) {
+    throw new Error("Nested epics are not supported.");
   }
   const board = await readBoard(projectPath);
   const lastPosition = Math.max(0, ...board.tickets.filter((ticket) => ticket.status === status).map((ticket) => ticket.position));
@@ -459,22 +556,109 @@ export const createTicket = async (projectPath: string, input: TicketCreateInput
     schemaVersion: RELAY_SCHEMA_VERSION,
     id: newId("tkt"),
     title: input.title.trim(),
+    ticketType,
     status,
     position: lastPosition + 1000,
     priority: input.priority,
     labels: input.labels.map((label) => label.trim()).filter(Boolean),
+    parentEpicId: ticketType === "task" ? input.parentEpicId ?? null : null,
+    subticketIds: [],
     createdAt,
     updatedAt: createdAt,
     codexThreadId: null,
     runStatus: "idle",
     lastRunId: null
   };
+  await validateParentEpic(projectPath, frontMatter);
   const ticket: TicketRecord = {
     frontMatter,
     markdown: input.markdown,
     filePath: ticketPath(projectPath, frontMatter.id)
   };
   return writeTicket(projectPath, ticket);
+};
+
+const createSubticketRecord = async (
+  projectPath: string,
+  epicId: string,
+  input: SubticketCreateInput
+): Promise<TicketRecord> => {
+  await assertEpicTicket(projectPath, epicId);
+  const child = await createSingleTicket(projectPath, {
+    ...input,
+    ticketType: "task",
+    parentEpicId: epicId,
+    subtickets: []
+  });
+  await addSubticketIdToEpic(projectPath, epicId, child.frontMatter.id);
+  return readTicket(projectPath, child.frontMatter.id);
+};
+
+export const createTicket = async (projectPath: string, input: TicketCreateInput): Promise<TicketRecord> => {
+  const subtickets = input.subtickets ?? [];
+  const ticketType: TicketType = input.ticketType ?? "task";
+  if (ticketType !== "epic" && subtickets.length > 0) {
+    throw new Error("Only epic tickets can be created with subtickets.");
+  }
+  const ticket = await createSingleTicket(projectPath, {
+    ...input,
+    ticketType,
+    subtickets: [],
+    subticketIds: []
+  });
+
+  if (ticket.frontMatter.parentEpicId) {
+    await addSubticketIdToEpic(projectPath, ticket.frontMatter.parentEpicId, ticket.frontMatter.id);
+  }
+
+  for (const subticket of subtickets) {
+    await createSubticketRecord(projectPath, ticket.frontMatter.id, subticket);
+  }
+
+  return readTicket(projectPath, ticket.frontMatter.id);
+};
+
+export const createSubticket = async ({ projectPath, epicId, ticket }: EpicSubticketCreateInput): Promise<TicketRecord> =>
+  createSubticketRecord(projectPath, epicId, ticket);
+
+export const linkSubticket = async (projectPath: string, epicId: string, ticketId: string): Promise<BoardSnapshot> => {
+  if (epicId === ticketId) {
+    throw new Error("An epic cannot include itself as a subticket.");
+  }
+  await assertEpicTicket(projectPath, epicId);
+  const child = await readTicket(projectPath, ticketId);
+  if (child.frontMatter.ticketType === "epic") {
+    throw new Error("Nested epics are not supported.");
+  }
+  if (child.frontMatter.parentEpicId && child.frontMatter.parentEpicId !== epicId) {
+    await removeSubticketIdFromEpic(projectPath, child.frontMatter.parentEpicId, ticketId);
+  }
+  await writeTicket(projectPath, {
+    ...child,
+    frontMatter: {
+      ...child.frontMatter,
+      parentEpicId: epicId,
+      subticketIds: []
+    }
+  });
+  await addSubticketIdToEpic(projectPath, epicId, ticketId);
+  return readBoard(projectPath);
+};
+
+export const unlinkSubticket = async (projectPath: string, epicId: string, ticketId: string): Promise<BoardSnapshot> => {
+  await assertEpicTicket(projectPath, epicId);
+  const child = await readTicket(projectPath, ticketId);
+  if (child.frontMatter.parentEpicId === epicId) {
+    await writeTicket(projectPath, {
+      ...child,
+      frontMatter: {
+        ...child.frontMatter,
+        parentEpicId: null
+      }
+    });
+  }
+  await removeSubticketIdFromEpic(projectPath, epicId, ticketId);
+  return readBoard(projectPath);
 };
 
 const calculatePosition = (tickets: TicketSummary[], targetStatus: string, beforeId?: string | null, afterId?: string | null): number => {
@@ -552,6 +736,8 @@ export const saveTicket = async (input: TicketSaveInput): Promise<TicketRecord> 
   }
 
   const existing = await readTicket(input.projectPath, input.ticket.frontMatter.id);
+  const normalizedFrontMatter = normalizeFrontMatterRelationships(input.ticket.frontMatter);
+  await validateParentEpic(input.projectPath, normalizedFrontMatter);
   const statusChanged = existing.frontMatter.status !== targetStatus;
   let position = input.ticket.frontMatter.position;
   if (statusChanged) {
@@ -562,10 +748,17 @@ export const saveTicket = async (input: TicketSaveInput): Promise<TicketRecord> 
   const updated = await writeTicket(input.projectPath, {
     ...input.ticket,
     frontMatter: {
-      ...input.ticket.frontMatter,
+      ...normalizedFrontMatter,
       position
     }
   });
+
+  if (existing.frontMatter.parentEpicId && existing.frontMatter.parentEpicId !== updated.frontMatter.parentEpicId) {
+    await removeSubticketIdFromEpic(input.projectPath, existing.frontMatter.parentEpicId, updated.frontMatter.id);
+  }
+  if (updated.frontMatter.parentEpicId && existing.frontMatter.parentEpicId !== updated.frontMatter.parentEpicId) {
+    await addSubticketIdToEpic(input.projectPath, updated.frontMatter.parentEpicId, updated.frontMatter.id);
+  }
 
   if (statusChanged) {
     await appendAuditEvent(input.projectPath, {
@@ -710,7 +903,43 @@ export const answerClarificationQuestion = async (
   return updated;
 };
 
+const unlinkTicketRelationshipsBeforeDelete = async (projectPath: string, ticket: TicketRecord): Promise<void> => {
+  if (ticket.frontMatter.parentEpicId) {
+    await removeSubticketIdFromEpic(projectPath, ticket.frontMatter.parentEpicId, ticket.frontMatter.id);
+  }
+
+  if (ticket.frontMatter.ticketType !== "epic") return;
+
+  const config = await readProjectConfig(projectPath);
+  const { records } = await readTickets(projectPath, config.columns);
+  const childIds = uniqueTicketIds([
+    ...ticket.frontMatter.subticketIds,
+    ...records
+      .filter((record) => record.frontMatter.parentEpicId === ticket.frontMatter.id)
+      .map((record) => record.frontMatter.id)
+  ]);
+
+  for (const childId of childIds) {
+    if (childId === ticket.frontMatter.id) continue;
+    try {
+      const child = await readTicket(projectPath, childId);
+      if (child.frontMatter.parentEpicId !== ticket.frontMatter.id) continue;
+      await writeTicket(projectPath, {
+        ...child,
+        frontMatter: {
+          ...child.frontMatter,
+          parentEpicId: null
+        }
+      });
+    } catch (error) {
+      if (!isTicketNotFoundError(error)) throw error;
+    }
+  }
+};
+
 export const deleteTicket = async (projectPath: string, ticketId: string): Promise<BoardSnapshot> => {
+  const ticket = await readTicket(projectPath, ticketId);
+  await unlinkTicketRelationshipsBeforeDelete(projectPath, ticket);
   const source = ticketPath(projectPath, ticketId);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const target = path.join(trashPath(projectPath), stamp, `${ticketId}.md`);
@@ -726,7 +955,8 @@ export const duplicateTicket = async (projectPath: string, ticketId: string): Pr
     priority: source.frontMatter.priority,
     labels: source.frontMatter.labels,
     markdown: source.markdown,
-    status: source.frontMatter.status
+    status: source.frontMatter.status,
+    ticketType: source.frontMatter.ticketType
   });
 };
 

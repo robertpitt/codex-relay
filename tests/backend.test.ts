@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { BrowserWindow } from "electron";
@@ -8,10 +8,13 @@ import { startCodexRun, type CodexRunDependencies } from "../src/main/services/c
 import {
   answerClarificationQuestion,
   createClarificationQuestions,
+  createSubticket,
   createTicket,
+  deleteTicket,
   initializeProject,
   isTicketNotFoundError,
   listTicketReferenceCandidates,
+  linkSubticket,
   moveTicket,
   readBoard,
   readClarificationQuestions,
@@ -19,6 +22,7 @@ import {
   readTicket,
   summarizeProject,
   transitionTicketStatus,
+  unlinkSubticket,
   writeProjectConfig
 } from "../src/main/services/storage";
 import type { RendererRunEvent } from "../src/shared/types";
@@ -122,6 +126,146 @@ test("manual ticket moves still work for existing columns", async () => {
 
   assert.equal(board.tickets.find((item) => item.id === ticket.frontMatter.id)?.status, "not_doing");
   assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.status, "not_doing");
+});
+
+test("epic tickets persist ordered subticket relationships across board reloads", async () => {
+  const projectPath = await createProject();
+  const epic = await createTicket(projectPath, {
+    title: "Epic parent",
+    ticketType: "epic",
+    priority: "high",
+    labels: ["epic"],
+    markdown: "# Epic parent\n",
+    subtickets: [
+      {
+        title: "First child",
+        priority: "medium",
+        labels: ["child"],
+        markdown: "# First child\n"
+      },
+      {
+        title: "Second child",
+        priority: "low",
+        labels: [],
+        markdown: "# Second child\n"
+      }
+    ]
+  });
+
+  const reloadedEpic = await readTicket(projectPath, epic.frontMatter.id);
+  assert.equal(reloadedEpic.frontMatter.ticketType, "epic");
+  assert.equal(reloadedEpic.frontMatter.subticketIds.length, 2);
+
+  const [firstChildId, secondChildId] = reloadedEpic.frontMatter.subticketIds;
+  const firstChild = await readTicket(projectPath, firstChildId);
+  const secondChild = await readTicket(projectPath, secondChildId);
+  assert.equal(firstChild.frontMatter.ticketType, "task");
+  assert.equal(firstChild.frontMatter.parentEpicId, epic.frontMatter.id);
+  assert.equal(secondChild.frontMatter.parentEpicId, epic.frontMatter.id);
+
+  await transitionTicketStatus(projectPath, firstChildId, "in_progress", {
+    actor: "user",
+    source: "manual_board"
+  });
+
+  const board = await readBoard(projectPath);
+  assert.equal(board.tickets.find((item) => item.id === epic.frontMatter.id)?.status, "todo");
+  assert.equal(board.tickets.find((item) => item.id === firstChildId)?.status, "in_progress");
+  assert.equal(board.tickets.find((item) => item.id === firstChildId)?.parentEpicId, epic.frontMatter.id);
+  assert.deepEqual((await readTicket(projectPath, epic.frontMatter.id)).frontMatter.subticketIds, [firstChildId, secondChildId]);
+
+  const rawEpic = await readFile(reloadedEpic.filePath, "utf8");
+  const rawChild = await readFile(firstChild.filePath, "utf8");
+  assert.match(rawEpic, /ticketType: epic/);
+  assert.match(rawEpic, /subticketIds:/);
+  assert.match(rawChild, new RegExp(`parentEpicId: ${epic.frontMatter.id}`));
+});
+
+test("epic subtickets can be created, linked, unlinked, and deleted without deleting the parent", async () => {
+  const projectPath = await createProject();
+  const epic = await createTicket(projectPath, {
+    title: "Manual epic",
+    ticketType: "epic",
+    priority: "medium",
+    labels: [],
+    markdown: "# Manual epic\n"
+  });
+  const createdChild = await createSubticket({
+    projectPath,
+    epicId: epic.frontMatter.id,
+    ticket: {
+      title: "Created child",
+      priority: "medium",
+      labels: [],
+      markdown: "# Created child\n"
+    }
+  });
+  const looseTicket = await createTicket(projectPath, {
+    title: "Loose child",
+    priority: "low",
+    labels: [],
+    markdown: "# Loose child\n"
+  });
+
+  await linkSubticket(projectPath, epic.frontMatter.id, looseTicket.frontMatter.id);
+  assert.deepEqual((await readTicket(projectPath, epic.frontMatter.id)).frontMatter.subticketIds, [
+    createdChild.frontMatter.id,
+    looseTicket.frontMatter.id
+  ]);
+  assert.equal((await readTicket(projectPath, looseTicket.frontMatter.id)).frontMatter.parentEpicId, epic.frontMatter.id);
+
+  await unlinkSubticket(projectPath, epic.frontMatter.id, looseTicket.frontMatter.id);
+  assert.equal((await readTicket(projectPath, looseTicket.frontMatter.id)).frontMatter.parentEpicId, null);
+  assert.deepEqual((await readTicket(projectPath, epic.frontMatter.id)).frontMatter.subticketIds, [createdChild.frontMatter.id]);
+
+  await deleteTicket(projectPath, createdChild.frontMatter.id);
+  const board = await readBoard(projectPath);
+  assert.ok(board.tickets.some((item) => item.id === epic.frontMatter.id));
+  assert.ok(!board.tickets.some((item) => item.id === createdChild.frontMatter.id));
+  assert.deepEqual((await readTicket(projectPath, epic.frontMatter.id)).frontMatter.subticketIds, []);
+
+  const nestedEpic = await createTicket(projectPath, {
+    title: "Nested candidate",
+    ticketType: "epic",
+    priority: "medium",
+    labels: [],
+    markdown: "# Nested candidate\n"
+  });
+  await assert.rejects(linkSubticket(projectPath, epic.frontMatter.id, nestedEpic.frontMatter.id), /Nested epics are not supported/);
+  await assert.rejects(linkSubticket(projectPath, epic.frontMatter.id, epic.frontMatter.id), /itself/);
+});
+
+test("legacy tickets without epic metadata load as task tickets", async () => {
+  const projectPath = await createProject();
+  const now = new Date().toISOString();
+  await writeFile(
+    path.join(projectPath, ".relay", "tickets", "tkt_legacy.md"),
+    `---
+schemaVersion: 1
+id: tkt_legacy
+title: Legacy task
+status: todo
+position: 1000
+priority: medium
+labels: []
+createdAt: ${now}
+updatedAt: ${now}
+codexThreadId:
+runStatus: idle
+lastRunId:
+---
+# Legacy task
+`,
+    "utf8"
+  );
+
+  const board = await readBoard(projectPath);
+  const legacy = board.tickets.find((ticket) => ticket.id === "tkt_legacy");
+
+  assert.ok(legacy);
+  assert.equal(legacy.ticketType, "task");
+  assert.equal(legacy.parentEpicId, null);
+  assert.deepEqual(legacy.subticketIds, []);
 });
 
 test("project summaries include ordered swimlane counts including empty lanes", async () => {

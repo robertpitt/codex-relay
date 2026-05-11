@@ -16,7 +16,9 @@ import {
   type RelayCodexEvent,
   type RendererRunEvent,
   type StartRunInput,
+  type TicketCreateInput,
   type TicketDraft,
+  type TicketDraftSubticket,
   type TicketDraftResearch,
   type TicketDraftResearchFile,
   type TicketDraftResearchLimits,
@@ -112,7 +114,7 @@ const ticketUpdateThreadOptionsForProject = async (projectPath: string): Promise
   webSearchMode: "disabled"
 });
 
-const ticketDraftSchemaJson = {
+const ticketDraftBaseSchemaJson = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -138,6 +140,16 @@ const ticketDraftSchemaJson = {
     acceptanceCriteria: { type: "array", items: { type: "string" } },
     clarificationQuestions: { type: "array", items: { type: "string" } },
     implementationNotes: { type: "array", items: { type: "string" } }
+  }
+} as const;
+
+const ticketDraftSchemaJson = {
+  ...ticketDraftBaseSchemaJson,
+  required: [...ticketDraftBaseSchemaJson.required, "ticketType", "subtickets"],
+  properties: {
+    ...ticketDraftBaseSchemaJson.properties,
+    ticketType: { type: "string", enum: ["task", "epic"] },
+    subtickets: { type: "array", items: ticketDraftBaseSchemaJson }
   }
 } as const;
 
@@ -985,7 +997,7 @@ export const ticketDraftErrorToPayload = (error: unknown): TicketDraftErrorPaylo
 };
 
 export const createTicketDraft = async (
-  { projectPath, idea }: CreateDraftInput,
+  { projectPath, idea, preferredTicketType }: CreateDraftInput,
   dependencies: TicketDraftDependencies = {}
 ): Promise<TicketDraft> => {
   const requestId = dependencies.createRequestId?.() ?? newId("tdr");
@@ -1028,7 +1040,7 @@ export const createTicketDraft = async (
     }
 
     const config = await readProjectConfig(projectPath);
-    const research = await researchTicketDraft({ projectPath, idea }, dependencies);
+    const research = await researchTicketDraft({ projectPath, idea, preferredTicketType }, dependencies);
     await logInfo("codex:draft", "ticket draft research completed", {
       ...logBase,
       durationMs: durationMs(),
@@ -1040,6 +1052,10 @@ export const createTicketDraft = async (
     const codex = dependencies.createCodexClient?.() ?? createCodex();
     const thread = codex.startThread(await threadOptionsForProject(projectPath));
     abortController = new AbortController();
+    const ticketTypeGuidance =
+      preferredTicketType === "epic"
+        ? "The user selected Epic mode. Return ticketType \"epic\" and decompose the work into normal task subtickets."
+        : "The user selected Task mode unless the idea explicitly asks for an epic. Return ticketType \"task\" with an empty subtickets array for ordinary work.";
     const prompt = `You are helping create a local software implementation ticket for Relay.
 
 The user will provide a rough idea. Convert it into a clear, actionable ticket for a coding agent and human developer.
@@ -1047,6 +1063,9 @@ The user will provide a rough idea. Convert it into a clear, actionable ticket f
 Use the bounded research context below to ground the ticket. Include concrete source references in researchFindings, such as file paths, function/component names, or URL titles. If research failed or was incomplete, state that limitation in researchFindings or implementationNotes.
 
 Generate implementationPlan as specific engineering steps informed by the research context. Do not include large copied source blocks or long page excerpts.
+
+Relay supports two ticket types: task and epic. ${ticketTypeGuidance}
+For epic drafts, the parent epic should describe the overall outcome and subtickets should be independently implementable normal task tickets with their own requirements, implementationPlan, acceptanceCriteria, labels, and priority. Do not create nested epics. For task drafts, subtickets must be an empty array.
 
 Return only data matching the requested schema. Do not implement the task.
 
@@ -1850,9 +1869,19 @@ export const approveCodexAction = async (_approvalId?: string, _decision?: strin
   throw new Error("The current Codex SDK does not expose interactive approval submission. Keep approval policy on-request in Codex config or use the future app-server adapter for richer approvals.");
 };
 
-export const draftToCreateInput = (draft: TicketDraft): { title: string; priority: TicketDraft["priority"]; labels: string[]; markdown: string } => ({
+const subticketDraftToCreateInput = (draft: TicketDraftSubticket): TicketCreateInput => ({
   title: draft.title,
   priority: draft.priority,
   labels: draft.labels,
-  markdown: ticketMarkdownFromDraft(draft)
+  markdown: ticketMarkdownFromDraft(draft),
+  ticketType: "task"
+});
+
+export const draftToCreateInput = (draft: TicketDraft): TicketCreateInput => ({
+  title: draft.title,
+  priority: draft.priority,
+  labels: draft.labels,
+  markdown: ticketMarkdownFromDraft(draft),
+  ticketType: draft.ticketType,
+  subtickets: draft.ticketType === "epic" ? draft.subtickets.map(subticketDraftToCreateInput) : []
 });
