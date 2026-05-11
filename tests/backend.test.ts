@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Effect } from "effect";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { BrowserWindow } from "electron";
-import { startCodexRun, type CodexRunDependencies } from "../src/main/services/codex";
+import { cancelCodexRun, preflightCodexRun, readCodexRunEvents, startCodexRun, type CodexRunDependencies } from "../src/main/services/codex";
+import { BackendClock, runBackendEffect } from "../src/main/services/runtime";
 import {
   answerClarificationQuestion,
   createClarificationQuestions,
@@ -22,6 +23,7 @@ import {
   readTicket,
   summarizeProject,
   transitionTicketStatus,
+  writeTicket,
   unlinkSubticket,
   writeProjectConfig
 } from "../src/main/services/storage";
@@ -53,16 +55,14 @@ const allowNonGitRuns = async (projectPath: string): Promise<void> => {
   });
 };
 
-const createFakeWindow = (): { window: BrowserWindow; events: RendererRunEvent[] } => {
+const createFakeRunEventSink = (): { runEventSink: NonNullable<CodexRunDependencies["runEventSink"]>; events: RendererRunEvent[] } => {
   const events: RendererRunEvent[] = [];
   return {
-    window: {
-      webContents: {
-        send: (_channel: string, event: RendererRunEvent) => {
-          events.push(event);
-        }
+    runEventSink: {
+      emit: (event: RendererRunEvent) => {
+        events.push(event);
       }
-    } as unknown as BrowserWindow,
+    },
     events
   };
 };
@@ -75,6 +75,17 @@ const waitFor = async (predicate: () => boolean, label: string): Promise<void> =
   }
   assert.fail(`Timed out waiting for ${label}`);
 };
+
+test("backend Effect runtime provides shared services", async () => {
+  const timestamp = await runBackendEffect(
+    Effect.gen(function*() {
+      const clock = yield* BackendClock;
+      return clock.nowIso();
+    })
+  );
+
+  assert.match(timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
 
 test("automated ticket status transitions reuse ticket storage and append audit events", async () => {
   const projectPath = await createProject();
@@ -297,10 +308,30 @@ test("project summaries include ordered swimlane counts including empty lanes", 
       ["todo", 1],
       ["in_progress", 1],
       ["needs_clarification", 0],
+      ["review", 0],
       ["not_doing", 0],
       ["completed", 0]
     ]
   );
+});
+
+test("legacy project configs are normalized with review lane without rewriting the file", async () => {
+  const projectPath = await createProject();
+  const config = await readProjectConfig(projectPath);
+  const legacyConfig = {
+    ...config,
+    columns: config.columns.filter((column) => column.id !== "review")
+  };
+  await writeFile(path.join(projectPath, ".relay", "project.json"), JSON.stringify(legacyConfig, null, 2));
+
+  const normalized = await readProjectConfig(projectPath);
+  assert.deepEqual(
+    normalized.columns.map((column) => column.id),
+    ["todo", "in_progress", "needs_clarification", "review", "not_doing", "completed"]
+  );
+
+  const raw = await readFile(path.join(projectPath, ".relay", "project.json"), "utf8");
+  assert.doesNotMatch(raw, /"id": "review"/);
 });
 
 test("ticket reads stay scoped to the requested project after switching projects", async () => {
@@ -404,10 +435,11 @@ test("codex runs preserve the selected project context after a cross-project swi
     labels: [],
     markdown: "# Active second project ticket\n\nRun this ticket only.\n"
   });
-  const { window, events } = createFakeWindow();
+  const { runEventSink, events } = createFakeRunEventSink();
   let capturedPrompt = "";
   let capturedWorkingDirectory = "";
   const dependencies: CodexRunDependencies = {
+    runEventSink,
     createRunId: () => "run_project_scope",
     createCodexClient: () =>
       ({
@@ -432,16 +464,319 @@ test("codex runs preserve the selected project context after a cross-project swi
       }) as CodexRunDependencies["createCodexClient"] extends () => infer Client ? Client : never
   };
 
-  await startCodexRun(window, { projectPath: secondProject, ticketId: secondTicket.frontMatter.id }, dependencies);
+  await startCodexRun({ projectPath: secondProject, ticketId: secondTicket.frontMatter.id }, dependencies);
   await waitFor(() => events.some((event) => event.type === "run.completed"), "run completion");
 
   assert.equal(capturedWorkingDirectory, secondProject);
   assert.match(capturedPrompt, /Active second project ticket/);
   assert.doesNotMatch(capturedPrompt, /Stale first project ticket/);
   assert.equal(events.every((event) => event.projectPath === secondProject && event.ticketId === secondTicket.frontMatter.id), true);
-  assert.equal((await readTicket(secondProject, secondTicket.frontMatter.id)).frontMatter.runStatus, "completed");
+  const completedRunTicket = await readTicket(secondProject, secondTicket.frontMatter.id);
+  assert.equal(completedRunTicket.frontMatter.runStatus, "completed");
+  assert.equal(completedRunTicket.frontMatter.status, "review");
   await access(path.join(secondProject, ".relay", "runs", secondTicket.frontMatter.id, "run_project_scope.jsonl"));
   await assert.rejects(access(path.join(firstProject, ".relay", "runs", firstTicket.frontMatter.id, "run_project_scope.jsonl")));
+});
+
+test("successful codex runs move to review before human acceptance", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const ticket = await createTicket(projectPath, {
+    title: "Review gate",
+    priority: "medium",
+    labels: ["codex"],
+    markdown: "# Review gate\n"
+  });
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: CodexRunDependencies = {
+    runEventSink,
+    createRunId: () => "run_review_gate",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          id: "thread_review_gate",
+          runStreamed: async () => ({
+            events: (async function*() {
+              yield { type: "thread.started", thread_id: "thread_review_gate" };
+              yield { type: "item.completed", item: { type: "agent_message", text: "Ready for review." } };
+              yield { type: "turn.completed", usage: { total_tokens: 1 } };
+            })()
+          })
+        }),
+        resumeThread: () => {
+          throw new Error("resumeThread should not be used for a fresh run.");
+        }
+      }) as CodexRunDependencies["createCodexClient"] extends () => infer Client ? Client : never
+  };
+
+  await startCodexRun({ projectPath, ticketId: ticket.frontMatter.id }, dependencies);
+  await waitFor(() => events.some((event) => event.type === "run.completed"), "review-gated completion");
+
+  const readyForReview = await readTicket(projectPath, ticket.frontMatter.id);
+  assert.equal(readyForReview.frontMatter.runStatus, "completed");
+  assert.equal(readyForReview.frontMatter.status, "review");
+
+  await moveTicket({ projectPath, ticketId: ticket.frontMatter.id, targetStatus: "completed" });
+  assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.status, "completed");
+});
+
+test("codex runs reject non-git projects until explicitly allowed", async () => {
+  const projectPath = await createProject();
+  const ticket = await createTicket(projectPath, {
+    title: "Non git run",
+    priority: "medium",
+    labels: [],
+    markdown: "# Non git run\n"
+  });
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: CodexRunDependencies = {
+    runEventSink,
+    createCodexClient: () => {
+      throw new Error("Codex client should not be created for disallowed non-git runs.");
+    }
+  };
+
+  const preflight = await preflightCodexRun({ projectPath, ticketId: ticket.frontMatter.id });
+  assert.equal(preflight.ok, false);
+  assert.match(preflight.errors.join(" "), /not a Git repository/);
+
+  await assert.rejects(
+    startCodexRun({ projectPath, ticketId: ticket.frontMatter.id }, dependencies),
+    /not a Git repository/
+  );
+
+  assert.equal(events.length, 0);
+  assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.runStatus, "idle");
+});
+
+test("codex run preflight blocks invalid workflow states", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+
+  const completedTicket = await createTicket(projectPath, {
+    title: "Accepted work",
+    priority: "medium",
+    labels: [],
+    markdown: "# Accepted work\n"
+  });
+  await moveTicket({ projectPath, ticketId: completedTicket.frontMatter.id, targetStatus: "completed" });
+  const completedPreflight = await preflightCodexRun({ projectPath, ticketId: completedTicket.frontMatter.id });
+  assert.equal(completedPreflight.ok, false);
+  assert.match(completedPreflight.errors.join(" "), /Completed tickets are human accepted/);
+
+  const notDoingTicket = await createTicket(projectPath, {
+    title: "Rejected work",
+    priority: "medium",
+    labels: [],
+    markdown: "# Rejected work\n"
+  });
+  await moveTicket({ projectPath, ticketId: notDoingTicket.frontMatter.id, targetStatus: "not_doing" });
+  const notDoingPreflight = await preflightCodexRun({ projectPath, ticketId: notDoingTicket.frontMatter.id });
+  assert.equal(notDoingPreflight.ok, false);
+  assert.match(notDoingPreflight.errors.join(" "), /Not Doing/);
+
+  const epic = await createTicket(projectPath, {
+    title: "Planning container",
+    priority: "medium",
+    labels: [],
+    markdown: "# Planning container\n",
+    ticketType: "epic"
+  });
+  const epicPreflight = await preflightCodexRun({ projectPath, ticketId: epic.frontMatter.id });
+  assert.equal(epicPreflight.ok, false);
+  assert.match(epicPreflight.errors.join(" "), /Epics are planning containers/);
+
+  const clarificationTicket = await createTicket(projectPath, {
+    title: "Open question",
+    priority: "medium",
+    labels: [],
+    markdown: "# Open question\n"
+  });
+  await createClarificationQuestions(projectPath, clarificationTicket.frontMatter.id, [{ question: "Which API should this target?" }], {
+    actor: "codex",
+    source: "agent_execution",
+    runId: "run_open_question",
+    codexThreadId: "thread_open_question"
+  });
+  const clarificationPreflight = await preflightCodexRun({ projectPath, ticketId: clarificationTicket.frontMatter.id });
+  assert.equal(clarificationPreflight.ok, false);
+  assert.equal(clarificationPreflight.unansweredClarificationCount, 1);
+  assert.match(clarificationPreflight.errors.join(" "), /clarification question/);
+
+  const staleRunningTicket = await createTicket(projectPath, {
+    title: "Stale running state",
+    priority: "medium",
+    labels: [],
+    markdown: "# Stale running state\n"
+  });
+  await writeTicket(projectPath, {
+    ...staleRunningTicket,
+    frontMatter: {
+      ...staleRunningTicket.frontMatter,
+      runStatus: "running"
+    }
+  });
+  const staleRunningPreflight = await preflightCodexRun({ projectPath, ticketId: staleRunningTicket.frontMatter.id });
+  assert.equal(staleRunningPreflight.ok, false);
+  assert.match(staleRunningPreflight.errors.join(" "), /already marked as running/);
+});
+
+test("codex run failures preserve failed run status and renderer-facing events", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const ticket = await createTicket(projectPath, {
+    title: "Failing run",
+    priority: "high",
+    labels: ["codex"],
+    markdown: "# Failing run\n"
+  });
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: CodexRunDependencies = {
+    runEventSink,
+    createRunId: () => "run_backend_failure",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          id: "thread_backend_failure",
+          runStreamed: async () => ({
+            events: (async function*() {
+              yield { type: "thread.started", thread_id: "thread_backend_failure" };
+              yield { type: "turn.failed", error: { message: "SDK stream failed." } };
+            })()
+          })
+        }),
+        resumeThread: () => {
+          throw new Error("resumeThread should not be used for a fresh run.");
+        }
+      }) as CodexRunDependencies["createCodexClient"] extends () => infer Client ? Client : never
+  };
+
+  await startCodexRun({ projectPath, ticketId: ticket.frontMatter.id }, dependencies);
+  await waitFor(() => events.some((event) => event.type === "run.failed"), "run failure");
+
+  const updated = await readTicket(projectPath, ticket.frontMatter.id);
+  assert.equal(updated.frontMatter.runStatus, "failed");
+  assert.equal(events.some((event) => event.type === "run.failed" && event.message === "SDK stream failed."), true);
+
+  const persistedEvents = await readCodexRunEvents(projectPath, ticket.frontMatter.id, "run_backend_failure");
+  assert.equal(persistedEvents.some((event) => event.type === "run.failed" && event.message === "SDK stream failed."), true);
+});
+
+test("codex run startup failures finalize active run state", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const ticket = await createTicket(projectPath, {
+    title: "Startup failure",
+    priority: "high",
+    labels: ["codex"],
+    markdown: "# Startup failure\n"
+  });
+  const { runEventSink } = createFakeRunEventSink();
+  const dependencies: CodexRunDependencies = {
+    runEventSink,
+    createRunId: () => "run_stream_start_failure",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          id: "thread_stream_start_failure",
+          runStreamed: async () => {
+            throw new Error("Stream could not start.");
+          }
+        }),
+        resumeThread: () => {
+          throw new Error("resumeThread should not be used for a fresh run.");
+        }
+      }) as CodexRunDependencies["createCodexClient"] extends () => infer Client ? Client : never
+  };
+
+  await assert.rejects(
+    startCodexRun({ projectPath, ticketId: ticket.frontMatter.id }, dependencies),
+    /Stream could not start/
+  );
+
+  assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.runStatus, "failed");
+
+  await cancelCodexRun("run_stream_start_failure");
+  assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.runStatus, "failed");
+
+  const persistedEvents = await readCodexRunEvents(projectPath, ticket.frontMatter.id, "run_stream_start_failure");
+  assert.equal(persistedEvents.some((event) => event.type === "run.failed" && event.message === "Stream could not start."), true);
+});
+
+test("codex run cancellation aborts the stream and cleans up the active run", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const ticket = await createTicket(projectPath, {
+    title: "Cancellation cleanup",
+    priority: "medium",
+    labels: ["codex"],
+    markdown: "# Cancellation cleanup\n"
+  });
+  const { runEventSink, events } = createFakeRunEventSink();
+  let capturedSignal: AbortSignal | undefined;
+  const dependencies: CodexRunDependencies = {
+    runEventSink,
+    createRunId: () => "run_cancel_cleanup",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          id: "thread_cancel_cleanup",
+          runStreamed: async (_prompt: string, options?: { signal?: AbortSignal }) => {
+            capturedSignal = options?.signal;
+            return {
+              events: (async function*() {
+                yield { type: "thread.started", thread_id: "thread_cancel_cleanup" };
+                await new Promise<void>((_resolve, reject) => {
+                  if (capturedSignal?.aborted) {
+                    const error = new Error("The operation was aborted.");
+                    error.name = "AbortError";
+                    reject(error);
+                    return;
+                  }
+                  capturedSignal?.addEventListener(
+                    "abort",
+                    () => {
+                      const error = new Error("The operation was aborted.");
+                      error.name = "AbortError";
+                      reject(error);
+                    },
+                    { once: true }
+                  );
+                });
+              })()
+            };
+          }
+        }),
+        resumeThread: () => {
+          throw new Error("resumeThread should not be used for a fresh run.");
+        }
+      }) as CodexRunDependencies["createCodexClient"] extends () => infer Client ? Client : never
+  };
+
+  await startCodexRun({ projectPath, ticketId: ticket.frontMatter.id }, dependencies);
+  await waitFor(() => events.some((event) => event.type === "run.started"), "run start before cancellation");
+  const duplicatePreflight = await preflightCodexRun({ projectPath, ticketId: ticket.frontMatter.id });
+  assert.equal(duplicatePreflight.ok, false);
+  assert.match(duplicatePreflight.errors.join(" "), /active Codex run/);
+  await cancelCodexRun("run_cancel_cleanup");
+
+  assert.equal(capturedSignal?.aborted, true);
+  await waitFor(() => events.some((event) => event.type === "run.failed"), "run cancellation finalizer");
+  assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.runStatus, "cancelled");
+
+  const cancelled = await readTicket(projectPath, ticket.frontMatter.id);
+  await writeTicket(projectPath, {
+    ...cancelled,
+    frontMatter: {
+      ...cancelled.frontMatter,
+      runStatus: "failed"
+    }
+  });
+  await cancelCodexRun("run_cancel_cleanup");
+  assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.runStatus, "failed");
+
+  const persistedEvents = await readCodexRunEvents(projectPath, ticket.frontMatter.id, "run_cancel_cleanup");
+  assert.equal(persistedEvents.some((event) => event.type === "run.failed" && /aborted/i.test(event.message)), true);
 });
 
 test("clarification questions and answers persist with auditable events", async () => {

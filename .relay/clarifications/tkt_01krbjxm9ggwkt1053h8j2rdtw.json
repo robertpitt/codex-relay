@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krbjxm9ggwkt1053h8j2rdtw",
+  "questions": [
+    {
+      "id": "clar_01krbk7a92f51fgxcwr00fmz9w",
+      "ticketId": "tkt_01krbjxm9ggwkt1053h8j2rdtw",
+      "question": "What exact npm package name and version should Relay target for Effect v4 / effect-smol, and should internal backend APIs remain source-compatible or may small breaking changes be made during the migration?",
+      "answerType": "text",
+      "answer": "4.0.0-beta.65",
+      "createdAt": "2026-05-11T13:22:02.146Z",
+      "updatedAt": "2026-05-11T13:23:05.500Z",
+      "answeredAt": "2026-05-11T13:23:05.500Z",
+      "createdBy": "codex",
+      "source": "agent_execution",
+      "runId": "run_01krbk27c1yjfhp07endy6a2m3",
+      "codexThreadId": "019e1731-1dec-7b71-8cc2-a4bbff882e11"
+    }
+  ]
+}

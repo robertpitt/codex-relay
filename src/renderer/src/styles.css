@@ -1278,6 +1278,22 @@ kbd {
   margin: 0;
 }
 
+.draft-plan-editor {
+  display: grid;
+  gap: var(--relay-space-3);
+  border-radius: var(--relay-radius-md);
+  background: rgb(255 255 255 / 3%);
+  padding: var(--relay-space-3);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+
+.draft-plan-textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
 .draft-subtickets {
   display: grid;
   gap: var(--relay-space-2);
@@ -1983,6 +1999,11 @@ kbd {
   align-items: center;
   gap: var(--relay-space-2);
   font-size: var(--relay-text-md);
+}
+
+.ticket-update-error.warning {
+  background: rgb(251 191 36 / 12%);
+  color: #fbbf24;
 }
 
 .detail-markdown {

@@ -14,6 +14,8 @@ const entryPoints = [
   path.join(testsDir, "clarification-panel.test.tsx"),
   path.join(testsDir, "create-ticket-mention-layout.test.ts"),
   path.join(testsDir, "git-metadata.test.tsx"),
+  path.join(testsDir, "import-boundaries.test.ts"),
+  path.join(testsDir, "ipc-contract.test.ts"),
   path.join(testsDir, "keyboard-shortcuts.test.ts"),
   path.join(testsDir, "markdown-block.test.tsx"),
   path.join(testsDir, "project-sidebar.test.tsx"),

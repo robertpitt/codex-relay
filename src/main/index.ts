@@ -1,56 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type MessageBoxOptions, type OpenDialogOptions } from "electron";
-import path from "node:path";
+import { Effect } from "effect";
 import { fileURLToPath } from "node:url";
-import type {
-  AddProjectResult,
-  ClarificationAnswerInput,
-  EpicSubticketCreateInput,
-  EpicSubticketLinkInput,
-  EpicSubticketUnlinkInput,
-  TicketCreateInput,
-  TicketDraftResult,
-  GitMetadataOptions,
-  TicketMoveInput,
-  TicketSaveInput
-} from "../shared/types";
-import {
-  cancelTicketUpdateRun,
-  createTicketDraft,
-  getCodexStatus,
-  startCodexRun,
-  resumeCodexRun,
-  cancelCodexRun,
-  approveCodexAction,
-  readCodexRunEvents,
-  startTicketUpdateRun,
-  ticketDraftErrorToPayload
-} from "./services/codex";
-import { readCachedGitMetadata } from "./services/git";
-import { getLogPath, logError, logInfo, logWarn } from "./services/logger";
-import { readRegistry, removeProjectPath, upsertProjectPath } from "./services/registry";
-import {
-  createTicket,
-  createSubticket,
-  deleteTicket,
-  duplicateTicket,
-  answerClarificationQuestion,
-  initializeProject,
-  isTicketNotFoundError,
-  listTicketReferenceCandidates,
-  linkSubticket,
-  moveTicket,
-  readBoard,
-  readClarificationQuestions,
-  readTicket,
-  revealTicketFile,
-  saveTicket,
-  summarizeProject,
-  unlinkSubticket,
-} from "./services/storage";
+import { ElectronApp } from "./electron";
+import { installRelayIpcHandlers } from "./ipc";
+import { RelayWindow, relayWindowPaths } from "./window/RelayWindow";
+import { runBackendEffect } from "./services/runtime";
+import { disposeAppRuntime, installAppRuntime } from "./services/runtime/appLayer";
+import { getLogPath, logError, logInfo } from "./services/logger";
+import { pathDirname } from "./services/io";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = pathDirname(fileURLToPath(import.meta.url));
+const windowOptions = relayWindowPaths(__dirname);
 
-let mainWindow: BrowserWindow | null = null;
+installAppRuntime();
 
 process.on("uncaughtException", (error) => {
   void logError("process", "uncaught exception", error);
@@ -60,209 +21,36 @@ process.on("unhandledRejection", (error) => {
   void logError("process", "unhandled rejection", error);
 });
 
-const createWindow = async (): Promise<void> => {
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 980,
-    minWidth: 1024,
-    minHeight: 720,
-    title: "Relay",
-    backgroundColor: "#f6f4ef",
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, "../preload/index.mjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
-  });
+const createRelayWindow = (): Promise<void> => runBackendEffect(RelayWindow.use((window) => window.createMain(windowOptions)));
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
-
-  mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    void logError("renderer", "render process gone", new Error(`${details.reason} (${details.exitCode})`));
-  });
-
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    void logError("renderer", "failed to load", new Error(`${errorCode} ${errorDescription} ${validatedURL}`));
-  });
-
-  if (process.env.ELECTRON_RENDERER_URL) {
-    await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    await mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
-  }
-};
-
-const registerIpc = (): void => {
-  ipcMain.handle("projects:list", async () => {
-    const registry = await readRegistry();
-    return Promise.all(
-      [...registry.projects]
-        .sort((a, b) => a.sidebarPosition - b.sidebarPosition)
-        .map((project) => summarizeProject(project.path, project.lastOpenedAt))
-    );
-  });
-
-  ipcMain.handle("projects:addFolder", async (): Promise<AddProjectResult | null> => {
-    const options: OpenDialogOptions = {
-      title: "Add Relay Project",
-      properties: ["openDirectory", "createDirectory"]
-    };
-    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return null;
-
-    const projectPath = path.resolve(result.filePaths[0]);
-    const summary = await summarizeProject(projectPath);
-    let initialized = false;
-
-    if (!summary.relayInitialized) {
-      const messageBoxOptions: MessageBoxOptions = {
-        type: "question",
-        buttons: ["Initialize", "Cancel"],
-        defaultId: 0,
-        cancelId: 1,
-        title: "Initialize Relay Project",
-        message: "Relay needs to create a .relay folder in this project.",
-        detail: projectPath
-      };
-      const confirm = mainWindow
-        ? await dialog.showMessageBox(mainWindow, messageBoxOptions)
-        : await dialog.showMessageBox(messageBoxOptions);
-      if (confirm.response !== 0) return null;
-      await initializeProject(projectPath);
-      initialized = true;
-    }
-
-    await upsertProjectPath(projectPath);
-    return {
-      project: await summarizeProject(projectPath, new Date().toISOString()),
-      initialized
-    };
-  });
-
-  ipcMain.handle("projects:removeFromSidebar", async (_event, projectPath: string) => {
-    const registry = await removeProjectPath(projectPath);
-    return Promise.all(
-      [...registry.projects]
-        .sort((a, b) => a.sidebarPosition - b.sidebarPosition)
-        .map((project) => summarizeProject(project.path, project.lastOpenedAt))
-    );
-  });
-
-  ipcMain.handle("projects:read", async (_event, projectPath: string) => summarizeProject(projectPath));
-
-  ipcMain.handle("projects:gitMetadata", async (_event, projectPath: string, options?: GitMetadataOptions) =>
-    readCachedGitMetadata(projectPath, options)
-  );
-
-  ipcMain.handle("projects:revealInFinder", async (_event, projectPath: string) => {
-    await shell.openPath(projectPath);
-  });
-
-  ipcMain.handle("board:read", async (_event, projectPath: string) => readBoard(projectPath));
-
-  ipcMain.handle("ticket:createDraft", async (_event, input): Promise<TicketDraftResult> => {
-    try {
-      return { ok: true, draft: await createTicketDraft(input) };
-    } catch (error) {
-      return { ok: false, error: ticketDraftErrorToPayload(error) };
-    }
-  });
-
-  ipcMain.handle("ticket:createManual", async (_event, projectPath: string, input: TicketCreateInput) =>
-    createTicket(projectPath, input)
-  );
-
-  ipcMain.handle("ticket:createSubticket", async (_event, input: EpicSubticketCreateInput) => createSubticket(input));
-
-  ipcMain.handle("ticket:linkSubticket", async (_event, input: EpicSubticketLinkInput) =>
-    linkSubticket(input.projectPath, input.epicId, input.ticketId)
-  );
-
-  ipcMain.handle("ticket:unlinkSubticket", async (_event, input: EpicSubticketUnlinkInput) =>
-    unlinkSubticket(input.projectPath, input.epicId, input.ticketId)
-  );
-
-  ipcMain.handle("ticket:startAgentUpdate", async (_event, input) => {
-    if (!mainWindow) throw new Error("Relay window is not ready.");
-    return startTicketUpdateRun(mainWindow, input);
-  });
-
-  ipcMain.handle("ticket:cancelAgentUpdate", async (_event, runId: string) => cancelTicketUpdateRun(runId));
-
-  ipcMain.handle("ticket:references", async (_event, projectPath: string) => listTicketReferenceCandidates(projectPath));
-
-  ipcMain.handle("ticket:read", async (_event, projectPath: string, ticketId: string) => {
-    const resolvedProjectPath = path.resolve(projectPath);
-    try {
-      return await readTicket(resolvedProjectPath, ticketId);
-    } catch (error) {
-      const meta = { projectPath: resolvedProjectPath, ticketId };
-      if (isTicketNotFoundError(error)) {
-        await logWarn("ticket:read", "ticket file missing", { ...meta, filePath: error.filePath });
-      } else {
-        await logError("ticket:read", "ticket read failed", error, meta);
-      }
-      throw error;
-    }
-  });
-
-  ipcMain.handle("ticket:save", async (_event, input: TicketSaveInput) => saveTicket(input));
-
-  ipcMain.handle("ticket:move", async (_event, input: TicketMoveInput) => moveTicket(input));
-
-  ipcMain.handle("ticket:clarifications", async (_event, projectPath: string, ticketId: string) =>
-    readClarificationQuestions(projectPath, ticketId)
-  );
-
-  ipcMain.handle("ticket:answerClarification", async (_event, input: ClarificationAnswerInput) =>
-    answerClarificationQuestion(input.projectPath, input.ticketId, input.questionId, input.answer)
-  );
-
-  ipcMain.handle("ticket:delete", async (_event, projectPath: string, ticketId: string) => deleteTicket(projectPath, ticketId));
-
-  ipcMain.handle("ticket:duplicate", async (_event, projectPath: string, ticketId: string) => duplicateTicket(projectPath, ticketId));
-
-  ipcMain.handle("ticket:revealFile", async (_event, projectPath: string, ticketId: string) => revealTicketFile(projectPath, ticketId));
-
-  ipcMain.handle("codex:status", async () => getCodexStatus());
-
-  ipcMain.handle("codex:startRun", async (_event, input) => {
-    if (!mainWindow) throw new Error("Relay window is not ready.");
-    return startCodexRun(mainWindow, input);
-  });
-
-  ipcMain.handle("codex:resumeRun", async (_event, input) => {
-    if (!mainWindow) throw new Error("Relay window is not ready.");
-    return resumeCodexRun(mainWindow, input);
-  });
-
-  ipcMain.handle("codex:cancelRun", async (_event, runId: string) => cancelCodexRun(runId));
-
-  ipcMain.handle("codex:approveAction", async (_event, approvalId: string, decision: string) => approveCodexAction(approvalId, decision));
-
-  ipcMain.handle("codex:readRunEvents", async (_event, projectPath: string, ticketId: string, runId: string) =>
-    readCodexRunEvents(projectPath, ticketId, runId)
-  );
-};
-
-app.whenReady().then(async () => {
+const start = async (): Promise<void> => {
+  await runBackendEffect(ElectronApp.use((electronApp) => electronApp.whenReady()));
   await logInfo("app", "Relay starting", { logPath: getLogPath() });
-  registerIpc();
-  await createWindow();
+  await runBackendEffect(installRelayIpcHandlers());
+  await createRelayWindow();
 
-  app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createWindow();
-    }
-  });
-});
+  await runBackendEffect(
+    Effect.gen(function*() {
+      const electronApp = yield* ElectronApp;
+      const relayWindow = yield* RelayWindow;
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+      yield* electronApp.onActivate(() => {
+        void runBackendEffect(relayWindow.activate(windowOptions));
+      });
+
+      yield* electronApp.onBeforeQuit(() => {
+        void disposeAppRuntime();
+      });
+
+      yield* electronApp.onWindowAllClosed(() => {
+        if (electronApp.platform !== "darwin") {
+          void runBackendEffect(electronApp.quit());
+        }
+      });
+    })
+  );
+};
+
+void start().catch((error) => {
+  void logError("app", "Relay failed to start", error);
 });

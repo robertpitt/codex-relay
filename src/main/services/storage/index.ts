@@ -1,13 +1,12 @@
-import { shell } from "electron";
+import { Effect } from "effect";
 import matter from "gray-matter";
-import { access, appendFile, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { ulid } from "ulid";
 import {
   DEFAULT_COLUMNS,
+  RELAY_REVIEW_STATUS,
   RELAY_SCHEMA_VERSION,
   type BoardSnapshot,
   type ClarificationQuestion,
+  type ClarificationQuestionStore,
   type ClarificationQuestionCreateInput,
   type InvalidTicket,
   type ProjectConfig,
@@ -30,8 +29,44 @@ import {
   type TicketSaveInput,
   type TicketSummary,
   type TicketType
-} from "../../shared/types";
-import { clarificationStoreSchema, projectConfigSchema, ticketFrontMatterSchema } from "./schemas";
+} from "../../../shared/types";
+import { BackendClock, type BackendEffect, runBackendEffect } from "../runtime";
+import { showElectronItemInFolder } from "../../electron";
+import {
+  appendTextFileEffect,
+  isFileNotFoundError,
+  makeDirectoryEffect,
+  pathBasename,
+  pathDirname,
+  pathJoin,
+  pathRelative,
+  readDirectoryEffect,
+  readTextFileEffect,
+  renamePathEffect,
+  statPathEffect
+} from "../io";
+import { clarificationStoreSchema, projectConfigSchema, ticketFrontMatterSchema } from "../schemas";
+import { TicketNotFoundError, isTicketNotFoundError } from "./errors";
+import { atomicWriteJson, atomicWriteText, fileExists } from "./files";
+import { newId } from "./ids";
+import {
+  attachmentsPath,
+  auditLogPath,
+  backupsPath,
+  clarificationStorePath,
+  clarificationsPath,
+  projectConfigPath,
+  resolveProjectPath,
+  runsPath,
+  slashPath,
+  ticketPath,
+  ticketsPath,
+  trashPath
+} from "./paths";
+
+export { TicketNotFoundError, isTicketNotFoundError } from "./errors";
+export { newId } from "./ids";
+export { runsPath } from "./paths";
 
 const defaultSettings = (): ProjectSettings => ({
   defaultModel: null,
@@ -43,76 +78,58 @@ const defaultSettings = (): ProjectSettings => ({
 });
 
 const nowIso = (): string => new Date().toISOString();
-const resolveProjectPath = (projectPath: string): string => path.resolve(projectPath);
-const projectRelayPath = (projectPath: string): string => path.join(resolveProjectPath(projectPath), ".relay");
-const projectConfigPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "project.json");
-const ticketsPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "tickets");
-export const runsPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "runs");
-const auditLogPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "audit.jsonl");
-const clarificationsPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "clarifications");
-const trashPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "trash");
-const attachmentsPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "attachments");
-const backupsPath = (projectPath: string): string => path.join(projectRelayPath(projectPath), "backups");
 
-export const newId = (prefix: string): string => `${prefix}_${ulid().toLowerCase()}`;
-
-export class TicketNotFoundError extends Error {
-  readonly code = "TICKET_NOT_FOUND";
-  readonly projectPath: string;
-  readonly ticketId: string;
-  readonly filePath: string;
-
-  constructor(projectPath: string, ticketId: string, filePath: string, cause?: unknown) {
-    super(`Ticket ${ticketId} was not found in project ${projectPath}.`, { cause });
-    this.name = "TicketNotFoundError";
-    this.projectPath = projectPath;
-    this.ticketId = ticketId;
-    this.filePath = filePath;
+const normalizeProjectColumns = (columns: RelayColumn[]): RelayColumn[] => {
+  const normalized = columns.map((column) => ({ ...column }));
+  const columnIds = new Set(normalized.map((column) => column.id));
+  for (const defaultColumn of DEFAULT_COLUMNS) {
+    if (columnIds.has(defaultColumn.id)) continue;
+    if (defaultColumn.id === RELAY_REVIEW_STATUS) {
+      const after = normalized.find((column) => column.id === "needs_clarification")?.position ?? 3000;
+      const before =
+        normalized.find((column) => column.id === "not_doing")?.position ??
+        normalized.find((column) => column.id === "completed")?.position ??
+        defaultColumn.position;
+      normalized.push({
+        ...defaultColumn,
+        position: before > after ? (after + before) / 2 : defaultColumn.position
+      });
+    } else {
+      normalized.push({ ...defaultColumn });
+    }
   }
-}
-
-export const isTicketNotFoundError = (error: unknown): error is TicketNotFoundError =>
-  error instanceof TicketNotFoundError;
-
-const fileExists = async (target: string): Promise<boolean> => {
-  try {
-    await access(target);
-    return true;
-  } catch {
-    return false;
-  }
+  return normalized.sort((a, b) => a.position - b.position);
 };
 
-export const isGitRepository = async (projectPath: string): Promise<boolean> => fileExists(path.join(projectPath, ".git"));
+const normalizeProjectConfig = (config: ProjectConfig): ProjectConfig => ({
+  ...config,
+  columns: normalizeProjectColumns(config.columns)
+});
 
-const atomicWriteJson = async (target: string, value: unknown): Promise<void> => {
-  await mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(tmp, target);
-};
+export const isGitRepository = async (projectPath: string): Promise<boolean> => fileExists(pathJoin(projectPath, ".git"));
 
-const atomicWriteText = async (target: string, value: string): Promise<void> => {
-  await mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.tmp`;
-  await writeFile(tmp, value, "utf8");
-  await rename(tmp, target);
-};
+const appendAuditEventEffect = (
+  projectPath: string,
+  event: Omit<RelayAuditEvent, "schemaVersion" | "timestamp">
+): BackendEffect<void> =>
+  Effect.gen(function*() {
+    const clock = yield* BackendClock;
+    const record: RelayAuditEvent = {
+      schemaVersion: RELAY_SCHEMA_VERSION,
+      timestamp: clock.nowIso(),
+      ...event
+    };
+    const target = auditLogPath(projectPath);
+    yield* makeDirectoryEffect(pathDirname(target));
+    yield* appendTextFileEffect(target, `${JSON.stringify(record)}\n`);
+  });
 
-const appendAuditEvent = async (projectPath: string, event: Omit<RelayAuditEvent, "schemaVersion" | "timestamp">): Promise<void> => {
-  const record: RelayAuditEvent = {
-    schemaVersion: RELAY_SCHEMA_VERSION,
-    timestamp: nowIso(),
-    ...event
-  };
-  const target = auditLogPath(projectPath);
-  await mkdir(path.dirname(target), { recursive: true });
-  await appendFile(target, `${JSON.stringify(record)}\n`, "utf8");
-};
+const appendAuditEvent = (projectPath: string, event: Omit<RelayAuditEvent, "schemaVersion" | "timestamp">): Promise<void> =>
+  runBackendEffect(appendAuditEventEffect(projectPath, event));
 
 const assertDirectory = async (projectPath: string): Promise<void> => {
-  const info = await stat(projectPath);
-  if (!info.isDirectory()) {
+  const info = await runBackendEffect(statPathEffect(projectPath));
+  if (!info.isDirectory) {
     throw new Error(`Project path is not a directory: ${projectPath}`);
   }
 };
@@ -120,7 +137,7 @@ const assertDirectory = async (projectPath: string): Promise<void> => {
 export const isRelayInitialized = async (projectPath: string): Promise<boolean> => fileExists(projectConfigPath(projectPath));
 
 export const initializeProject = async (projectPath: string): Promise<ProjectConfig> => {
-  const resolved = path.resolve(projectPath);
+  const resolved = resolveProjectPath(projectPath);
   await assertDirectory(resolved);
   const existing = await isRelayInitialized(resolved);
   if (existing) return readProjectConfig(resolved);
@@ -129,35 +146,35 @@ export const initializeProject = async (projectPath: string): Promise<ProjectCon
   const config: ProjectConfig = {
     schemaVersion: RELAY_SCHEMA_VERSION,
     projectId: newId("prj"),
-    name: path.basename(resolved),
+    name: pathBasename(resolved),
     createdAt: now,
     updatedAt: now,
     columns: DEFAULT_COLUMNS.map((column) => ({ ...column })),
     settings: defaultSettings()
   };
 
-  await mkdir(ticketsPath(resolved), { recursive: true });
-  await mkdir(runsPath(resolved), { recursive: true });
-  await mkdir(clarificationsPath(resolved), { recursive: true });
-  await mkdir(attachmentsPath(resolved), { recursive: true });
-  await mkdir(backupsPath(resolved), { recursive: true });
+  await runBackendEffect(makeDirectoryEffect(ticketsPath(resolved)));
+  await runBackendEffect(makeDirectoryEffect(runsPath(resolved)));
+  await runBackendEffect(makeDirectoryEffect(clarificationsPath(resolved)));
+  await runBackendEffect(makeDirectoryEffect(attachmentsPath(resolved)));
+  await runBackendEffect(makeDirectoryEffect(backupsPath(resolved)));
   await atomicWriteJson(projectConfigPath(resolved), config);
   return config;
 };
 
 export const readProjectConfig = async (projectPath: string): Promise<ProjectConfig> => {
-  const raw = await readFile(projectConfigPath(projectPath), "utf8");
-  return projectConfigSchema.parse(JSON.parse(raw)) as ProjectConfig;
+  const raw = await runBackendEffect(readTextFileEffect(projectConfigPath(projectPath)));
+  return normalizeProjectConfig(projectConfigSchema.parse(JSON.parse(raw)));
 };
 
 export const writeProjectConfig = async (projectPath: string, config: ProjectConfig): Promise<ProjectConfig> => {
-  const updated = { ...config, updatedAt: nowIso() };
+  const updated = normalizeProjectConfig({ ...config, updatedAt: nowIso() });
   await atomicWriteJson(projectConfigPath(projectPath), updated);
   return updated;
 };
 
 export const summarizeProject = async (projectPath: string, lastOpenedAt?: string): Promise<ProjectSummary> => {
-  const resolved = path.resolve(projectPath);
+  const resolved = resolveProjectPath(projectPath);
   const exists = await fileExists(resolved);
   const healthMessages: string[] = [];
   let config: ProjectConfig | null = null;
@@ -168,7 +185,7 @@ export const summarizeProject = async (projectPath: string, lastOpenedAt?: strin
   if (!exists) {
     return {
       projectId: null,
-      name: path.basename(resolved),
+      name: pathBasename(resolved),
       path: resolved,
       exists: false,
       isGitRepository: false,
@@ -220,7 +237,7 @@ export const summarizeProject = async (projectPath: string, lastOpenedAt?: strin
 
   return {
     projectId: config?.projectId ?? null,
-    name: config?.name ?? path.basename(resolved),
+    name: config?.name ?? pathBasename(resolved),
     path: resolved,
     exists,
     isGitRepository: git,
@@ -244,9 +261,9 @@ const extractExcerpt = (markdown: string): string => {
 };
 
 const readTicketFile = async (filePath: string): Promise<TicketRecord> => {
-  const raw = await readFile(filePath, "utf8");
+  const raw = await runBackendEffect(readTextFileEffect(filePath));
   const parsed = matter(raw);
-  const frontMatter = ticketFrontMatterSchema.parse(parsed.data) as TicketFrontMatter;
+  const frontMatter = ticketFrontMatterSchema.parse(parsed.data);
   return {
     frontMatter,
     markdown: parsed.content.trimStart(),
@@ -258,16 +275,18 @@ const readTickets = async (
   projectPath: string,
   columns: RelayColumn[]
 ): Promise<{ tickets: TicketSummary[]; records: TicketRecord[]; invalidTickets: InvalidTicket[] }> => {
-  await mkdir(ticketsPath(projectPath), { recursive: true });
-  const entries = await readdir(ticketsPath(projectPath), { withFileTypes: true });
+  await runBackendEffect(makeDirectoryEffect(ticketsPath(projectPath)));
+  const entries = await runBackendEffect(readDirectoryEffect(ticketsPath(projectPath)));
   const validColumnIds = new Set(columns.map((column) => column.id));
   const tickets: TicketSummary[] = [];
   const records: TicketRecord[] = [];
   const invalidTickets: InvalidTicket[] = [];
 
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    const filePath = path.join(ticketsPath(projectPath), entry.name);
+    if (!entry.endsWith(".md")) continue;
+    const filePath = pathJoin(ticketsPath(projectPath), entry);
+    const info = await runBackendEffect(statPathEffect(filePath));
+    if (!info.isFile) continue;
     try {
       const record = await readTicketFile(filePath);
       if (!validColumnIds.has(record.frontMatter.status)) {
@@ -297,7 +316,7 @@ const readTickets = async (
 };
 
 export const readBoard = async (projectPath: string, lastOpenedAt?: string): Promise<BoardSnapshot> => {
-  const resolved = path.resolve(projectPath);
+  const resolved = resolveProjectPath(projectPath);
   const project = await summarizeProject(resolved, lastOpenedAt);
 
   if (!project.exists || !project.relayInitialized) {
@@ -320,8 +339,6 @@ export const readBoard = async (projectPath: string, lastOpenedAt?: string): Pro
     invalidTickets
   };
 };
-
-const ticketPath = (projectPath: string, ticketId: string): string => path.join(ticketsPath(projectPath), `${ticketId}.md`);
 
 const uniqueTicketIds = (ticketIds: string[]): string[] => {
   const seen = new Set<string>();
@@ -360,10 +377,8 @@ const assertRelationshipShape = (frontMatter: TicketFrontMatter): void => {
   }
 };
 
-const slashPath = (value: string): string => value.split(path.sep).join("/");
-
 const relativeMarkdownPath = (fromDirectory: string, toFile: string): string => {
-  const relativePath = slashPath(path.relative(fromDirectory, toFile));
+  const relativePath = slashPath(pathRelative(fromDirectory, toFile));
   if (relativePath.startsWith(".") || relativePath.startsWith("/")) return relativePath;
   return `./${relativePath}`;
 };
@@ -387,7 +402,7 @@ export const listTicketReferenceCandidates = async (projectPath: string): Promis
       title: ticket.title,
       status: ticket.status,
       columnName: columnNames.get(ticket.status) ?? ticket.status,
-      relativePath: slashPath(path.relative(resolvedProjectPath, ticket.filePath)),
+      relativePath: slashPath(pathRelative(resolvedProjectPath, ticket.filePath)),
       linkPath: relativeMarkdownPath(ticketDirectory, ticket.filePath)
     }));
 };
@@ -398,7 +413,7 @@ export const readTicket = async (projectPath: string, ticketId: string): Promise
   try {
     return await readTicketFile(target);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isFileNotFoundError(error)) {
       throw new TicketNotFoundError(resolvedProjectPath, ticketId, target, error);
     }
     throw error;
@@ -475,9 +490,12 @@ export const writeTicket = async (projectPath: string, ticket: TicketRecord): Pr
 
 type TicketMarkdownDraft = TicketDraftSubticket & { research?: TicketDraft["research"] };
 
+const markdownList = (items: string[]): string => {
+  const cleaned = items.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned.map((item) => `- ${item}`).join("\n") : "- None.";
+};
+
 export const ticketMarkdownFromDraft = (draft: TicketMarkdownDraft): string => {
-  const list = (items: string[]): string =>
-    items.length > 0 ? items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n") : "- None.";
   const researchMetadata = (): string => {
     if (
       !draft.research ||
@@ -507,27 +525,27 @@ ${draft.context || "No additional context provided."}
 
 ## Research Findings
 
-${list(draft.researchFindings)}
+${markdownList(draft.researchFindings)}
 
 ## Requirements
 
-${list(draft.requirements)}
+${markdownList(draft.requirements)}
 
 ## Implementation Plan
 
-${list(draft.implementationPlan)}
+${markdownList(draft.implementationPlan)}
 
 ## Acceptance Criteria
 
-${list(draft.acceptanceCriteria)}
+${markdownList(draft.acceptanceCriteria)}
 
 ## Clarification Questions
 
-${list(draft.clarificationQuestions)}
+${markdownList(draft.clarificationQuestions)}
 
 ## Implementation Notes
 
-${list(draft.implementationNotes)}
+${markdownList(draft.implementationNotes)}
 
 ## Research Metadata
 
@@ -538,6 +556,45 @@ ${researchMetadata()}
 No Codex run has been started.
 `;
 };
+
+export const ticketMarkdownFromSubticketDraft = (draft: TicketDraftSubticket, parentTitle: string): string => `# ${draft.title}
+
+## Parent Epic
+
+${parentTitle}
+
+## Context
+
+${draft.context || "No additional context provided."}
+
+## Research Findings
+
+${markdownList(draft.researchFindings)}
+
+## Requirements
+
+${markdownList(draft.requirements)}
+
+## Implementation Plan
+
+${markdownList(draft.implementationPlan)}
+
+## Acceptance Criteria
+
+${markdownList(draft.acceptanceCriteria)}
+
+## Clarification Questions
+
+${markdownList(draft.clarificationQuestions)}
+
+## Implementation Notes
+
+${markdownList(draft.implementationNotes)}
+
+## Codex Handoff
+
+No Codex run has been started.
+`;
 
 const createSingleTicket = async (projectPath: string, input: TicketCreateInput): Promise<TicketRecord> => {
   const config = await readProjectConfig(projectPath);
@@ -788,28 +845,26 @@ export const moveTicket = async (input: TicketMoveInput): Promise<BoardSnapshot>
   return readBoard(input.projectPath);
 };
 
-const clarificationStorePath = (projectPath: string, ticketId: string): string =>
-  path.join(clarificationsPath(projectPath), `${ticketId}.json`);
-
 const writeClarificationQuestions = async (
   projectPath: string,
   ticketId: string,
   questions: ClarificationQuestion[]
 ): Promise<ClarificationQuestion[]> => {
-  await atomicWriteJson(clarificationStorePath(projectPath, ticketId), {
+  const store: ClarificationQuestionStore = {
     schemaVersion: RELAY_SCHEMA_VERSION,
     ticketId,
     questions
-  });
+  };
+  await atomicWriteJson(clarificationStorePath(projectPath, ticketId), store);
   return questions;
 };
 
 export const readClarificationQuestions = async (projectPath: string, ticketId: string): Promise<ClarificationQuestion[]> => {
   const target = clarificationStorePath(projectPath, ticketId);
   if (!(await fileExists(target))) return [];
-  const raw = await readFile(target, "utf8");
+  const raw = await runBackendEffect(readTextFileEffect(target));
   const parsed = clarificationStoreSchema.parse(JSON.parse(raw));
-  return parsed.questions as ClarificationQuestion[];
+  return parsed.questions;
 };
 
 export const createClarificationQuestions = async (
@@ -942,9 +997,9 @@ export const deleteTicket = async (projectPath: string, ticketId: string): Promi
   await unlinkTicketRelationshipsBeforeDelete(projectPath, ticket);
   const source = ticketPath(projectPath, ticketId);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const target = path.join(trashPath(projectPath), stamp, `${ticketId}.md`);
-  await mkdir(path.dirname(target), { recursive: true });
-  await rename(source, target);
+  const target = pathJoin(trashPath(projectPath), stamp, `${ticketId}.md`);
+  await runBackendEffect(makeDirectoryEffect(pathDirname(target)));
+  await runBackendEffect(renamePathEffect(source, target));
   return readBoard(projectPath);
 };
 
@@ -961,7 +1016,7 @@ export const duplicateTicket = async (projectPath: string, ticketId: string): Pr
 };
 
 export const revealTicketFile = async (projectPath: string, ticketId: string): Promise<void> => {
-  shell.showItemInFolder(ticketPath(projectPath, ticketId));
+  showElectronItemInFolder(ticketPath(projectPath, ticketId));
 };
 
 export const appendCodexHandoff = (markdown: string, handoff: string): string => {

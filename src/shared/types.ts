@@ -1,11 +1,18 @@
 export const RELAY_SCHEMA_VERSION = 1;
+export const RELAY_TODO_STATUS = "todo";
+export const RELAY_IN_PROGRESS_STATUS = "in_progress";
+export const RELAY_NEEDS_CLARIFICATION_STATUS = "needs_clarification";
+export const RELAY_REVIEW_STATUS = "review";
+export const RELAY_NOT_DOING_STATUS = "not_doing";
+export const RELAY_COMPLETED_STATUS = "completed";
 
 export const DEFAULT_COLUMNS: RelayColumn[] = [
-  { id: "todo", name: "Todo", position: 1000, terminal: false },
-  { id: "in_progress", name: "In Progress", position: 2000, terminal: false },
-  { id: "needs_clarification", name: "Needs Clarification", position: 3000, terminal: false },
-  { id: "not_doing", name: "Not Doing", position: 4000, terminal: true },
-  { id: "completed", name: "Completed", position: 5000, terminal: true }
+  { id: RELAY_TODO_STATUS, name: "Todo", position: 1000, terminal: false },
+  { id: RELAY_IN_PROGRESS_STATUS, name: "In Progress", position: 2000, terminal: false },
+  { id: RELAY_NEEDS_CLARIFICATION_STATUS, name: "Needs Clarification", position: 3000, terminal: false },
+  { id: RELAY_REVIEW_STATUS, name: "Review", position: 4000, terminal: false },
+  { id: RELAY_NOT_DOING_STATUS, name: "Not Doing", position: 5000, terminal: true },
+  { id: RELAY_COMPLETED_STATUS, name: "Completed", position: 6000, terminal: true }
 ];
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
@@ -157,6 +164,9 @@ export type TicketDraft = TicketDraftSubticket & {
   research: TicketDraftResearch;
 };
 
+export type TaskPlanDraft = TicketDraftSubticket;
+export type EpicPlanDraft = TicketDraft & { ticketType: "epic" };
+
 export type TicketDraftResearchUrl = {
   url: string;
   status: "fetched" | "failed" | "skipped";
@@ -298,6 +308,12 @@ export type ClarificationQuestion = {
   codexThreadId: string | null;
 };
 
+export type ClarificationQuestionStore = {
+  schemaVersion: number;
+  ticketId: string;
+  questions: ClarificationQuestion[];
+};
+
 export type ClarificationQuestionCreateInput = {
   question: string;
   answerType?: ClarificationAnswerType;
@@ -378,6 +394,21 @@ export type StartRunInput = {
   freshThread?: boolean;
 };
 
+export type CodexRunStartResult = {
+  runId: string;
+  threadId: string;
+};
+
+export type CodexRunPreflightResult = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  ticketStatus: string | null;
+  runStatus: RunStatus | null;
+  unansweredClarificationCount: number;
+  canStartFreshThread: boolean;
+};
+
 export type CreateDraftInput = {
   projectPath: string;
   idea: string;
@@ -426,8 +457,9 @@ export type RelayApi = {
   };
   codex: {
     status: () => Promise<CodexStatus>;
-    startRun: (input: StartRunInput) => Promise<{ runId: string; threadId: string }>;
-    resumeRun: (input: StartRunInput) => Promise<{ runId: string; threadId: string }>;
+    preflightRun: (input: StartRunInput) => Promise<CodexRunPreflightResult>;
+    startRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
+    resumeRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
     cancelRun: (runId: string) => Promise<void>;
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => Promise<void>;
     readRunEvents: (projectPath: string, ticketId: string, runId: string) => Promise<RendererRunEvent[]>;

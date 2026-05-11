@@ -1,11 +1,7 @@
-import { execFile } from "node:child_process";
-import { stat } from "node:fs/promises";
-import path from "node:path";
-import { promisify } from "node:util";
-import type { GitMetadata } from "../../shared/types";
-
-const execFileAsync = promisify(execFile);
-const gitStatusCacheTtlMs = 3_000;
+import { Context, Effect, Layer } from "effect";
+import type { GitMetadata } from "../../../shared/types";
+import { BackendConfig, fromPromise, runBackendEffect } from "../runtime";
+import { CommandExecutor, pathResolve, statPathEffect } from "../io";
 
 export type GitCommandResult = {
   stdout: string;
@@ -19,17 +15,15 @@ type GitMetadataDependencies = {
   now?: () => string;
 };
 
-const defaultGitRunner: GitCommandRunner = async (projectPath, args) => {
-  const result = await execFileAsync("git", ["-C", projectPath, ...args], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: 5_000
-  });
-  return {
-    stdout: result.stdout,
-    stderr: result.stderr
-  };
-};
+const defaultGitRunner: GitCommandRunner = (projectPath, args) =>
+  runBackendEffect(
+    CommandExecutor.use((executor) =>
+      executor.execFile("git", ["-C", projectPath, ...args], {
+        maxBuffer: 1024 * 1024,
+        timeoutMs: 5_000
+      })
+    )
+  );
 
 const baseMetadata = (
   state: GitMetadata["state"],
@@ -85,17 +79,17 @@ export const parsePorcelainChangedFileCount = (output: string): number => {
   return count;
 };
 
-export const readGitMetadata = async (
+const readGitMetadataPromise = async (
   projectPath: string,
   dependencies: GitMetadataDependencies = {}
 ): Promise<GitMetadata> => {
-  const resolved = path.resolve(projectPath);
+  const resolved = pathResolve(projectPath);
   const execGit = dependencies.execGit ?? defaultGitRunner;
   const updatedAt = dependencies.now?.() ?? new Date().toISOString();
 
   try {
-    const info = await stat(resolved);
-    if (!info.isDirectory()) {
+    const info = await runBackendEffect(statPathEffect(resolved));
+    if (!info.isDirectory) {
       return baseMetadata("missing", updatedAt, {
         message: "Project path is not a directory."
       });
@@ -177,11 +171,11 @@ export const readGitMetadata = async (
 
 const gitMetadataCache = new Map<string, { value?: GitMetadata; expiresAt: number; pending?: Promise<GitMetadata> }>();
 
-export const readCachedGitMetadata = async (
+const readCachedGitMetadataPromise = async (
   projectPath: string,
-  options: { force?: boolean } = {}
+  options: { force?: boolean; cacheTtlMs?: number } = {}
 ): Promise<GitMetadata> => {
-  const resolved = path.resolve(projectPath);
+  const resolved = pathResolve(projectPath);
   const cached = gitMetadataCache.get(resolved);
   const now = Date.now();
 
@@ -192,10 +186,10 @@ export const readCachedGitMetadata = async (
     return cached.pending;
   }
 
-  const pending = readGitMetadata(resolved).then((value) => {
+  const pending = readGitMetadataPromise(resolved).then((value) => {
     gitMetadataCache.set(resolved, {
       value,
-      expiresAt: Date.now() + gitStatusCacheTtlMs
+      expiresAt: Date.now() + (options.cacheTtlMs ?? 3_000)
     });
     return value;
   });
@@ -209,6 +203,37 @@ export const readCachedGitMetadata = async (
   return pending;
 };
 
-export const clearGitMetadataCache = (): void => {
+const clearGitMetadataCacheSync = (): void => {
   gitMetadataCache.clear();
+};
+
+export type GitServiceService = {
+  readonly readMetadata: (projectPath: string, dependencies?: GitMetadataDependencies) => Effect.Effect<GitMetadata, unknown>;
+  readonly readCachedMetadata: (
+    projectPath: string,
+    options?: { force?: boolean }
+  ) => Effect.Effect<GitMetadata, unknown, Context.Service.Identifier<typeof BackendConfig>>;
+  readonly clearCache: () => Effect.Effect<void>;
+};
+
+export const GitService = Context.Service<GitServiceService>("relay/GitService");
+
+export const GitServiceLive = Layer.succeed(GitService)({
+  readMetadata: (projectPath, dependencies = {}) => fromPromise(() => readGitMetadataPromise(projectPath, dependencies)),
+  readCachedMetadata: (projectPath, options = {}) =>
+    Effect.gen(function*() {
+      const config = yield* BackendConfig;
+      return yield* fromPromise(() => readCachedGitMetadataPromise(projectPath, { ...options, cacheTtlMs: config.gitMetadataCacheTtlMs }));
+    }),
+  clearCache: () => Effect.sync(clearGitMetadataCacheSync)
+});
+
+export const readGitMetadata = (projectPath: string, dependencies: GitMetadataDependencies = {}): Promise<GitMetadata> =>
+  runBackendEffect(Effect.provide(GitService.use((service) => service.readMetadata(projectPath, dependencies)), GitServiceLive));
+
+export const readCachedGitMetadata = (projectPath: string, options: { force?: boolean } = {}): Promise<GitMetadata> =>
+  runBackendEffect(Effect.provide(GitService.use((service) => service.readCachedMetadata(projectPath, options)), GitServiceLive));
+
+export const clearGitMetadataCache = (): void => {
+  clearGitMetadataCacheSync();
 };

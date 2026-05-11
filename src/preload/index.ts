@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { relayIpcChannels, type RelayIpcArgs, type RelayIpcChannel, type RelayIpcResult } from "../shared/ipc";
 import type {
   AgentTicketUpdateInput,
   ClarificationAnswerInput,
@@ -16,44 +17,50 @@ import type {
   TicketSaveInput
 } from "../shared/types";
 
+const invoke = <Channel extends RelayIpcChannel>(
+  channel: Channel,
+  ...args: RelayIpcArgs<Channel>
+): Promise<RelayIpcResult<Channel>> => ipcRenderer.invoke(channel, ...args) as Promise<RelayIpcResult<Channel>>;
+
 const api: RelayApi = {
   projects: {
-    list: () => ipcRenderer.invoke("projects:list"),
-    addFolder: () => ipcRenderer.invoke("projects:addFolder"),
-    removeFromSidebar: (projectPath: string) => ipcRenderer.invoke("projects:removeFromSidebar", projectPath),
-    read: (projectPath: string) => ipcRenderer.invoke("projects:read", projectPath),
-    gitMetadata: (projectPath: string, options?: GitMetadataOptions) => ipcRenderer.invoke("projects:gitMetadata", projectPath, options),
-    revealInFinder: (projectPath: string) => ipcRenderer.invoke("projects:revealInFinder", projectPath)
+    list: () => invoke(relayIpcChannels.projectsList),
+    addFolder: () => invoke(relayIpcChannels.projectsAddFolder),
+    removeFromSidebar: (projectPath: string) => invoke(relayIpcChannels.projectsRemoveFromSidebar, projectPath),
+    read: (projectPath: string) => invoke(relayIpcChannels.projectsRead, projectPath),
+    gitMetadata: (projectPath: string, options?: GitMetadataOptions) => invoke(relayIpcChannels.projectsGitMetadata, projectPath, options),
+    revealInFinder: (projectPath: string) => invoke(relayIpcChannels.projectsRevealInFinder, projectPath)
   },
   board: {
-    read: (projectPath: string) => ipcRenderer.invoke("board:read", projectPath)
+    read: (projectPath: string) => invoke(relayIpcChannels.boardRead, projectPath)
   },
   ticket: {
-    createDraft: (input: CreateDraftInput) => ipcRenderer.invoke("ticket:createDraft", input),
-    createManual: (projectPath: string, input: TicketCreateInput) => ipcRenderer.invoke("ticket:createManual", projectPath, input),
-    createSubticket: (input: EpicSubticketCreateInput) => ipcRenderer.invoke("ticket:createSubticket", input),
-    linkSubticket: (input: EpicSubticketLinkInput) => ipcRenderer.invoke("ticket:linkSubticket", input),
-    unlinkSubticket: (input: EpicSubticketUnlinkInput) => ipcRenderer.invoke("ticket:unlinkSubticket", input),
-    startAgentUpdate: (input: AgentTicketUpdateInput) => ipcRenderer.invoke("ticket:startAgentUpdate", input),
-    cancelAgentUpdate: (runId: string) => ipcRenderer.invoke("ticket:cancelAgentUpdate", runId),
-    references: (projectPath: string) => ipcRenderer.invoke("ticket:references", projectPath),
-    read: (projectPath: string, ticketId: string) => ipcRenderer.invoke("ticket:read", projectPath, ticketId),
-    save: (input: TicketSaveInput) => ipcRenderer.invoke("ticket:save", input),
-    move: (input: TicketMoveInput) => ipcRenderer.invoke("ticket:move", input),
-    clarifications: (projectPath: string, ticketId: string) => ipcRenderer.invoke("ticket:clarifications", projectPath, ticketId),
-    answerClarification: (input: ClarificationAnswerInput) => ipcRenderer.invoke("ticket:answerClarification", input),
-    delete: (projectPath: string, ticketId: string) => ipcRenderer.invoke("ticket:delete", projectPath, ticketId),
-    duplicate: (projectPath: string, ticketId: string) => ipcRenderer.invoke("ticket:duplicate", projectPath, ticketId),
-    revealFile: (projectPath: string, ticketId: string) => ipcRenderer.invoke("ticket:revealFile", projectPath, ticketId)
+    createDraft: (input: CreateDraftInput) => invoke(relayIpcChannels.ticketCreateDraft, input),
+    createManual: (projectPath: string, input: TicketCreateInput) => invoke(relayIpcChannels.ticketCreateManual, projectPath, input),
+    createSubticket: (input: EpicSubticketCreateInput) => invoke(relayIpcChannels.ticketCreateSubticket, input),
+    linkSubticket: (input: EpicSubticketLinkInput) => invoke(relayIpcChannels.ticketLinkSubticket, input),
+    unlinkSubticket: (input: EpicSubticketUnlinkInput) => invoke(relayIpcChannels.ticketUnlinkSubticket, input),
+    startAgentUpdate: (input: AgentTicketUpdateInput) => invoke(relayIpcChannels.ticketStartAgentUpdate, input),
+    cancelAgentUpdate: (runId: string) => invoke(relayIpcChannels.ticketCancelAgentUpdate, runId),
+    references: (projectPath: string) => invoke(relayIpcChannels.ticketReferences, projectPath),
+    read: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketRead, projectPath, ticketId),
+    save: (input: TicketSaveInput) => invoke(relayIpcChannels.ticketSave, input),
+    move: (input: TicketMoveInput) => invoke(relayIpcChannels.ticketMove, input),
+    clarifications: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketClarifications, projectPath, ticketId),
+    answerClarification: (input: ClarificationAnswerInput) => invoke(relayIpcChannels.ticketAnswerClarification, input),
+    delete: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketDelete, projectPath, ticketId),
+    duplicate: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketDuplicate, projectPath, ticketId),
+    revealFile: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketRevealFile, projectPath, ticketId)
   },
   codex: {
-    status: () => ipcRenderer.invoke("codex:status"),
-    startRun: (input: StartRunInput) => ipcRenderer.invoke("codex:startRun", input),
-    resumeRun: (input: StartRunInput) => ipcRenderer.invoke("codex:resumeRun", input),
-    cancelRun: (runId: string) => ipcRenderer.invoke("codex:cancelRun", runId),
-    approveAction: (approvalId: string, decision: RelayApprovalDecision) => ipcRenderer.invoke("codex:approveAction", approvalId, decision),
+    status: () => invoke(relayIpcChannels.codexStatus),
+    preflightRun: (input: StartRunInput) => invoke(relayIpcChannels.codexPreflightRun, input),
+    startRun: (input: StartRunInput) => invoke(relayIpcChannels.codexStartRun, input),
+    resumeRun: (input: StartRunInput) => invoke(relayIpcChannels.codexResumeRun, input),
+    cancelRun: (runId: string) => invoke(relayIpcChannels.codexCancelRun, runId),
+    approveAction: (approvalId: string, decision: RelayApprovalDecision) => invoke(relayIpcChannels.codexApproveAction, approvalId, decision),
     readRunEvents: (projectPath: string, ticketId: string, runId: string) =>
-      ipcRenderer.invoke("codex:readRunEvents", projectPath, ticketId, runId),
+      invoke(relayIpcChannels.codexReadRunEvents, projectPath, ticketId, runId),
     onRunEvent: (listener: (event: RendererRunEvent) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: RendererRunEvent): void => listener(payload);
       ipcRenderer.on("codex:runEvent", wrapped);

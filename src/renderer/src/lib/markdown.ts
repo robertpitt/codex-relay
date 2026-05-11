@@ -1,7 +1,9 @@
 import type { TicketDraft, TicketDraftSubticket } from "@shared/types";
 
-const list = (items: string[]): string =>
-  items.length > 0 ? items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n") : "- None.";
+const list = (items: string[]): string => {
+  const cleaned = items.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned.map((item) => `- ${item}`).join("\n") : "- None.";
+};
 
 const cleanMarkdownText = (value: string): string =>
   value
@@ -81,6 +83,45 @@ ${list(draft.implementationNotes)}
 ## Research Metadata
 
 ${researchMetadata(draft)}
+
+## Codex Handoff
+
+No Codex run has been started.
+`;
+
+export const markdownFromSubticketDraft = (draft: TicketDraftSubticket, parentTitle: string): string => `# ${draft.title}
+
+## Parent Epic
+
+${parentTitle}
+
+## Context
+
+${draft.context || "No additional context provided."}
+
+## Research Findings
+
+${list(draft.researchFindings)}
+
+## Requirements
+
+${list(draft.requirements)}
+
+## Implementation Plan
+
+${list(draft.implementationPlan)}
+
+## Acceptance Criteria
+
+${list(draft.acceptanceCriteria)}
+
+## Clarification Questions
+
+${list(draft.clarificationQuestions)}
+
+## Implementation Notes
+
+${list(draft.implementationNotes)}
 
 ## Codex Handoff
 

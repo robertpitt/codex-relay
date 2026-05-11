@@ -27,6 +27,7 @@ import type { CSSProperties, KeyboardEvent, ReactElement } from "react";
 import type {
   BoardSnapshot,
   ClarificationQuestion,
+  CodexRunPreflightResult,
   CodexStatus,
   GitMetadata,
   ProjectSummary,
@@ -57,7 +58,8 @@ import {
   useShortcutOverlay,
   type ShortcutDirection
 } from "./lib/keyboardShortcuts";
-import { markdownFromDraft, ticketDraftDialogSubtext } from "./lib/markdown";
+import { markdownFromDraft, markdownFromSubticketDraft, ticketDraftDialogSubtext } from "./lib/markdown";
+import { getRelayApi, hasRelayApi } from "./lib/relayApi";
 import {
   filterTicketReferenceCandidates,
   getActiveTicketMention,
@@ -71,6 +73,15 @@ type ActiveTicketReferenceMention = {
   token: TicketMentionToken;
 };
 
+type DraftArrayField =
+  | "labels"
+  | "researchFindings"
+  | "requirements"
+  | "implementationPlan"
+  | "acceptanceCriteria"
+  | "clarificationQuestions"
+  | "implementationNotes";
+
 type TicketReferenceMenuRect = {
   left: number;
   top: number;
@@ -83,6 +94,17 @@ export type TicketReferenceMenuLayout = {
   style: CSSProperties;
 };
 
+export type TicketReferenceMenuLayoutInput = {
+  anchorRect: TicketReferenceMenuRect;
+  footerTop?: number | null;
+  viewportWidth: number;
+  viewportHeight: number;
+  gap?: number;
+  margin?: number;
+  desiredMaxHeight?: number;
+  minimumUsableHeight?: number;
+};
+
 export const getTicketReferenceMenuLayout = ({
   anchorRect,
   footerTop,
@@ -92,16 +114,7 @@ export const getTicketReferenceMenuLayout = ({
   margin = 12,
   desiredMaxHeight = 260,
   minimumUsableHeight = 160
-}: {
-  anchorRect: TicketReferenceMenuRect;
-  footerTop?: number | null;
-  viewportWidth: number;
-  viewportHeight: number;
-  gap?: number;
-  margin?: number;
-  desiredMaxHeight?: number;
-  minimumUsableHeight?: number;
-}): TicketReferenceMenuLayout => {
+}: TicketReferenceMenuLayoutInput): TicketReferenceMenuLayout => {
   const maxHeight = Math.min(desiredMaxHeight, Math.floor(viewportHeight * 0.48));
   const footerBoundary = footerTop === null || footerTop === undefined ? viewportHeight - margin : footerTop - margin;
   const belowBoundary = Math.min(viewportHeight - margin, footerBoundary);
@@ -184,6 +197,50 @@ const labelsFromInput = (value: string): string[] =>
     .split(",")
     .map((label) => label.trim())
     .filter(Boolean);
+
+const linesFromInput = (value: string): string[] =>
+  value.split("\n");
+
+const linesToInput = (items: string[]): string => items.join("\n");
+
+const manualSubticketMarkdown = (childTitle: string, parentTitle: string): string => `# ${childTitle}
+
+## Parent Epic
+
+${parentTitle}
+
+## Context
+
+Subticket of ${parentTitle}.
+
+## Research Findings
+
+- None.
+
+## Requirements
+
+- Define the unique scope for this child task before starting implementation.
+
+## Implementation Plan
+
+- Review the parent epic context and narrow this ticket to one implementation path.
+
+## Acceptance Criteria
+
+- The child task has specific acceptance criteria before work starts.
+
+## Clarification Questions
+
+- None.
+
+## Implementation Notes
+
+- None.
+
+## Codex Handoff
+
+No Codex run has been started.
+`;
 
 const statusName = (columns: RelayColumn[], status: string): string =>
   columns.find((column) => column.id === status)?.name ?? status;
@@ -677,7 +734,7 @@ function CreateTicketModal({
     let active = true;
     setTicketReferencesLoading(true);
     setTicketReferencesError(null);
-    void window.relay.ticket
+    void getRelayApi().ticket
       .references(projectPath)
       .then((candidates) => {
         if (!active) return;
@@ -860,7 +917,7 @@ function CreateTicketModal({
     setDraftMessageKind("info");
     setDraftMessage("Codex is drafting the ticket. If Codex is not authenticated or does not respond, this will time out after 90 seconds.");
     try {
-      const result = await window.relay.ticket.createDraft({ projectPath, idea: ideaSnapshot, preferredTicketType: ticketType });
+      const result = await getRelayApi().ticket.createDraft({ projectPath, idea: ideaSnapshot, preferredTicketType: ticketType });
       if (draftRequestRef.current !== requestSequence) return;
       if (!result.ok) {
         setDraftFailure(result.error);
@@ -881,7 +938,7 @@ function CreateTicketModal({
         current ? { ...current, status: "completed", endedAt: new Date().toISOString() } : current
       );
       setDraftMessageKind("info");
-      setDraftMessage("Draft ready. Review and create it when ready.");
+      setDraftMessage("Draft ready. Review and edit the plan before creating it.");
     } catch (error) {
       if (draftRequestRef.current !== requestSequence) return;
       const message = error instanceof Error ? error.message : "Ticket drafting failed.";
@@ -897,6 +954,42 @@ function CreateTicketModal({
     }
   };
 
+  const updateDraftText = (field: "title" | "context", value: string): void => {
+    setDraft((current) => (current ? { ...current, [field]: value } : current));
+  };
+
+  const updateDraftPriority = (value: TicketPriority): void => {
+    setDraft((current) => (current ? { ...current, priority: value } : current));
+  };
+
+  const updateDraftArrayField = (field: DraftArrayField, value: string[]): void => {
+    setDraft((current) => (current ? { ...current, [field]: value } : current));
+  };
+
+  const updateSubticket = (index: number, patch: Partial<TicketDraftSubticket>): void => {
+    setDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        subtickets: current.subtickets.map((subticket, subticketIndex) =>
+          subticketIndex === index ? { ...subticket, ...patch } : subticket
+        )
+      };
+    });
+  };
+
+  const renderPlanListField = (
+    label: string,
+    value: string[],
+    onChange: (value: string[]) => void,
+    placeholder: string
+  ): ReactElement => (
+    <label className="field">
+      <span>{label}</span>
+      <textarea className="draft-plan-textarea" value={linesToInput(value)} placeholder={placeholder} onChange={(event) => onChange(linesFromInput(event.target.value))} />
+    </label>
+  );
+
   const save = async (): Promise<void> => {
     const title = draft?.title.trim() || manualTitle.trim();
     if (!title) {
@@ -909,7 +1002,7 @@ function CreateTicketModal({
 
 ${idea.trim() || "No additional details provided."}
 `;
-      await window.relay.ticket.createManual(
+      await getRelayApi().ticket.createManual(
         projectPath,
         draft
           ? {
@@ -924,7 +1017,7 @@ ${idea.trim() || "No additional details provided."}
                       title: subticket.title,
                       priority: subticket.priority,
                       labels: subticket.labels,
-                      markdown: markdownFromDraft(subticket)
+                      markdown: markdownFromSubticketDraft(subticket, draft.title)
                     }))
                   : []
             }
@@ -1076,10 +1169,60 @@ ${idea.trim() || "No additional details provided."}
                 </div>
               )}
             </div>
+            <div className="draft-plan-editor" aria-label="Editable generated ticket plan">
+              <label className="field">
+                <span>Plan Title</span>
+                <input value={draft.title} onChange={(event) => updateDraftText("title", event.target.value)} />
+              </label>
+              <div className="two-fields">
+                <label className="field">
+                  <span>Priority</span>
+                  <select value={draft.priority} onChange={(event) => updateDraftPriority(event.target.value as TicketPriority)}>
+                    {priorityOptions.map((option) => (
+                      <option key={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Labels</span>
+                  <input value={draft.labels.join(", ")} onChange={(event) => updateDraftArrayField("labels", labelsFromInput(event.target.value))} />
+                </label>
+              </div>
+              <label className="field">
+                <span>Context</span>
+                <textarea className="draft-plan-textarea" value={draft.context} onChange={(event) => updateDraftText("context", event.target.value)} />
+              </label>
+              {renderPlanListField("Research Findings", draft.researchFindings, (value) => updateDraftArrayField("researchFindings", value), "One finding per line")}
+              {renderPlanListField("Requirements", draft.requirements, (value) => updateDraftArrayField("requirements", value), "One requirement per line")}
+              {renderPlanListField(
+                "Implementation Plan",
+                draft.implementationPlan,
+                (value) => updateDraftArrayField("implementationPlan", value),
+                "One implementation step per line"
+              )}
+              {renderPlanListField(
+                "Acceptance Criteria",
+                draft.acceptanceCriteria,
+                (value) => updateDraftArrayField("acceptanceCriteria", value),
+                "One acceptance criterion per line"
+              )}
+              {renderPlanListField(
+                "Clarification Questions",
+                draft.clarificationQuestions,
+                (value) => updateDraftArrayField("clarificationQuestions", value),
+                "One question per line"
+              )}
+              {renderPlanListField(
+                "Implementation Notes",
+                draft.implementationNotes,
+                (value) => updateDraftArrayField("implementationNotes", value),
+                "One note per line"
+              )}
+            </div>
             <MarkdownBlock
               className="ticket-markdown-preview"
               source={draftMarkdown}
-              title="Generated Draft"
+              title="Plan Preview"
               onCopied={(kind) => setToast(copyToast(kind))}
               onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
             />
@@ -1091,13 +1234,67 @@ ${idea.trim() || "No additional details provided."}
                 ) : (
                   draft.subtickets.map((subticket: TicketDraftSubticket, index) => (
                     <div className="draft-subticket" key={`${subticket.title}-${index}`}>
-                      <div>
-                        <strong>{subticket.title}</strong>
-                        <span>{subticket.priority}</span>
+                      <label className="field">
+                        <span>Subticket Title</span>
+                        <input value={subticket.title} onChange={(event) => updateSubticket(index, { title: event.target.value })} />
+                      </label>
+                      <div className="two-fields">
+                        <label className="field">
+                          <span>Priority</span>
+                          <select
+                            value={subticket.priority}
+                            onChange={(event) => updateSubticket(index, { priority: event.target.value as TicketPriority })}
+                          >
+                            {priorityOptions.map((option) => (
+                              <option key={option}>{option}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Labels</span>
+                          <input
+                            value={subticket.labels.join(", ")}
+                            onChange={(event) => updateSubticket(index, { labels: labelsFromInput(event.target.value) })}
+                          />
+                        </label>
                       </div>
+                      <label className="field">
+                        <span>Context</span>
+                        <textarea
+                          className="draft-plan-textarea"
+                          value={subticket.context}
+                          onChange={(event) => updateSubticket(index, { context: event.target.value })}
+                        />
+                      </label>
+                      {renderPlanListField("Research Findings", subticket.researchFindings, (value) => updateSubticket(index, { researchFindings: value }), "One finding per line")}
+                      {renderPlanListField("Requirements", subticket.requirements, (value) => updateSubticket(index, { requirements: value }), "One requirement per line")}
+                      {renderPlanListField(
+                        "Implementation Plan",
+                        subticket.implementationPlan,
+                        (value) => updateSubticket(index, { implementationPlan: value }),
+                        "One implementation step per line"
+                      )}
+                      {renderPlanListField(
+                        "Acceptance Criteria",
+                        subticket.acceptanceCriteria,
+                        (value) => updateSubticket(index, { acceptanceCriteria: value }),
+                        "One acceptance criterion per line"
+                      )}
+                      {renderPlanListField(
+                        "Clarification Questions",
+                        subticket.clarificationQuestions,
+                        (value) => updateSubticket(index, { clarificationQuestions: value }),
+                        "One question per line"
+                      )}
+                      {renderPlanListField(
+                        "Implementation Notes",
+                        subticket.implementationNotes,
+                        (value) => updateSubticket(index, { implementationNotes: value }),
+                        "One note per line"
+                      )}
                       <MarkdownBlock
                         className="ticket-markdown-preview compact"
-                        source={markdownFromDraft(subticket)}
+                        source={markdownFromSubticketDraft(subticket, draft.title)}
                         title={`Subticket ${index + 1}`}
                         onCopied={(kind) => setToast(copyToast(kind))}
                         onCopyError={(error) =>
@@ -1159,6 +1356,7 @@ function TicketDetail({
   const [logError, setLogError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
+  const [runPreflight, setRunPreflight] = useState<CodexRunPreflightResult | null>(null);
   const [ticketUpdateRequest, setTicketUpdateRequest] = useState("");
   const [ticketUpdateRunId, setTicketUpdateRunId] = useState<string | null>(null);
   const [ticketUpdateStatus, setTicketUpdateStatus] = useState<RunStatus>("idle");
@@ -1173,13 +1371,14 @@ function TicketDetail({
   const [newSubticketLabels, setNewSubticketLabels] = useState("");
   const [linkSubticketId, setLinkSubticketId] = useState("");
   const [subticketBusy, setSubticketBusy] = useState(false);
+  const ticketUpdateInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const load = useCallback(async () => {
     setDetailError(null);
     try {
       const [record, questions] = await Promise.all([
-        window.relay.ticket.read(projectPath, ticketId),
-        window.relay.ticket.clarifications(projectPath, ticketId)
+        getRelayApi().ticket.read(projectPath, ticketId),
+        getRelayApi().ticket.clarifications(projectPath, ticketId)
       ]);
       setTicket(record);
       setTitle(record.frontMatter.title);
@@ -1215,6 +1414,7 @@ function TicketDetail({
     setTicketUpdateError(null);
     setTicketUpdateCancelling(false);
     setTicketUpdateLogViewerOpen(false);
+    setRunPreflight(null);
     setAddTicketsOpen(false);
     setNewSubticketTitle("");
     setNewSubticketPriority("medium");
@@ -1224,8 +1424,16 @@ function TicketDetail({
   }, [projectPath, ticketId]);
 
   useEffect(() => {
-    if (events.some((event) => event.type === "clarification.requested")) void load();
-  }, [events, load]);
+    if (
+      events.some(
+        (event) =>
+          event.ticketId === ticketId &&
+          (event.type === "clarification.requested" || event.type === "run.completed" || event.type === "ticket.status_changed")
+      )
+    ) {
+      void load();
+    }
+  }, [events, load, ticketId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1238,7 +1446,7 @@ function TicketDetail({
 
     setLogLoading(true);
     setLogError(null);
-    void window.relay.codex
+    void getRelayApi().codex
       .readRunEvents(projectPath, ticketId, runId)
       .then((runEvents) => {
         if (!cancelled) setPersistedEvents(runEvents);
@@ -1294,6 +1502,13 @@ function TicketDetail({
       .filter((item) => item.id !== ticket.frontMatter.id && item.ticketType === "task" && !linkedIds.has(item.id))
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [board.tickets, linkedSubtickets, ticket]);
+  const unansweredClarificationCount = useMemo(
+    () => clarifications.filter((question) => !question.answer?.trim()).length,
+    [clarifications]
+  );
+  const reviewStatusAvailable = board.columns.some((column) => column.id === "review");
+  const completedStatusAvailable = board.columns.some((column) => column.id === "completed");
+  const todoStatusAvailable = board.columns.some((column) => column.id === "todo");
 
   useEffect(() => {
     if (!ticketUpdateRunId || ticketUpdateEndedAt) return;
@@ -1379,7 +1594,7 @@ function TicketDetail({
     if (!ticket) return;
     setBusy(true);
     try {
-      await window.relay.ticket.save({
+      await getRelayApi().ticket.save({
         projectPath,
         ticket: {
           ...ticket,
@@ -1416,7 +1631,7 @@ function TicketDetail({
     setTicketUpdateError(null);
     setTicketUpdateCancelling(false);
     try {
-      const result = await window.relay.ticket.startAgentUpdate({ projectPath, ticketId, request });
+      const result = await getRelayApi().ticket.startAgentUpdate({ projectPath, ticketId, request });
       setTicketUpdateRunId(result.runId);
       setToast({ kind: "info", message: `Ticket update agent started: ${result.runId}` });
     } catch (error) {
@@ -1433,7 +1648,7 @@ function TicketDetail({
     setTicketUpdateStatus("cancelled");
     setTicketUpdateCancelling(true);
     try {
-      await window.relay.ticket.cancelAgentUpdate(ticketUpdateRunId);
+      await getRelayApi().ticket.cancelAgentUpdate(ticketUpdateRunId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to cancel ticket update.";
       setTicketUpdateStatus("running");
@@ -1443,12 +1658,19 @@ function TicketDetail({
     }
   };
 
-  const startRun = async (resume: boolean): Promise<void> => {
+  const startRun = async (resume: boolean, freshThread = false): Promise<void> => {
     setBusy(true);
     try {
+      setRunPreflight(null);
+      const preflight = await getRelayApi().codex.preflightRun({ projectPath, ticketId, freshThread });
+      setRunPreflight(preflight);
+      if (!preflight.ok) {
+        setToast({ kind: "error", message: preflight.errors[0] ?? "Codex run is blocked." });
+        return;
+      }
       const result = resume
-        ? await window.relay.codex.resumeRun({ projectPath, ticketId })
-        : await window.relay.codex.startRun({ projectPath, ticketId });
+        ? await getRelayApi().codex.resumeRun({ projectPath, ticketId, freshThread })
+        : await getRelayApi().codex.startRun({ projectPath, ticketId, freshThread });
       setRunId(result.runId);
       setToast({ kind: "info", message: `Codex run started: ${result.runId}` });
       onChanged();
@@ -1460,9 +1682,35 @@ function TicketDetail({
     }
   };
 
+  const moveTicketTo = async (targetStatus: string, successMessage: string): Promise<void> => {
+    if (!ticket) return;
+    setBusy(true);
+    try {
+      await getRelayApi().ticket.move({ projectPath, ticketId, targetStatus });
+      setToast({ kind: "success", message: successMessage });
+      onChanged();
+      await load();
+    } catch (error) {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to update ticket status." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestChanges = (): void => {
+    const prefix = "Address review feedback: ";
+    setTicketUpdateRequest((current) => (current.trim().length > 0 ? current : prefix));
+    setTicketUpdateError(null);
+    window.requestAnimationFrame(() => {
+      ticketUpdateInputRef.current?.focus();
+      const cursor = ticketUpdateInputRef.current?.value.length ?? 0;
+      ticketUpdateInputRef.current?.setSelectionRange(cursor, cursor);
+    });
+  };
+
   const cancelRun = async (): Promise<void> => {
     if (!runId) return;
-    await window.relay.codex.cancelRun(runId);
+    await getRelayApi().codex.cancelRun(runId);
     setToast({ kind: "info", message: "Run cancelled." });
     onChanged();
     await load();
@@ -1473,7 +1721,7 @@ function TicketDetail({
     if (!answer) return;
     setSubmittingAnswerId(questionId);
     try {
-      await window.relay.ticket.answerClarification({ projectPath, ticketId, questionId, answer });
+      await getRelayApi().ticket.answerClarification({ projectPath, ticketId, questionId, answer });
       setToast({ kind: "success", message: "Clarification answer saved." });
       onChanged();
       await load();
@@ -1485,14 +1733,14 @@ function TicketDetail({
   };
 
   const remove = async (): Promise<void> => {
-    await window.relay.ticket.delete(projectPath, ticketId);
+    await getRelayApi().ticket.delete(projectPath, ticketId);
     setToast({ kind: "success", message: "Ticket moved to trash." });
     onChanged();
     onClose();
   };
 
   const duplicate = async (): Promise<void> => {
-    await window.relay.ticket.duplicate(projectPath, ticketId);
+    await getRelayApi().ticket.duplicate(projectPath, ticketId);
     setToast({ kind: "success", message: "Ticket duplicated." });
     onChanged();
   };
@@ -1506,19 +1754,14 @@ function TicketDetail({
     }
     setSubticketBusy(true);
     try {
-      await window.relay.ticket.createSubticket({
+      await getRelayApi().ticket.createSubticket({
         projectPath,
         epicId: ticket.frontMatter.id,
         ticket: {
           title: childTitle,
           priority: newSubticketPriority,
           labels: labelsFromInput(newSubticketLabels),
-          markdown: `# ${childTitle}
-
-## Context
-
-Subticket of ${ticket.frontMatter.title}.
-`
+          markdown: manualSubticketMarkdown(childTitle, ticket.frontMatter.title)
         }
       });
       setNewSubticketTitle("");
@@ -1538,7 +1781,7 @@ Subticket of ${ticket.frontMatter.title}.
     if (!ticket || ticket.frontMatter.ticketType !== "epic" || !linkSubticketId) return;
     setSubticketBusy(true);
     try {
-      await window.relay.ticket.linkSubticket({ projectPath, epicId: ticket.frontMatter.id, ticketId: linkSubticketId });
+      await getRelayApi().ticket.linkSubticket({ projectPath, epicId: ticket.frontMatter.id, ticketId: linkSubticketId });
       setLinkSubticketId("");
       setToast({ kind: "success", message: "Ticket linked." });
       onChanged();
@@ -1554,7 +1797,7 @@ Subticket of ${ticket.frontMatter.title}.
     if (!ticket || ticket.frontMatter.ticketType !== "epic") return;
     setSubticketBusy(true);
     try {
-      await window.relay.ticket.unlinkSubticket({ projectPath, epicId: ticket.frontMatter.id, ticketId: childId });
+      await getRelayApi().ticket.unlinkSubticket({ projectPath, epicId: ticket.frontMatter.id, ticketId: childId });
       setToast({ kind: "success", message: "Subticket unlinked." });
       onChanged();
       await load();
@@ -1621,10 +1864,34 @@ Subticket of ${ticket.frontMatter.title}.
             {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
             {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
           </button>
+          {ticket.frontMatter.codexThreadId && (
+            <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive}>
+              {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+              Start Fresh Thread
+            </button>
+          )}
           {runId && ticket.frontMatter.runStatus === "running" && (
             <button onClick={cancelRun}>
               <X size={16} />
               Stop
+            </button>
+          )}
+          {completedStatusAvailable && ticket.frontMatter.status === "review" && (
+            <button onClick={() => void moveTicketTo("completed", "Ticket accepted.")} disabled={busy || ticketUpdateActive}>
+              <Check size={16} />
+              Mark Accepted
+            </button>
+          )}
+          {reviewStatusAvailable && ticket.frontMatter.status === "review" && (
+            <button onClick={requestChanges} disabled={busy || ticketUpdateActive}>
+              <Send size={16} />
+              Request Changes
+            </button>
+          )}
+          {ticket.frontMatter.status === "completed" && todoStatusAvailable && (
+            <button onClick={() => void moveTicketTo("todo", "Ticket reopened.")} disabled={busy || ticketUpdateActive}>
+              <RefreshCw size={16} />
+              Reopen
             </button>
           )}
           <button onClick={save} disabled={busy || ticketUpdateActive}>
@@ -1632,6 +1899,20 @@ Subticket of ${ticket.frontMatter.title}.
             Save
           </button>
         </div>
+
+        {runPreflight && (!runPreflight.ok || runPreflight.warnings.length > 0) && (
+          <div className={clsx("ticket-update-error", runPreflight.ok ? "warning" : "error")} role={runPreflight.ok ? "status" : "alert"}>
+            <AlertTriangle size={16} />
+            <span>{[...runPreflight.errors, ...runPreflight.warnings].join(" ")}</span>
+          </div>
+        )}
+
+        {unansweredClarificationCount > 0 && (
+          <div className="ticket-update-error" role="alert">
+            <AlertTriangle size={16} />
+            <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming Codex.</span>
+          </div>
+        )}
 
         {parentEpic && (
           <section className="epic-link-panel">
@@ -1744,6 +2025,7 @@ Subticket of ${ticket.frontMatter.title}.
           <label className="field">
             <span>Change Request</span>
             <textarea
+              ref={ticketUpdateInputRef}
               className="ticket-update-input"
               value={ticketUpdateRequest}
               placeholder="Add acceptance criteria, revise requirements, capture new context..."
@@ -1840,7 +2122,7 @@ Subticket of ${ticket.frontMatter.title}.
           logLoading={logLoading}
           logError={logError}
           onOpenLogs={() => setLogViewerOpen(true)}
-          onRevealFile={() => void window.relay.ticket.revealFile(projectPath, ticketId)}
+          onRevealFile={() => void getRelayApi().ticket.revealFile(projectPath, ticketId)}
         />
 
         <div className="danger-row">
@@ -1881,7 +2163,7 @@ Subticket of ${ticket.frontMatter.title}.
 }
 
 export function App(): ReactElement {
-  if (!window.relay) {
+  if (!hasRelayApi()) {
     return (
       <main className="preload-error">
         <h1>Relay preload did not load</h1>
@@ -1937,7 +2219,7 @@ function RelayApp(): ReactElement {
       );
 
       try {
-        const metadata = await window.relay.projects.gitMetadata(projectPath, { force });
+        const metadata = await getRelayApi().projects.gitMetadata(projectPath, { force });
         if (gitMetadataRequestRef.current[projectPath] === requestId) {
           setGitMetadataByPath((current) => ({ ...current, [projectPath]: metadata }));
         }
@@ -1971,7 +2253,7 @@ function RelayApp(): ReactElement {
   }, []);
 
   const loadProjects = useCallback(async () => {
-    const nextProjects = await window.relay.projects.list();
+    const nextProjects = await getRelayApi().projects.list();
     setProjects(nextProjects);
     setSelectedPath((current) => current ?? nextProjects[0]?.path ?? null);
     refreshProjectListGitMetadata(nextProjects, true);
@@ -1985,7 +2267,7 @@ function RelayApp(): ReactElement {
       return;
     }
     const projectPath = selectedPath;
-    const nextBoard = await window.relay.board.read(projectPath);
+    const nextBoard = await getRelayApi().board.read(projectPath);
     if (boardRequestRef.current === requestId) {
       setBoard(nextBoard);
       updateProjectFromBoard(nextBoard);
@@ -2006,7 +2288,7 @@ function RelayApp(): ReactElement {
 
   useEffect(() => {
     void loadProjects();
-    void window.relay.codex.status().then(setCodexStatus);
+    void getRelayApi().codex.status().then(setCodexStatus);
   }, [loadProjects]);
 
   useEffect(() => {
@@ -2038,7 +2320,7 @@ function RelayApp(): ReactElement {
   }, [board, openTicketId]);
 
   useEffect(() => {
-    return window.relay.codex.onRunEvent((event) => {
+    return getRelayApi().codex.onRunEvent((event) => {
       setEvents((current) => [...current.slice(-400), event]);
       if (
         event.type === "run.completed" ||
@@ -2054,7 +2336,7 @@ function RelayApp(): ReactElement {
   const addProject = async (): Promise<void> => {
     setLoading(true);
     try {
-      const result = await window.relay.projects.addFolder();
+      const result = await getRelayApi().projects.addFolder();
       if (result) {
         await loadProjects();
         selectProject(result.project.path);
@@ -2073,7 +2355,7 @@ function RelayApp(): ReactElement {
     const targetStatus = String(event.over.id);
     const ticket = board?.tickets.find((item) => item.id === ticketId);
     if (!ticket || ticket.status === targetStatus) return;
-    const nextBoard = await window.relay.ticket.move({ projectPath: selectedPath, ticketId, targetStatus });
+    const nextBoard = await getRelayApi().ticket.move({ projectPath: selectedPath, ticketId, targetStatus });
     setBoard(nextBoard);
     updateProjectFromBoard(nextBoard);
   };
@@ -2110,12 +2392,12 @@ function RelayApp(): ReactElement {
         onAdd={addProject}
         onSelect={selectProject}
         onRemove={async (projectPath) => {
-          const nextProjects = await window.relay.projects.removeFromSidebar(projectPath);
+          const nextProjects = await getRelayApi().projects.removeFromSidebar(projectPath);
           setProjects(nextProjects);
           refreshProjectListGitMetadata(nextProjects, true);
           if (selectedPath === projectPath) selectProject(nextProjects[0]?.path ?? null);
         }}
-        onReveal={(projectPath) => void window.relay.projects.revealInFinder(projectPath)}
+        onReveal={(projectPath) => void getRelayApi().projects.revealInFinder(projectPath)}
       />
 
       {board ? (
@@ -2147,7 +2429,7 @@ function RelayApp(): ReactElement {
             <strong>Codex</strong>
             <span>{codexStatus.cliVersion ?? codexStatus.message}</span>
           </div>
-          <button onClick={() => window.relay.codex.status().then(setCodexStatus)} aria-label="Refresh Codex status">
+          <button onClick={() => getRelayApi().codex.status().then(setCodexStatus)} aria-label="Refresh Codex status">
             <RefreshCw size={14} />
           </button>
         </div>

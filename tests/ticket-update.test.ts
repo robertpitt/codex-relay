@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { BrowserWindow } from "electron";
-import { cancelTicketUpdateRun, startTicketUpdateRun, type TicketUpdateDependencies } from "../src/main/services/codex";
+import {
+  cancelTicketUpdateRun,
+  startTicketUpdateRun,
+  type TicketUpdateCodexClient,
+  type TicketUpdateDependencies,
+  type TicketUpdateThread
+} from "../src/main/services/codex";
 import { createTicket, initializeProject, readClarificationQuestions, readTicket } from "../src/main/services/storage";
 import type { AgentTicketUpdate, RendererRunEvent } from "../src/shared/types";
 
@@ -14,19 +19,49 @@ const createProject = async (): Promise<string> => {
   return projectPath;
 };
 
-const createFakeWindow = (): { window: BrowserWindow; events: RendererRunEvent[] } => {
+const createFakeRunEventSink = (): { runEventSink: NonNullable<TicketUpdateDependencies["runEventSink"]>; events: RendererRunEvent[] } => {
   const events: RendererRunEvent[] = [];
   return {
-    window: {
-      webContents: {
-        send: (_channel: string, event: RendererRunEvent) => {
-          events.push(event);
-        }
+    runEventSink: {
+      emit: (event: RendererRunEvent) => {
+        events.push(event);
       }
-    } as unknown as BrowserWindow,
+    },
     events
   };
 };
+
+type TicketUpdateThreadOptions = Parameters<TicketUpdateCodexClient["startThread"]>[0];
+type TicketUpdateRunOptions = NonNullable<Parameters<TicketUpdateThread["runStreamed"]>[1]> & { signal: AbortSignal };
+type TicketUpdateRunStreamedMock = (
+  prompt: string,
+  options: TicketUpdateRunOptions
+) => ReturnType<TicketUpdateThread["runStreamed"]>;
+
+const codexUsage = {
+  input_tokens: 1,
+  cached_input_tokens: 0,
+  output_tokens: 1,
+  reasoning_output_tokens: 0
+} as const;
+
+const createTicketUpdateCodexClient = (
+  threadId: string,
+  runStreamed: TicketUpdateRunStreamedMock,
+  onStartThread?: (options: TicketUpdateThreadOptions) => void
+): TicketUpdateCodexClient => ({
+  startThread: (options) => {
+    onStartThread?.(options);
+    return {
+      id: threadId,
+      runStreamed: (input, runOptions) => {
+        if (typeof input !== "string") throw new TypeError("Ticket update tests expect string prompts.");
+        if (!runOptions?.signal) throw new TypeError("Ticket update tests expect an AbortSignal.");
+        return runStreamed(input, { ...runOptions, signal: runOptions.signal });
+      }
+    };
+  }
+});
 
 const waitFor = async (predicate: () => boolean, label: string): Promise<void> => {
   const deadline = Date.now() + 1000;
@@ -56,35 +91,34 @@ test("ticket update agent applies validated structured output and preserves unre
     markdown: "# Original ticket\n\n## Context\n\nOriginal body.\n"
   });
   const original = await readTicket(projectPath, ticket.frontMatter.id);
-  const { window, events } = createFakeWindow();
+  const { runEventSink, events } = createFakeRunEventSink();
   let capturedPrompt = "";
-  let capturedOptions: Record<string, unknown> = {};
+  let capturedOptions: Partial<TicketUpdateThreadOptions> = {};
 
   const dependencies: TicketUpdateDependencies = {
+    runEventSink,
     createRunId: () => "run_ticket_update_success",
     createCodexClient: () =>
-      ({
-        startThread: (options: Record<string, unknown>) => {
-          capturedOptions = options;
+      createTicketUpdateCodexClient(
+        "thread_ticket_update_success",
+        async (prompt, options) => {
+          capturedPrompt = prompt;
+          assert.equal(options.signal?.aborted, false);
           return {
-            id: "thread_ticket_update_success",
-            runStreamed: async (prompt: string, options: { signal: AbortSignal }) => {
-              capturedPrompt = prompt;
-              assert.equal(options.signal.aborted, false);
-              return {
-                events: (async function* () {
-                  yield { type: "thread.started", thread_id: "thread_ticket_update_success" };
-                  yield { type: "item.completed", item: { type: "agent_message", text: updateJson() } };
-                  yield { type: "turn.completed", usage: { total_tokens: 1 } };
-                })()
-              };
-            }
+            events: (async function* () {
+              yield { type: "thread.started", thread_id: "thread_ticket_update_success" };
+              yield { type: "item.completed", item: { id: "msg_ticket_update_success", type: "agent_message", text: updateJson() } };
+              yield { type: "turn.completed", usage: codexUsage };
+            })()
           };
+        },
+        (options) => {
+          capturedOptions = options;
         }
-      }) as any
+      )
   };
 
-  await startTicketUpdateRun(window, { projectPath, ticketId: ticket.frontMatter.id, request: "Add release targeting detail." }, dependencies);
+  await startTicketUpdateRun({ projectPath, ticketId: ticket.frontMatter.id, request: "Add release targeting detail." }, dependencies);
   await waitFor(() => events.some((event) => event.type === "run.completed"), "ticket update completion");
 
   const updated = await readTicket(projectPath, ticket.frontMatter.id);
@@ -121,25 +155,24 @@ test("ticket update agent leaves the ticket unchanged when output validation fai
     markdown: "# Invalid output guard\n\nDo not mutate this body.\n"
   });
   const original = await readTicket(projectPath, ticket.frontMatter.id);
-  const { window, events } = createFakeWindow();
+  const { runEventSink, events } = createFakeRunEventSink();
   const dependencies: TicketUpdateDependencies = {
+    runEventSink,
     createRunId: () => "run_ticket_update_invalid",
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          id: "thread_ticket_update_invalid",
-          runStreamed: async () => ({
-            events: (async function* () {
-              yield { type: "thread.started", thread_id: "thread_ticket_update_invalid" };
-              yield { type: "item.completed", item: { type: "agent_message", text: updateJson({ title: "" }) } };
-              yield { type: "turn.completed", usage: { total_tokens: 1 } };
-            })()
-          })
-        })
-      }) as any
+      createTicketUpdateCodexClient("thread_ticket_update_invalid", async () => ({
+        events: (async function* () {
+          yield { type: "thread.started", thread_id: "thread_ticket_update_invalid" };
+          yield {
+            type: "item.completed",
+            item: { id: "msg_ticket_update_invalid", type: "agent_message", text: updateJson({ title: "" }) }
+          };
+          yield { type: "turn.completed", usage: codexUsage };
+        })()
+      }))
   };
 
-  await startTicketUpdateRun(window, { projectPath, ticketId: ticket.frontMatter.id, request: "Break the schema." }, dependencies);
+  await startTicketUpdateRun({ projectPath, ticketId: ticket.frontMatter.id, request: "Break the schema." }, dependencies);
   await waitFor(() => events.some((event) => event.type === "run.failed"), "ticket update failure");
 
   const unchanged = await readTicket(projectPath, ticket.frontMatter.id);
@@ -157,28 +190,24 @@ test("ticket update agent prevents duplicate active runs for the same ticket", a
     labels: [],
     markdown: "# Duplicate guard\n"
   });
-  const { window, events } = createFakeWindow();
+  const { runEventSink, events } = createFakeRunEventSink();
   const dependencies: TicketUpdateDependencies = {
+    runEventSink,
     createRunId: () => "run_ticket_update_duplicate",
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          id: "thread_ticket_update_duplicate",
-          runStreamed: async (_prompt: string, options: { signal: AbortSignal }) => ({
-            events: (async function* () {
-              yield { type: "thread.started", thread_id: "thread_ticket_update_duplicate" };
-              await new Promise((_resolve, reject) => {
-                options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-              });
-            })()
-          })
-        })
-      }) as any
+      createTicketUpdateCodexClient("thread_ticket_update_duplicate", async (_prompt, options) => ({
+        events: (async function* () {
+          yield { type: "thread.started", thread_id: "thread_ticket_update_duplicate" };
+          await new Promise<never>((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          });
+        })()
+      }))
   };
 
-  await startTicketUpdateRun(window, { projectPath, ticketId: ticket.frontMatter.id, request: "Keep running." }, dependencies);
+  await startTicketUpdateRun({ projectPath, ticketId: ticket.frontMatter.id, request: "Keep running." }, dependencies);
   await assert.rejects(
-    startTicketUpdateRun(window, { projectPath, ticketId: ticket.frontMatter.id, request: "Duplicate." }, dependencies),
+    startTicketUpdateRun({ projectPath, ticketId: ticket.frontMatter.id, request: "Duplicate." }, dependencies),
     /already running/
   );
 

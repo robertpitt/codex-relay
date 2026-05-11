@@ -8,7 +8,9 @@ import {
   draftToCreateInput,
   extractTicketDraftUrls,
   TicketDraftServiceError,
-  type TicketDraftDependencies
+  type TicketDraftCodexClient,
+  type TicketDraftDependencies,
+  type TicketDraftThread
 } from "../src/main/services/codex";
 import { initializeProject, readBoard } from "../src/main/services/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
@@ -27,6 +29,24 @@ const createProject = async (): Promise<string> => {
   await initializeProject(projectPath);
   return projectPath;
 };
+
+type TicketDraftRunOptions = NonNullable<Parameters<TicketDraftThread["run"]>[1]> & { signal: AbortSignal };
+type TicketDraftRunResult = Awaited<ReturnType<TicketDraftThread["run"]>>;
+type TicketDraftRunMock = (
+  prompt: string,
+  options: TicketDraftRunOptions
+) => Promise<Pick<TicketDraftRunResult, "finalResponse">> | Pick<TicketDraftRunResult, "finalResponse">;
+
+const createDraftCodexClient = (run: TicketDraftRunMock): TicketDraftCodexClient => ({
+  startThread: () => ({
+    run: async (input, options) => {
+      if (typeof input !== "string") throw new TypeError("Ticket draft tests expect string prompts.");
+      if (!options?.signal) throw new TypeError("Ticket draft tests expect an AbortSignal.");
+      const result = await run(input, { ...options, signal: options.signal });
+      return { items: [], usage: null, ...result };
+    }
+  })
+});
 
 const validDraftJson = (title: string): string =>
   JSON.stringify({
@@ -91,15 +111,11 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_success",
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async (nextPrompt: string, options: { signal: AbortSignal }) => {
-            prompt = nextPrompt;
-            signals.push(options.signal);
-            return { finalResponse: validDraftJson("Recoverable timeout handling") };
-          }
-        })
-      }) as any
+      createDraftCodexClient(async (nextPrompt, options) => {
+        prompt = nextPrompt;
+        signals.push(options.signal);
+        return { finalResponse: validDraftJson("Recoverable timeout handling") };
+      })
   };
 
   const draft = await createTicketDraft({ projectPath, idea: "Make timeouts recoverable" }, dependencies);
@@ -126,14 +142,10 @@ test("ticket draft prompt preserves markdown ticket references from the idea", a
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_ticket_reference",
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async (nextPrompt: string) => {
-            prompt = nextPrompt;
-            return { finalResponse: validDraftJson("Reference-aware draft") };
-          }
-        })
-      }) as any
+      createDraftCodexClient(async (nextPrompt) => {
+        prompt = nextPrompt;
+        return { finalResponse: validDraftJson("Reference-aware draft") };
+      })
   };
 
   await createTicketDraft({ projectPath, idea }, dependencies);
@@ -157,27 +169,23 @@ test("ticket draft URL research fetches detected URLs and renders source metadat
       );
     },
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async (nextPrompt: string) => {
-            prompt = nextPrompt;
-            return {
-              finalResponse: JSON.stringify({
-                title: "Research-aware drafting",
-                priority: "medium",
-                labels: ["drafts"],
-                context: "Ground draft generation in researched sources.",
-                researchFindings: ["External Draft Spec says URLs should be fetched before ticket writing."],
-                requirements: ["Fetch URLs detected in the rough idea."],
-                implementationPlan: ["Extract URLs, fetch bounded content, and pass summarized findings to Codex."],
-                acceptanceCriteria: ["The generated markdown references fetched URLs."],
-                clarificationQuestions: [],
-                implementationNotes: []
-              })
-            };
-          }
-        })
-      }) as any
+      createDraftCodexClient(async (nextPrompt) => {
+        prompt = nextPrompt;
+        return {
+          finalResponse: JSON.stringify({
+            title: "Research-aware drafting",
+            priority: "medium",
+            labels: ["drafts"],
+            context: "Ground draft generation in researched sources.",
+            researchFindings: ["External Draft Spec says URLs should be fetched before ticket writing."],
+            requirements: ["Fetch URLs detected in the rough idea."],
+            implementationPlan: ["Extract URLs, fetch bounded content, and pass summarized findings to Codex."],
+            acceptanceCriteria: ["The generated markdown references fetched URLs."],
+            clarificationQuestions: [],
+            implementationNotes: []
+          })
+        };
+      })
   };
 
   const draft = await createTicketDraft({ projectPath, idea }, dependencies);
@@ -213,14 +221,10 @@ test("ticket draft codebase research inspects matching project files before prom
     createRequestId: () => "tdr_code_research",
     researchLimits: { maxFilesToScan: 12, maxFilesToRead: 3 },
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async (nextPrompt: string) => {
-            prompt = nextPrompt;
-            return { finalResponse: validDraftJson("Inspect draft code") };
-          }
-        })
-      }) as any
+      createDraftCodexClient(async (nextPrompt) => {
+        prompt = nextPrompt;
+        return { finalResponse: validDraftJson("Inspect draft code") };
+      })
   };
 
   const draft = await createTicketDraft(
@@ -245,11 +249,7 @@ test("ticket draft research records URL and codebase limitations in generated ma
       throw new Error("network blocked");
     },
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async () => ({ finalResponse: validDraftJson("Research limitations are visible") })
-        })
-      }) as any
+      createDraftCodexClient(async () => ({ finalResponse: validDraftJson("Research limitations are visible") }))
   };
 
   const draft = await createTicketDraft({ projectPath, idea: "Use https://example.test/missing for a frobnicate workflow" }, dependencies);
@@ -272,14 +272,10 @@ test("ticket draft timeout is typed, recoverable, and aborts the Codex request",
     draftTimeoutMs: 5,
     unrefTimeout: false,
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: (_prompt: string, options: { signal: AbortSignal }) => {
-            signals.push(options.signal);
-            return new Promise(() => undefined);
-          }
-        })
-      }) as any
+      createDraftCodexClient((_prompt, options) => {
+        signals.push(options.signal);
+        return new Promise<never>(() => undefined);
+      })
   };
 
   await assert.rejects(
@@ -307,16 +303,12 @@ test("ticket draft retry after timeout uses an independent Codex request", async
     draftTimeoutMs: 5,
     unrefTimeout: false,
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: (_prompt: string, options: { signal: AbortSignal }) => {
-            signals.push(options.signal);
-            attempt += 1;
-            if (attempt === 1) return new Promise(() => undefined);
-            return Promise.resolve({ finalResponse: validDraftJson("Retry succeeded") });
-          }
-        })
-      }) as any
+      createDraftCodexClient((_prompt, options) => {
+        signals.push(options.signal);
+        attempt += 1;
+        if (attempt === 1) return new Promise<never>(() => undefined);
+        return Promise.resolve({ finalResponse: validDraftJson("Retry succeeded") });
+      })
   };
 
   await assert.rejects(createTicketDraft({ projectPath, idea: "Retry after timeout" }, dependencies), TicketDraftServiceError);
@@ -337,14 +329,10 @@ test("ticket draft creation supports epic output with reviewable subtickets", as
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_epic",
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async (nextPrompt: string) => {
-            prompt = nextPrompt;
-            return { finalResponse: validEpicDraftJson() };
-          }
-        })
-      }) as any
+      createDraftCodexClient(async (nextPrompt) => {
+        prompt = nextPrompt;
+        return { finalResponse: validEpicDraftJson() };
+      })
   };
 
   const draft = await createTicketDraft({ projectPath, idea: "Plan the account migration", preferredTicketType: "epic" }, dependencies);
@@ -357,6 +345,8 @@ test("ticket draft creation supports epic output with reviewable subtickets", as
   assert.equal(createInput.subtickets?.length, 2);
   assert.match(createInput.markdown, /# Account migration epic/);
   assert.match(createInput.subtickets?.[0].markdown ?? "", /# Account API migration/);
+  assert.match(createInput.subtickets?.[0].markdown ?? "", /## Parent Epic/);
+  assert.doesNotMatch(createInput.subtickets?.[0].markdown ?? "", /## Research Metadata/);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
 });
 
@@ -366,12 +356,22 @@ test("ticket draft rejects malformed task output that contains subtickets", asyn
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_bad_task_children",
     createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: async () => ({
-            finalResponse: JSON.stringify({
-              title: "Malformed task",
-              ticketType: "task",
+      createDraftCodexClient(async () => ({
+        finalResponse: JSON.stringify({
+          title: "Malformed task",
+          ticketType: "task",
+          priority: "medium",
+          labels: [],
+          context: "",
+          researchFindings: [],
+          requirements: [],
+          implementationPlan: [],
+          acceptanceCriteria: [],
+          clarificationQuestions: [],
+          implementationNotes: [],
+          subtickets: [
+            {
+              title: "Should not be here",
               priority: "medium",
               labels: [],
               context: "",
@@ -380,25 +380,11 @@ test("ticket draft rejects malformed task output that contains subtickets", asyn
               implementationPlan: [],
               acceptanceCriteria: [],
               clarificationQuestions: [],
-              implementationNotes: [],
-              subtickets: [
-                {
-                  title: "Should not be here",
-                  priority: "medium",
-                  labels: [],
-                  context: "",
-                  researchFindings: [],
-                  requirements: [],
-                  implementationPlan: [],
-                  acceptanceCriteria: [],
-                  clarificationQuestions: [],
-                  implementationNotes: []
-                }
-              ]
-            })
-          })
+              implementationNotes: []
+            }
+          ]
         })
-      }) as any
+      }))
   };
 
   await assert.rejects(

@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krbjxm9zndw2s6sy4g34qwej
 title: Audit Current Backend Effect Usage and Migration Surface
 ticketType: task
-status: todo
-position: 11000
+status: completed
+position: 29000
 priority: high
 labels:
   - backend
@@ -14,10 +14,10 @@ labels:
 parentEpicId: tkt_01krbjxm9ggwkt1053h8j2rdtw
 subticketIds: []
 createdAt: '2026-05-11T13:16:44.735Z'
-updatedAt: '2026-05-11T13:16:44.735Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T14:06:26.390Z'
+codexThreadId: 019e1756-fc4b-7443-ae93-7bf955dee1c8
+runStatus: completed
+lastRunId: run_01krbndy11xfa5bvg91fygs6e5
 ---
 # Audit Current Backend Effect Usage and Migration Surface
 
@@ -65,5 +65,39 @@ Before changing dependencies, identify every backend module, import, runtime ent
 - No research metadata recorded.
 
 ## Codex Handoff
+
+### 5/11/2026, 3:06:26 PM
+
+**Summary**
+Added a bounded backend migration audit at [docs/backend-effect-v4-audit.md](/Users/robertpitt/Projects/relay/docs/backend-effect-v4-audit.md). It identifies direct Effect imports, backend async/runtime surfaces, package and lockfile impact, Effect v4 API mappings, shared contract risks, and a checklist for the remaining migration subtickets.
+
+No production code behavior was changed by this audit. I did not mark the ticket completed.
+
+**Files Changed**
+- [docs/backend-effect-v4-audit.md](/Users/robertpitt/Projects/relay/docs/backend-effect-v4-audit.md)
+
+Existing dirty worktree changes were already present in package/source/.relay files; I left them untouched.
+
+**Commands Run**
+- `git status --short`
+- `find ...` / `grep ...` source and package searches
+- `git show HEAD:package.json`
+- `git grep ... HEAD ...`
+- `sed` / `nl` file inspections
+- `npm ls effect effect-smol @effect/io @effect/data --depth=0`
+- `npm run typecheck`
+- `npm test`
+
+`rg` was attempted first but is not installed in this environment.
+
+**Tests Run**
+- `npm run typecheck`: passed.
+- `npm test`: passed, 56 tests.
+- Dependency check: passed; top-level Effect dependency is `effect@4.0.0-beta.65`.
+
+**Remaining Risks / Follow-Up**
+- `effect@4.0.0-beta.65` is a beta target, so API churn remains possible.
+- The audit is based on the current dirty worktree plus a comparison to `HEAD`; if the parallel migration changes are rebased or replaced, the checklist should be rechecked against the final diff.
+
 
 No Codex run has been started.
