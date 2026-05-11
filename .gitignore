@@ -7,3 +7,4 @@ dist-electron
 .env
 .env.local
 coverage
+.effect
