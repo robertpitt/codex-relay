@@ -6,6 +6,7 @@ import type {
   ClarificationAnswerInput,
   TicketCreateInput,
   TicketDraftResult,
+  GitMetadataOptions,
   TicketMoveInput,
   TicketSaveInput
 } from "../shared/types";
@@ -19,6 +20,7 @@ import {
   readCodexRunEvents,
   ticketDraftErrorToPayload
 } from "./services/codex";
+import { readCachedGitMetadata } from "./services/git";
 import { getLogPath, logError, logInfo, logWarn } from "./services/logger";
 import { readRegistry, removeProjectPath, upsertProjectPath } from "./services/registry";
 import {
@@ -142,6 +144,10 @@ const registerIpc = (): void => {
   });
 
   ipcMain.handle("projects:read", async (_event, projectPath: string) => summarizeProject(projectPath));
+
+  ipcMain.handle("projects:gitMetadata", async (_event, projectPath: string, options?: GitMetadataOptions) =>
+    readCachedGitMetadata(projectPath, options)
+  );
 
   ipcMain.handle("projects:revealInFinder", async (_event, projectPath: string) => {
     await shell.openPath(projectPath);

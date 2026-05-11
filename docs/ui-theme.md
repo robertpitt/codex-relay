@@ -14,7 +14,7 @@ The MIT license permits use, modification, and redistribution when the copyright
 
 ## Token Structure
 
-- Color tokens: `--relay-bg`, `--relay-chrome`, `--relay-sidebar`, `--relay-surface*`, `--relay-popover`, `--relay-input`, text, border, primary, info, success, warning, and danger tokens.
+- Color tokens: `--relay-bg`, `--relay-chrome`, `--relay-sidebar`, `--relay-surface*`, `--relay-popover`, `--relay-input`, text, border, primary, primary text, info, success, warning, and danger tokens.
 - Layout tokens: `--relay-space-*` and `--relay-radius-*` keep spacing and corners consistent across shell, cards, dialogs, and controls.
 - Interaction tokens: `--relay-ring`, `--relay-focus-ring`, hover/active surface tokens, disabled opacity, and state-muted colors cover keyboard and pointer states.
 - Elevation tokens: `--relay-shadow-sm`, `--relay-shadow-panel`, `--relay-shadow-modal`, and `--relay-inset-highlight` define restrained panel depth.
@@ -22,7 +22,7 @@ The MIT license permits use, modification, and redistribution when the copyright
 
 ## Usage Guidelines
 
-Prefer semantic tokens that match intent. For example, use `--relay-surface` for panels, `--relay-surface-2` for raised cards, `--relay-input` for editable controls, `--relay-border` for default separators, and `--relay-primary` only for primary actions or selected navigation.
+Prefer semantic tokens that match intent. For example, use `--relay-surface` for panels, `--relay-surface-2` for raised cards, `--relay-input` for editable controls, `--relay-border` for default separators, `--relay-primary` for primary action backgrounds or selected navigation, and `--relay-primary-text` for primary-accent foreground text and icons.
 
 Repeated UI primitives should inherit from the shared selectors already defined for `button`, `input`, `textarea`, `select`, `.ticket-card`, `.modal`, `.detail-panel`, badges, health alerts, and empty states. Add new class-level styling only when a component needs layout or behavior beyond those primitives.
 

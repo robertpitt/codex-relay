@@ -59,6 +59,25 @@ export type ProjectSummary = {
   lastOpenedAt?: string;
 };
 
+export type GitMetadataState = "loading" | "ready" | "not_git" | "unavailable" | "missing" | "error";
+
+export type GitMetadata = {
+  state: GitMetadataState;
+  isGitRepository: boolean;
+  branchName: string | null;
+  isDetachedHead: boolean;
+  commitSha: string | null;
+  isDirty: boolean;
+  changedFileCount: number | null;
+  message: string | null;
+  error: string | null;
+  updatedAt: string;
+};
+
+export type GitMetadataOptions = {
+  force?: boolean;
+};
+
 export type TicketFrontMatter = {
   schemaVersion: number;
   id: string;
@@ -276,6 +295,7 @@ export type RelayApi = {
     addFolder: () => Promise<AddProjectResult | null>;
     removeFromSidebar: (projectPath: string) => Promise<ProjectSummary[]>;
     read: (projectPath: string) => Promise<ProjectSummary>;
+    gitMetadata: (projectPath: string, options?: GitMetadataOptions) => Promise<GitMetadata>;
     revealInFinder: (projectPath: string) => Promise<void>;
   };
   board: {

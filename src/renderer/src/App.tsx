@@ -10,7 +10,6 @@ import {
   Copy,
   ExternalLink,
   FolderPlus,
-  GitBranch,
   Loader2,
   Play,
   Plus,
@@ -26,6 +25,7 @@ import type {
   BoardSnapshot,
   ClarificationQuestion,
   CodexStatus,
+  GitMetadata,
   ProjectSummary,
   RelayColumn,
   RendererRunEvent,
@@ -37,6 +37,7 @@ import type {
 } from "@shared/types";
 import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "./components/AgentActivity";
 import { ClarificationPanel } from "./components/ClarificationPanel";
+import { GitMetadataPill, loadingGitMetadata } from "./components/GitMetadata";
 import { MarkdownBlock } from "./components/MarkdownBlock";
 import { mergeRunEvents } from "./lib/agentProgress";
 import { emptyTicketMarkdown, markdownFromDraft } from "./lib/markdown";
@@ -92,6 +93,7 @@ const copyToast = (kind: "markdown" | "code"): Toast => ({
 function ProjectSidebar({
   projects,
   selectedPath,
+  gitMetadataByPath,
   loading,
   onAdd,
   onSelect,
@@ -100,6 +102,7 @@ function ProjectSidebar({
 }: {
   projects: ProjectSummary[];
   selectedPath: string | null;
+  gitMetadataByPath: Record<string, GitMetadata | undefined>;
   loading: boolean;
   onAdd: () => void;
   onSelect: (projectPath: string) => void;
@@ -122,24 +125,27 @@ function ProjectSidebar({
       </button>
 
       <div className="sidebar-list">
-        {projects.map((project) => (
-          <button
-            className={clsx("project-row", selectedPath === project.path && "selected")}
-            key={project.path}
-            onClick={() => onSelect(project.path)}
-            aria-current={selectedPath === project.path ? "page" : undefined}
-          >
-            <span className="project-main">
-              <span className="project-name">{project.name}</span>
-              <span className="project-path">{shortPath(project.path)}</span>
-            </span>
-            <span className="project-badges">
-              {!project.isGitRepository && <GitBranch size={13} />}
-              {project.health !== "ok" && <AlertTriangle size={13} />}
-              {project.activeRunCount > 0 && <CircleDashed size={13} />}
-            </span>
-          </button>
-        ))}
+        {projects.map((project) => {
+          const gitMetadata = gitMetadataByPath[project.path] ?? loadingGitMetadata();
+          return (
+            <button
+              className={clsx("project-row", selectedPath === project.path && "selected")}
+              key={project.path}
+              onClick={() => onSelect(project.path)}
+              aria-current={selectedPath === project.path ? "page" : undefined}
+            >
+              <span className="project-main">
+                <span className="project-name">{project.name}</span>
+                <span className="project-path">{shortPath(project.path)}</span>
+                <GitMetadataPill metadata={gitMetadata} compact />
+              </span>
+              <span className="project-badges">
+                {project.health !== "ok" && <AlertTriangle size={13} />}
+                {project.activeRunCount > 0 && <CircleDashed size={13} />}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {selectedPath && (
@@ -217,7 +223,8 @@ function BoardView({
   onQuery,
   onCreate,
   onOpenTicket,
-  onMove
+  onMove,
+  gitMetadata
 }: {
   board: BoardSnapshot;
   query: string;
@@ -225,6 +232,7 @@ function BoardView({
   onCreate: () => void;
   onOpenTicket: (ticketId: string) => void;
   onMove: (event: DragEndEvent) => void;
+  gitMetadata: GitMetadata | undefined;
 }): ReactElement {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const filteredTickets = useMemo(() => {
@@ -241,7 +249,10 @@ function BoardView({
       <div className="topbar">
         <div>
           <h1>{board.project.name}</h1>
-          <p>{board.project.path}</p>
+          <div className="project-header-meta">
+            <p>{board.project.path}</p>
+            <GitMetadataPill metadata={gitMetadata ?? loadingGitMetadata()} />
+          </div>
         </div>
         <div className="topbar-actions">
           <label className="search">
@@ -864,13 +875,68 @@ export function App(): ReactElement {
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const [codexStatus, setCodexStatus] = useState<CodexStatus>(initialCodexStatus);
   const [events, setEvents] = useState<RendererRunEvent[]>([]);
+  const [gitMetadataByPath, setGitMetadataByPath] = useState<Record<string, GitMetadata | undefined>>({});
   const boardRequestRef = useRef(0);
+  const gitMetadataRequestRef = useRef<Record<string, number>>({});
+
+  const gitMetadataError = useCallback(
+    (message: string): GitMetadata => ({
+      state: "error",
+      isGitRepository: false,
+      branchName: null,
+      isDetachedHead: false,
+      commitSha: null,
+      isDirty: false,
+      changedFileCount: null,
+      message,
+      error: message,
+      updatedAt: new Date().toISOString()
+    }),
+    []
+  );
+
+  const refreshProjectGitMetadata = useCallback(
+    async (projectPath: string, force = false): Promise<void> => {
+      const requestId = (gitMetadataRequestRef.current[projectPath] ?? 0) + 1;
+      gitMetadataRequestRef.current[projectPath] = requestId;
+      setGitMetadataByPath((current) =>
+        current[projectPath] ? current : { ...current, [projectPath]: loadingGitMetadata() }
+      );
+
+      try {
+        const metadata = await window.relay.projects.gitMetadata(projectPath, { force });
+        if (gitMetadataRequestRef.current[projectPath] === requestId) {
+          setGitMetadataByPath((current) => ({ ...current, [projectPath]: metadata }));
+        }
+      } catch (error) {
+        if (gitMetadataRequestRef.current[projectPath] === requestId) {
+          const message = error instanceof Error ? error.message : "Unable to load Git metadata.";
+          setGitMetadataByPath((current) => ({ ...current, [projectPath]: gitMetadataError(message) }));
+        }
+      }
+    },
+    [gitMetadataError]
+  );
+
+  const refreshProjectListGitMetadata = useCallback(
+    (nextProjects: ProjectSummary[], force = false): void => {
+      const projectPaths = new Set(nextProjects.map((project) => project.path));
+      setGitMetadataByPath((current) =>
+        Object.fromEntries(Object.entries(current).filter(([projectPath]) => projectPaths.has(projectPath)))
+      );
+      nextProjects.forEach((project) => {
+        void refreshProjectGitMetadata(project.path, force);
+      });
+    },
+    [refreshProjectGitMetadata]
+  );
 
   const loadProjects = useCallback(async () => {
     const nextProjects = await window.relay.projects.list();
     setProjects(nextProjects);
     setSelectedPath((current) => current ?? nextProjects[0]?.path ?? null);
-  }, []);
+    refreshProjectListGitMetadata(nextProjects, true);
+  }, [refreshProjectListGitMetadata]);
 
   const loadBoard = useCallback(async () => {
     const requestId = boardRequestRef.current + 1;
@@ -906,6 +972,18 @@ export function App(): ReactElement {
   useEffect(() => {
     void loadBoard();
   }, [loadBoard]);
+
+  useEffect(() => {
+    if (selectedPath) void refreshProjectGitMetadata(selectedPath, true);
+  }, [refreshProjectGitMetadata, selectedPath]);
+
+  useEffect(() => {
+    const refreshSelectedGitMetadata = (): void => {
+      if (selectedPath) void refreshProjectGitMetadata(selectedPath, true);
+    };
+    window.addEventListener("focus", refreshSelectedGitMetadata);
+    return () => window.removeEventListener("focus", refreshSelectedGitMetadata);
+  }, [refreshProjectGitMetadata, selectedPath]);
 
   useEffect(() => {
     setOpenTicketId(null);
@@ -974,12 +1052,14 @@ export function App(): ReactElement {
       <ProjectSidebar
         projects={projects}
         selectedPath={selectedPath}
+        gitMetadataByPath={gitMetadataByPath}
         loading={loading}
         onAdd={addProject}
         onSelect={selectProject}
         onRemove={async (projectPath) => {
           const nextProjects = await window.relay.projects.removeFromSidebar(projectPath);
           setProjects(nextProjects);
+          refreshProjectListGitMetadata(nextProjects, true);
           if (selectedPath === projectPath) selectProject(nextProjects[0]?.path ?? null);
         }}
         onReveal={(projectPath) => void window.relay.projects.revealInFinder(projectPath)}
@@ -993,6 +1073,7 @@ export function App(): ReactElement {
           onCreate={() => setCreateOpen(true)}
           onOpenTicket={setOpenTicketId}
           onMove={(event) => void moveTicket(event)}
+          gitMetadata={gitMetadataByPath[board.project.path]}
         />
       ) : (
         <main className="workspace empty-state">

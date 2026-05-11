@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   ClarificationAnswerInput,
   CreateDraftInput,
+  GitMetadataOptions,
   RelayApi,
   RelayApprovalDecision,
   RendererRunEvent,
@@ -17,6 +18,7 @@ const api: RelayApi = {
     addFolder: () => ipcRenderer.invoke("projects:addFolder"),
     removeFromSidebar: (projectPath: string) => ipcRenderer.invoke("projects:removeFromSidebar", projectPath),
     read: (projectPath: string) => ipcRenderer.invoke("projects:read", projectPath),
+    gitMetadata: (projectPath: string, options?: GitMetadataOptions) => ipcRenderer.invoke("projects:gitMetadata", projectPath, options),
     revealInFinder: (projectPath: string) => ipcRenderer.invoke("projects:revealInFinder", projectPath)
   },
   board: {
