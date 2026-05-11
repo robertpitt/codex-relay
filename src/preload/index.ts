@@ -61,6 +61,8 @@ const api: RelayApi = {
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => invoke(relayIpcChannels.codexApproveAction, approvalId, decision),
     readRunEvents: (projectPath: string, ticketId: string, runId: string) =>
       invoke(relayIpcChannels.codexReadRunEvents, projectPath, ticketId, runId),
+    readLatestRunSummary: (projectPath: string, ticketId: string) =>
+      invoke(relayIpcChannels.codexReadLatestRunSummary, projectPath, ticketId),
     onRunEvent: (listener: (event: RendererRunEvent) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: RendererRunEvent): void => listener(payload);
       ipcRenderer.on("codex:runEvent", wrapped);

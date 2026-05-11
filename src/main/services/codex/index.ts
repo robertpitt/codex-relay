@@ -15,8 +15,10 @@ import {
   RELAY_NEEDS_CLARIFICATION_STATUS,
   RELAY_NOT_DOING_STATUS,
   RELAY_REVIEW_STATUS,
+  RELAY_TODO_STATUS,
   type RelayCodexEvent,
   type RendererRunEvent,
+  type RunSummary,
   type RunStatus,
   type StartRunInput,
   type TicketCreateInput,
@@ -34,6 +36,7 @@ import {
   emitRunEvent,
   emitRunEventToRendererSink,
   readRunEvents,
+  readRunSummary,
   type RendererRunEventSink
 } from "../run-events";
 import { agentTicketUpdateSchema, ticketDraftSchema } from "../schemas";
@@ -44,6 +47,7 @@ import { getCodexStatus } from "./status";
 import {
   appendCodexHandoff,
   applyTicketDraftToTicket,
+  blockPendingTicketDraftForClarification,
   createClarificationQuestions,
   createPendingTicketDraft,
   failPendingTicketDraft,
@@ -59,8 +63,6 @@ import {
   transitionTicketStatus,
   writeTicket
 } from "../storage";
-
-export const TICKET_DRAFT_TIMEOUT_MS = 90_000;
 
 export { getCodexStatus } from "./status";
 export { DEFAULT_TICKET_DRAFT_RESEARCH_LIMITS, extractTicketDraftUrls, researchTicketDraft } from "./research";
@@ -163,8 +165,10 @@ const ticketDraftBaseSchemaJson = {
     "researchFindings",
     "requirements",
     "implementationPlan",
+    "testPlan",
     "acceptanceCriteria",
     "clarificationQuestions",
+    "assumptions",
     "implementationNotes"
   ],
   properties: {
@@ -175,17 +179,21 @@ const ticketDraftBaseSchemaJson = {
     researchFindings: { type: "array", items: { type: "string" } },
     requirements: { type: "array", items: { type: "string" } },
     implementationPlan: { type: "array", items: { type: "string" } },
+    testPlan: { type: "array", items: { type: "string" } },
     acceptanceCriteria: { type: "array", items: { type: "string" } },
     clarificationQuestions: { type: "array", items: { type: "string" } },
+    assumptions: { type: "array", items: { type: "string" } },
     implementationNotes: { type: "array", items: { type: "string" } }
   }
 } as const;
 
 const ticketDraftSchemaJson = {
   ...ticketDraftBaseSchemaJson,
-  required: [...ticketDraftBaseSchemaJson.required, "ticketType", "subtickets"],
+  required: [...ticketDraftBaseSchemaJson.required, "draftState", "blockingClarificationQuestions", "ticketType", "subtickets"],
   properties: {
     ...ticketDraftBaseSchemaJson.properties,
+    draftState: { type: "string", enum: ["ready", "needs_clarification"] },
+    blockingClarificationQuestions: { type: "array", items: { type: "string" } },
     ticketType: { type: "string", enum: ["task", "epic"] },
     subtickets: { type: "array", items: ticketDraftBaseSchemaJson }
   }
@@ -218,8 +226,10 @@ const parseJsonResponse = (value: string): unknown => {
 };
 
 type DraftTimeoutHandle = ReturnType<typeof setTimeout>;
+type DraftProgressIntervalHandle = ReturnType<typeof setInterval>;
+type TicketDraftProgressReporter = (message: string) => void | Promise<void>;
 
-export type TicketDraftThread = Pick<Thread, "run">;
+export type TicketDraftThread = Pick<Thread, "run"> & Partial<Pick<Thread, "id">>;
 
 export type TicketDraftCodexClient = {
   startThread: (options: ThreadOptions) => TicketDraftThread;
@@ -228,14 +238,21 @@ export type TicketDraftCodexClient = {
 export type TicketDraftDependencies = {
   getStatus?: () => Promise<CodexStatus>;
   createCodexClient?: () => TicketDraftCodexClient;
+  /** @deprecated Draft generation no longer has an internal timeout. */
   draftTimeoutMs?: number;
   researchLimits?: Partial<TicketDraftResearchLimits>;
   fetchUrl?: typeof fetch;
   disableResearch?: boolean;
   createRequestId?: () => string;
   nowMs?: () => number;
+  abortController?: AbortController;
+  onProgress?: TicketDraftProgressReporter;
+  draftProgressIntervalMs?: number;
+  /** @deprecated Draft generation no longer starts an internal timeout. */
   setTimeoutFn?: (callback: () => void, ms: number) => DraftTimeoutHandle;
+  /** @deprecated Draft generation no longer starts an internal timeout. */
   clearTimeoutFn?: (handle: DraftTimeoutHandle) => void;
+  /** @deprecated Draft generation no longer starts an internal timeout. */
   unrefTimeout?: boolean;
 };
 
@@ -291,13 +308,10 @@ export class TicketDraftServiceError extends Error {
   }
 }
 
-const formatTimeout = (timeoutMs: number): string =>
-  timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)} seconds` : `${timeoutMs}ms`;
-
 const isAbortLikeError = (error: unknown): boolean =>
   error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("abort"));
 
-const unrefTimeoutHandle = (handle: DraftTimeoutHandle): void => {
+const unrefTimerHandle = (handle: DraftTimeoutHandle | DraftProgressIntervalHandle): void => {
   if (typeof handle === "object" && handle && "unref" in handle && typeof handle.unref === "function") {
     handle.unref();
   }
@@ -306,6 +320,13 @@ const unrefTimeoutHandle = (handle: DraftTimeoutHandle): void => {
 const errorMessage = (error: unknown, fallback: string): string => (error instanceof Error ? error.message : fallback);
 
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+const formatDraftWait = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+};
 
 const ticketDraftError = (
   code: TicketDraftErrorCode,
@@ -326,28 +347,15 @@ const ticketDraftError = (
     cause: options?.cause
   });
 
-const ticketDraftTimeoutError = (requestId: string, durationMs: number, timeoutMs: number, cause?: unknown): TicketDraftServiceError =>
-  ticketDraftError(
-    "timeout",
-    requestId,
-    durationMs,
-    `Codex ticket drafting timed out after ${formatTimeout(timeoutMs)}. Your rough idea is still available; retry Codex when ready.`,
-    "codex_generation_timeout",
-    { timeoutMs, cause }
-  );
-
 const normalizeTicketDraftError = (
   error: unknown,
   context: {
     requestId: string;
     durationMs: number;
-    timeoutMs: number;
-    timedOut: boolean;
     signalAborted: boolean;
   }
 ): TicketDraftServiceError => {
   if (error instanceof TicketDraftServiceError) return error;
-  if (context.timedOut) return ticketDraftTimeoutError(context.requestId, context.durationMs, context.timeoutMs, error);
   if (context.signalAborted || isAbortLikeError(error)) {
     return ticketDraftError(
       "cancelled",
@@ -355,7 +363,7 @@ const normalizeTicketDraftError = (
       context.durationMs,
       "Codex ticket drafting was cancelled. Your rough idea is still available.",
       "codex_generation_cancelled",
-      { timeoutMs: context.timeoutMs, cause: error }
+      { cause: error }
     );
   }
   if (error instanceof ZodError || error instanceof SyntaxError || errorMessage(error, "").includes("valid JSON")) {
@@ -365,7 +373,7 @@ const normalizeTicketDraftError = (
       context.durationMs,
       "Codex returned an invalid ticket draft. Your rough idea is still available; retry Codex when ready.",
       "invalid_codex_response",
-      { timeoutMs: context.timeoutMs, cause: error }
+      { cause: error }
     );
   }
   return ticketDraftError(
@@ -374,7 +382,7 @@ const normalizeTicketDraftError = (
     context.durationMs,
     errorMessage(error, "Ticket drafting failed."),
     "codex_backend_failure",
-    { timeoutMs: context.timeoutMs, cause: error }
+    { cause: error }
   );
 };
 
@@ -390,25 +398,111 @@ export const ticketDraftErrorToPayload = (error: unknown): TicketDraftErrorPaylo
   };
 };
 
+type TicketDraftOutcome =
+  | { status: "ready"; draft: TicketDraft }
+  | { status: "needs_clarification"; draft: TicketDraft; questions: string[] };
+
+const cleanStringList = (items: readonly string[] | undefined): string[] =>
+  [...new Set((items ?? []).map((item) => normalizeWhitespace(item)).filter(Boolean))];
+
+const DEFERRED_RESEARCH_STEP_PATTERN = /^\s*(?:inspect|find|trace|audit|look for|search|review)\b/i;
+
+const normalizeSubticketDraft = (draft: TicketDraftSubticket): TicketDraftSubticket => ({
+  ...draft,
+  labels: cleanStringList(draft.labels),
+  researchFindings: cleanStringList(draft.researchFindings),
+  requirements: cleanStringList(draft.requirements),
+  implementationPlan: cleanStringList(draft.implementationPlan),
+  testPlan: cleanStringList(draft.testPlan),
+  acceptanceCriteria: cleanStringList(draft.acceptanceCriteria),
+  clarificationQuestions: cleanStringList(draft.clarificationQuestions),
+  assumptions: cleanStringList(draft.assumptions),
+  implementationNotes: cleanStringList(draft.implementationNotes)
+});
+
+const fallbackTestPlan = (): string[] => ["Run the project's standard validation command plus focused tests for the files changed by this ticket."];
+
+const normalizeTicketDraftOutcome = (parsedDraft: TicketDraft, research: Awaited<ReturnType<typeof researchTicketDraft>>): TicketDraftOutcome => {
+  const normalizedBase = normalizeSubticketDraft(parsedDraft);
+  const metadataFindings = fallbackResearchFindings(research.metadata);
+  const researchFindings = cleanStringList([...normalizedBase.researchFindings, ...metadataFindings]);
+  const implementationPlan =
+    normalizedBase.implementationPlan.length > 0 ? normalizedBase.implementationPlan : normalizedBase.implementationNotes;
+  const testPlan = normalizedBase.testPlan && normalizedBase.testPlan.length > 0 ? normalizedBase.testPlan : fallbackTestPlan();
+  const blockingQuestions = cleanStringList([
+    ...(parsedDraft.blockingClarificationQuestions ?? []),
+    ...(parsedDraft.draftState === "needs_clarification" ? parsedDraft.clarificationQuestions : [])
+  ]);
+  const readyQuestions = parsedDraft.draftState === "ready" ? cleanStringList(parsedDraft.clarificationQuestions) : [];
+  const draft: TicketDraft = {
+    ...parsedDraft,
+    ...normalizedBase,
+    draftState: parsedDraft.draftState ?? "ready",
+    blockingClarificationQuestions: blockingQuestions,
+    researchFindings:
+      researchFindings.length > 0
+        ? researchFindings
+        : ["No matching source files or URLs were identified during bounded draft research."],
+    implementationPlan,
+    testPlan,
+    clarificationQuestions: parsedDraft.draftState === "needs_clarification" ? [] : readyQuestions,
+    assumptions: normalizedBase.assumptions,
+    implementationNotes: normalizedBase.implementationNotes,
+    subtickets: parsedDraft.subtickets.map((subticket) => {
+      const normalizedSubticket = normalizeSubticketDraft(subticket);
+      return {
+        ...normalizedSubticket,
+        testPlan: normalizedSubticket.testPlan && normalizedSubticket.testPlan.length > 0 ? normalizedSubticket.testPlan : fallbackTestPlan()
+      };
+    }),
+    research: research.metadata
+  };
+
+  const needsClarification = draft.draftState === "needs_clarification" || blockingQuestions.length > 0 || readyQuestions.length > 0;
+  if (needsClarification) {
+    const questions = cleanStringList([...blockingQuestions, ...readyQuestions]);
+    if (questions.length === 0) {
+      throw new Error("Draft requested clarification but did not include any blocking questions.");
+    }
+    return { status: "needs_clarification", draft: { ...draft, draftState: "needs_clarification" }, questions };
+  }
+
+  if (draft.requirements.length === 0) throw new Error("Ready draft must include concrete requirements.");
+  if (draft.implementationPlan.length === 0) throw new Error("Ready draft must include a concrete implementation plan.");
+  if (draft.acceptanceCriteria.length === 0) throw new Error("Ready draft must include acceptance criteria.");
+  if (!draft.testPlan || draft.testPlan.length === 0) throw new Error("Ready draft must include a test plan.");
+  const deferredStep = draft.implementationPlan.find((step) => DEFERRED_RESEARCH_STEP_PATTERN.test(step));
+  if (deferredStep) {
+    throw new Error(`Ready draft defers core research to implementation: ${deferredStep}`);
+  }
+
+  return { status: "ready", draft: { ...draft, draftState: "ready", blockingClarificationQuestions: [], clarificationQuestions: [] } };
+};
+
+const reportTicketDraftProgress = async (dependencies: TicketDraftDependencies, message: string): Promise<void> => {
+  try {
+    await dependencies.onProgress?.(message);
+  } catch (error) {
+    await logWarn("codex:draft", "ticket draft progress callback failed", { error: errorMessage(error, "Progress callback failed.") });
+  }
+};
+
 const createTicketDraftPromise = async (
-  { projectPath, idea, preferredTicketType }: CreateDraftInput,
+  { projectPath, idea, preferredTicketType, ticketId }: CreateDraftInput,
   dependencies: TicketDraftDependencies = {}
-): Promise<TicketDraft> => {
+): Promise<TicketDraftOutcome> => {
   const requestId = dependencies.createRequestId?.() ?? newId("tdr");
   const startedAt = dependencies.nowMs?.() ?? Date.now();
   const nowMs = dependencies.nowMs ?? Date.now;
   const durationMs = (): number => Math.max(0, nowMs() - startedAt);
-  const draftTimeoutMs = dependencies.draftTimeoutMs ?? TICKET_DRAFT_TIMEOUT_MS;
-  const setTimeoutFn = dependencies.setTimeoutFn ?? setTimeout;
-  const clearTimeoutFn = dependencies.clearTimeoutFn ?? clearTimeout;
-  let timeout: DraftTimeoutHandle | null = null;
-  let timedOut = false;
-  let abortController: AbortController | null = null;
-  const logBase = { requestId, projectPath, ideaLength: idea.length, timeoutMs: draftTimeoutMs };
+  const abortController = dependencies.abortController ?? new AbortController();
+  let progressInterval: DraftProgressIntervalHandle | null = null;
+  const logBase = { requestId, projectPath, ideaLength: idea.length };
 
   await logInfo("codex:draft", "starting ticket draft", logBase);
 
   try {
+    await reportTicketDraftProgress(dependencies, "Checking Codex availability for ticket drafting.");
     const status = await (dependencies.getStatus ?? getCodexStatus)();
     if (!status.cliAvailable) {
       await logWarn("codex:draft", "codex cli unavailable", { ...logBase, durationMs: durationMs(), status });
@@ -417,8 +511,7 @@ const createTicketDraftPromise = async (
         requestId,
         durationMs(),
         "Codex CLI was not found on PATH. Install or expose Codex before drafting tickets.",
-        "codex_cli_unavailable",
-        { timeoutMs: draftTimeoutMs }
+        "codex_cli_unavailable"
       );
     }
     if (status.authenticated === false) {
@@ -428,13 +521,23 @@ const createTicketDraftPromise = async (
         requestId,
         durationMs(),
         "Codex is not authenticated. Run `codex login` in your terminal, then try drafting again.",
-        "codex_auth_unavailable",
-        { timeoutMs: draftTimeoutMs }
+        "codex_auth_unavailable"
       );
     }
 
     const config = await readProjectConfig(projectPath);
-    const research = await researchTicketDraft({ projectPath, idea, preferredTicketType }, dependencies);
+    const existingDraftTicket = ticketId ? await readTicket(projectPath, ticketId) : null;
+    const draftClarifications = ticketId ? await readClarificationQuestions(projectPath, ticketId) : [];
+    await reportTicketDraftProgress(dependencies, "Running bounded draft research across the project.");
+    const research = await researchTicketDraft({ projectPath, idea, preferredTicketType, ticketId }, dependencies);
+    await reportTicketDraftProgress(
+      dependencies,
+      `Draft research completed: checked ${research.metadata.checkedUrls.length} URL${research.metadata.checkedUrls.length === 1 ? "" : "s"}, inspected ${
+        research.metadata.inspectedFiles.length
+      } file${research.metadata.inspectedFiles.length === 1 ? "" : "s"}, recorded ${research.metadata.limitations.length} limitation${
+        research.metadata.limitations.length === 1 ? "" : "s"
+      }.`
+    );
     await logInfo("codex:draft", "ticket draft research completed", {
       ...logBase,
       durationMs: durationMs(),
@@ -445,21 +548,42 @@ const createTicketDraftPromise = async (
     });
     const codex = dependencies.createCodexClient?.() ?? createCodex();
     const thread = codex.startThread(await threadOptionsForProject(projectPath));
-    abortController = new AbortController();
     const ticketTypeGuidance =
       preferredTicketType === "epic"
         ? "The user selected Epic mode. Return ticketType \"epic\" and decompose the work into normal task subtickets."
         : "The user selected Task mode unless the idea explicitly asks for an epic. Return ticketType \"task\" with an empty subtickets array for ordinary work.";
+    const clarificationContext = ticketId
+      ? `Clarification records already attached to this draft ticket:
+${formatClarificationsForPrompt(draftClarifications)}
+
+Existing draft ticket markdown:
+${existingDraftTicket?.markdown ?? "No existing draft ticket markdown was loaded."}`
+      : "No prior clarification records are attached to this new draft.";
     const prompt = `You are helping create a local software implementation ticket for Relay.
 
-The user will provide a rough idea. Convert it into a clear, actionable ticket for a coding agent and human developer.
+The user will provide a rough idea. Convert it into an implementation-ready ticket for a coding agent and human developer.
 
-Use the bounded research context below to ground the ticket. Include concrete source references in researchFindings, such as file paths, function/component names, or URL titles. If research failed or was incomplete, state that limitation in researchFindings or implementationNotes.
+The drafting phase must do the research and decision work up front. The implementation agent should not need to discover the basic affected files, entry points, existing patterns, product decisions, or test locations before it can start editing.
 
-Generate implementationPlan as specific engineering steps informed by the research context. Do not include large copied source blocks or long page excerpts.
+Use the bounded research context below to ground the ticket. Include concrete source references in researchFindings, such as file paths, function/component names, matched line numbers, existing behavior, or URL titles. If research failed or was incomplete, record the limitation in implementationNotes, assumptions, or blockingClarificationQuestions depending on whether it blocks a usable plan.
+
+Return draftState "ready" only when the ticket is implementation-ready. A ready ticket must include:
+- resolved product and technical decisions, with conservative assumptions recorded in assumptions;
+- codebase findings with exact files, symbols, and existing behavior;
+- concrete requirements and acceptance criteria;
+- implementationPlan steps that tell the coding agent what to change, not what to research;
+- testPlan entries with focused tests or validation commands.
+
+Do not put deferred discovery into implementationPlan. Avoid steps starting with "inspect", "find", "trace", "audit", "look for", "search", or "review" unless the step is only final verification after concrete codebase findings are already provided.
+
+If a blocking product or technical decision cannot be answered from the user's idea, prior clarification answers, or codebase research, return draftState "needs_clarification" and put only those blocking user-answerable questions in blockingClarificationQuestions. Do not create a weak ticket with questions for the implementation agent. For non-blocking uncertainty, choose a conservative default and record it in assumptions.
+
+Use clarificationQuestions only for non-blocking open questions that should remain visible on a final ticket; prefer assumptions for chosen defaults. When draftState is "needs_clarification", duplicate the blocking questions into clarificationQuestions only if required by the schema.
+
+Do not include large copied source blocks or long page excerpts.
 
 Relay supports two ticket types: task and epic. ${ticketTypeGuidance}
-For epic drafts, the parent epic should describe the overall outcome and subtickets should be independently implementable normal task tickets with their own requirements, implementationPlan, acceptanceCriteria, labels, and priority. Do not create nested epics. For task drafts, subtickets must be an empty array.
+For epic drafts, the parent epic should describe the overall outcome and subtickets should be independently implementable normal task tickets with their own requirements, implementationPlan, testPlan, acceptanceCriteria, labels, and priority. Do not create nested epics. For task drafts, subtickets must be an empty array.
 
 Return only data matching the requested schema. Do not implement the task.
 
@@ -467,55 +591,36 @@ Project path: ${projectPath}
 Project name: ${config.name}
 Current board columns: ${config.columns.map((column) => column.name).join(", ")}
 
+Draft clarification context:
+${clarificationContext}
+
 Research context:
 ${renderResearchForPrompt(research)}
 
 User idea:
 ${idea}`;
 
-    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeoutFn(() => {
-        timedOut = true;
-        abortController?.abort();
-        reject(ticketDraftTimeoutError(requestId, durationMs(), draftTimeoutMs));
-      }, draftTimeoutMs);
-      if (dependencies.unrefTimeout !== false && timeout) unrefTimeoutHandle(timeout);
-    });
-    const runPromise = thread.run(prompt, { outputSchema: ticketDraftSchemaJson, signal: abortController.signal });
-    void runPromise.then(
-      () => {
-        if (timedOut) {
-          void logWarn("codex:draft", "late ticket draft completion ignored", {
-            ...logBase,
-            durationMs: durationMs(),
-            reason: "late_completion_after_timeout"
-          });
-        }
-      },
-      (lateError) => {
-        if (timedOut) {
-          void logWarn("codex:draft", "late ticket draft failure ignored", {
-            ...logBase,
-            durationMs: durationMs(),
-            reason: "late_failure_after_timeout",
-            error: errorMessage(lateError, "unknown")
-          });
-        }
-      }
-    );
-
-    const turn = await Promise.race([runPromise, timeoutPromise]);
-    let parsed: TicketDraft;
+    await reportTicketDraftProgress(dependencies, "Codex is writing the implementation-ready ticket draft. This can take several minutes.");
+    const progressIntervalMs = dependencies.draftProgressIntervalMs ?? 60_000;
+    if (dependencies.onProgress && progressIntervalMs > 0) {
+      progressInterval = setInterval(() => {
+        void reportTicketDraftProgress(
+          dependencies,
+          `Still waiting for Codex to return the structured ticket draft after ${formatDraftWait(durationMs())}.`
+        );
+      }, progressIntervalMs);
+      unrefTimerHandle(progressInterval);
+    }
+    const turn = await thread.run(prompt, { outputSchema: ticketDraftSchemaJson, signal: abortController.signal });
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+    await reportTicketDraftProgress(dependencies, "Codex returned a draft; validating the structured ticket.");
+    let parsed: TicketDraftOutcome;
     try {
       const parsedDraft = ticketDraftSchema.parse(parseJsonResponse(turn.finalResponse));
-      parsed = {
-        ...parsedDraft,
-        researchFindings:
-          parsedDraft.researchFindings.length > 0 ? parsedDraft.researchFindings : fallbackResearchFindings(research.metadata),
-        implementationPlan:
-          parsedDraft.implementationPlan.length > 0 ? parsedDraft.implementationPlan : parsedDraft.implementationNotes,
-        research: research.metadata
-      };
+      parsed = normalizeTicketDraftOutcome(parsedDraft, research);
     } catch (error) {
       throw ticketDraftError(
         "invalid_response",
@@ -523,23 +628,27 @@ ${idea}`;
         durationMs(),
         "Codex returned an invalid ticket draft. Your rough idea is still available; retry Codex when ready.",
         "invalid_codex_response",
-        { timeoutMs: draftTimeoutMs, cause: error }
+        { cause: error }
       );
     }
     await logInfo("codex:draft", "ticket draft completed", {
       ...logBase,
       durationMs: durationMs(),
-      title: parsed.title,
-      reason: "success"
+      title: parsed.draft.title,
+      reason: parsed.status
     });
+    await reportTicketDraftProgress(
+      dependencies,
+      parsed.status === "ready"
+        ? "Draft validation completed; applying the ticket."
+        : `Draft validation completed; ${parsed.questions.length} blocking clarification question${parsed.questions.length === 1 ? "" : "s"} required.`
+    );
     return parsed;
   } catch (error) {
     const draftError = normalizeTicketDraftError(error, {
       requestId,
       durationMs: durationMs(),
-      timeoutMs: draftTimeoutMs,
-      timedOut,
-      signalAborted: abortController?.signal.aborted ?? false
+      signalAborted: abortController.signal.aborted
     });
     const failureMeta = { ...logBase, ...draftError.toPayload() };
     if (draftError.code === "timeout" || draftError.code === "cancelled") {
@@ -549,13 +658,13 @@ ${idea}`;
     }
     throw draftError;
   } finally {
-    if (timeout) clearTimeoutFn(timeout);
+    if (progressInterval) clearInterval(progressInterval);
   }
 };
 
 const createTicketDraftEffect = (
   input: CreateDraftInput
-): BackendEffect<TicketDraft, unknown, BackendServices | TicketDraftDependencyServices> =>
+): BackendEffect<TicketDraftOutcome, unknown, BackendServices | TicketDraftDependencyServices> =>
   Effect.gen(function*() {
     const dependencies = yield* TicketDraftDependencyService;
     return yield* fromPromise(() => createTicketDraftPromise(input, dependencies));
@@ -564,7 +673,22 @@ const createTicketDraftEffect = (
 export const createTicketDraft = (
   input: CreateDraftInput,
   dependencies: TicketDraftDependencies = {}
-): Promise<TicketDraft> => runBackendEffect(Effect.provide(createTicketDraftEffect(input), ticketDraftDependencyLayer(dependencies)));
+): Promise<TicketDraft> =>
+  createTicketDraftOutcome(input, dependencies).then((outcome) => {
+    if (outcome.status === "ready") return outcome.draft;
+    throw ticketDraftError(
+      "clarification_required",
+      "unknown",
+      0,
+      "Codex needs clarification before it can produce an implementation-ready ticket.",
+      "draft_clarification_required"
+    );
+  });
+
+const createTicketDraftOutcome = (
+  input: CreateDraftInput,
+  dependencies: TicketDraftDependencies = {}
+): Promise<TicketDraftOutcome> => runBackendEffect(Effect.provide(createTicketDraftEffect(input), ticketDraftDependencyLayer(dependencies)));
 
 const emitRunEventForDependencies = (
   runEventSink: RendererRunEventSink | undefined,
@@ -588,6 +712,7 @@ export const startTicketDraftRun = async (
   const idea = input.idea.trim();
   const runId = dependencies.createRunId?.() ?? newId("run");
   const threadId = draftRunThreadId(runId);
+  const abortController = new AbortController();
 
   const ticket = await createPendingTicketDraft(projectPath, { ...input, projectPath, idea }, runId);
   const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
@@ -611,13 +736,64 @@ export const startTicketDraftRun = async (
     timestamp: nowIso()
   });
 
+  activeRuns.set(runId, {
+    abortController,
+    ticketId: ticket.frontMatter.id,
+    projectPath
+  });
+
+  const draftDependencies: TicketDraftStartDependencies = {
+    ...dependencies,
+    abortController,
+    onProgress: async (message) => {
+      await dependencies.onProgress?.(message);
+      await emitDraftEvent({
+        type: "agent.message.completed",
+        text: message,
+        timestamp: nowIso()
+      });
+    }
+  };
+
   void (async () => {
     try {
-      const draft = await createTicketDraft({ projectPath, idea, preferredTicketType: input.preferredTicketType }, dependencies);
+      const outcome = await createTicketDraftOutcome(
+        { projectPath, idea, preferredTicketType: input.preferredTicketType, ticketId: ticket.frontMatter.id },
+        draftDependencies
+      );
+      if (outcome.status === "needs_clarification") {
+        const questions = await createClarificationQuestions(
+          projectPath,
+          ticket.frontMatter.id,
+          outcome.questions.map((question) => ({ question })),
+          {
+            actor: "codex",
+            source: "draft_generation",
+            runId,
+            codexThreadId: threadId
+          }
+        );
+        await blockPendingTicketDraftForClarification(projectPath, ticket.frontMatter.id, idea, runId, outcome.questions, outcome.draft.research);
+        await emitDraftEvent({
+          type: "clarification.requested",
+          questions,
+          timestamp: nowIso()
+        });
+        await logInfo("codex:draft", "async ticket draft blocked on clarification", {
+          projectPath,
+          ticketId: ticket.frontMatter.id,
+          runId,
+          clarificationQuestionCount: questions.length
+        });
+        return;
+      }
+
+      const draft = outcome.draft;
       await applyTicketDraftToTicket(projectPath, ticket.frontMatter.id, draft, runId);
       await emitDraftEvent({
         type: "run.completed",
         finalResponse: `Ticket draft completed and applied to ${ticket.frontMatter.id}: ${draft.title}`,
+        finalStatus: "draft_complete",
         timestamp: nowIso()
       });
       await logInfo("codex:draft", "async ticket draft applied", {
@@ -629,7 +805,19 @@ export const startTicketDraftRun = async (
     } catch (error) {
       const payload = ticketDraftErrorToPayload(error);
       try {
-        await failPendingTicketDraft(projectPath, ticket.frontMatter.id, idea, runId, payload.message);
+        if (payload.code === "cancelled") {
+          const latest = await readTicket(projectPath, ticket.frontMatter.id);
+          await writeTicket(projectPath, {
+            ...latest,
+            frontMatter: {
+              ...latest.frontMatter,
+              runStatus: "cancelled",
+              lastRunId: runId
+            }
+          });
+        } else {
+          await failPendingTicketDraft(projectPath, ticket.frontMatter.id, idea, runId, payload.message);
+        }
       } catch (persistError) {
         await logError("codex:draft", "async ticket draft failure state could not be persisted", persistError, {
           projectPath,
@@ -642,6 +830,7 @@ export const startTicketDraftRun = async (
         type: "run.failed",
         message: payload.message,
         details: payload,
+        finalStatus: payload.code === "cancelled" ? "cancelled" : "draft_failed",
         timestamp: nowIso()
       });
       if (payload.code === "timeout" || payload.code === "cancelled") {
@@ -659,10 +848,189 @@ export const startTicketDraftRun = async (
           ...payload
         });
       }
+    } finally {
+      activeRuns.delete(runId);
     }
   })();
 
   return { ticket, runId };
+};
+
+const extractMarkdownSection = (markdown: string, heading: string): string | null => {
+  const pattern = new RegExp(`^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m");
+  const match = pattern.exec(markdown);
+  if (!match) return null;
+  const start = match.index + match[0].length;
+  const rest = markdown.slice(start);
+  const nextHeading = rest.search(/\n##\s+/);
+  return (nextHeading >= 0 ? rest.slice(0, nextHeading) : rest).trim();
+};
+
+const originalIdeaFromDraftMarkdown = (markdown: string): string | null => extractMarkdownSection(markdown, "Original Idea");
+
+const setExistingDraftInProgress = async (projectPath: string, ticketId: string, runId: string): Promise<TicketRecord> => {
+  const ticket = await readTicket(projectPath, ticketId);
+  const config = await readProjectConfig(projectPath);
+  const status = config.columns.some((column) => column.id === RELAY_TODO_STATUS) ? RELAY_TODO_STATUS : ticket.frontMatter.status;
+  return writeTicket(projectPath, {
+    ...ticket,
+    frontMatter: {
+      ...ticket.frontMatter,
+      status,
+      runStatus: "drafting",
+      lastRunId: runId
+    }
+  });
+};
+
+export const maybeResumeTicketDraftAfterClarification = async (
+  projectPathInput: string,
+  ticketId: string,
+  dependencies: TicketDraftStartDependencies = {}
+): Promise<TicketDraftStart | null> => {
+  const projectPath = pathResolve(projectPathInput);
+  const ticket = await readTicket(projectPath, ticketId);
+  if (ticket.frontMatter.runStatus !== "blocked") return null;
+  if (!/Ticket draft generation is blocked on clarification\./.test(ticket.markdown)) return null;
+
+  const clarifications = await readClarificationQuestions(projectPath, ticketId);
+  const draftClarifications = clarifications.filter((question) => question.source === "draft_generation");
+  if (draftClarifications.length === 0 || draftClarifications.some((question) => !question.answer?.trim())) return null;
+
+  const idea = originalIdeaFromDraftMarkdown(ticket.markdown);
+  if (!idea) {
+    await logWarn("codex:draft", "draft clarification answered but original idea could not be recovered", { projectPath, ticketId });
+    return null;
+  }
+
+  const runId = dependencies.createRunId?.() ?? newId("run");
+  const threadId = draftRunThreadId(runId);
+  const abortController = new AbortController();
+  const draftingTicket = await setExistingDraftInProgress(projectPath, ticketId, runId);
+  const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
+    try {
+      await emitRunEventForDependencies(dependencies.runEventSink, projectPath, ticketId, runId, threadId, event);
+    } catch (error) {
+      await logWarn("codex:draft", "failed to emit resumed ticket draft event", {
+        projectPath,
+        ticketId,
+        runId,
+        eventType: event.type,
+        error: errorMessage(error, "Event emission failed.")
+      });
+    }
+  };
+
+  await emitDraftEvent({
+    type: "run.started",
+    runId,
+    threadId,
+    timestamp: nowIso()
+  });
+
+  activeRuns.set(runId, {
+    abortController,
+    ticketId,
+    projectPath
+  });
+
+  const draftDependencies: TicketDraftStartDependencies = {
+    ...dependencies,
+    abortController,
+    onProgress: async (message) => {
+      await dependencies.onProgress?.(message);
+      await emitDraftEvent({
+        type: "agent.message.completed",
+        text: message,
+        timestamp: nowIso()
+      });
+    }
+  };
+
+  void (async () => {
+    try {
+      const outcome = await createTicketDraftOutcome(
+        { projectPath, ticketId, idea, preferredTicketType: draftingTicket.frontMatter.ticketType },
+        draftDependencies
+      );
+      if (outcome.status === "needs_clarification") {
+        const questions = await createClarificationQuestions(
+          projectPath,
+          ticketId,
+          outcome.questions.map((question) => ({ question })),
+          {
+            actor: "codex",
+            source: "draft_generation",
+            runId,
+            codexThreadId: threadId
+          }
+        );
+        await blockPendingTicketDraftForClarification(projectPath, ticketId, idea, runId, outcome.questions, outcome.draft.research);
+        await emitDraftEvent({
+          type: "clarification.requested",
+          questions,
+          timestamp: nowIso()
+        });
+        await logInfo("codex:draft", "resumed ticket draft blocked on clarification", {
+          projectPath,
+          ticketId,
+          runId,
+          clarificationQuestionCount: questions.length
+        });
+        return;
+      }
+
+      const draft = outcome.draft;
+      await applyTicketDraftToTicket(projectPath, ticketId, draft, runId);
+      await emitDraftEvent({
+        type: "run.completed",
+        finalResponse: `Ticket draft completed and applied to ${ticketId}: ${draft.title}`,
+        finalStatus: "draft_complete",
+        timestamp: nowIso()
+      });
+      await logInfo("codex:draft", "resumed ticket draft applied", { projectPath, ticketId, runId, title: draft.title });
+    } catch (error) {
+      const payload = ticketDraftErrorToPayload(error);
+      try {
+        if (payload.code === "cancelled") {
+          const latest = await readTicket(projectPath, ticketId);
+          await writeTicket(projectPath, {
+            ...latest,
+            frontMatter: {
+              ...latest.frontMatter,
+              runStatus: "cancelled",
+              lastRunId: runId
+            }
+          });
+        } else {
+          await failPendingTicketDraft(projectPath, ticketId, idea, runId, payload.message);
+        }
+      } catch (persistError) {
+        await logError("codex:draft", "resumed ticket draft failure state could not be persisted", persistError, {
+          projectPath,
+          ticketId,
+          runId,
+          draftError: payload
+        });
+      }
+      await emitDraftEvent({
+        type: "run.failed",
+        message: payload.message,
+        details: payload,
+        finalStatus: payload.code === "cancelled" ? "cancelled" : "draft_failed",
+        timestamp: nowIso()
+      });
+      if (payload.code === "timeout" || payload.code === "cancelled") {
+        await logWarn("codex:draft", "resumed ticket draft did not complete", { projectPath, ticketId, runId, ...payload });
+      } else {
+        await logError("codex:draft", "resumed ticket draft failed", error, { projectPath, ticketId, runId, ...payload });
+      }
+    } finally {
+      activeRuns.delete(runId);
+    }
+  })();
+
+  return { ticket: draftingTicket, runId };
 };
 
 const finalTextFromItem = (item: ThreadItem): string | null => {
@@ -721,7 +1089,7 @@ const normalizeItemEvent = (
   }
 
   if (item.type === "error") {
-    return [{ type: "run.failed", message: item.message, timestamp }];
+    return [{ type: "run.failed", message: item.message, finalStatus: "failed", timestamp }];
   }
 
   if (item.type === "mcp_tool_call") {
@@ -744,7 +1112,14 @@ const normalizeItemEvent = (
 export const readCodexRunEvents = (projectPath: string, ticketId: string, runId: string): Promise<RendererRunEvent[]> =>
   readRunEvents(projectPath, ticketId, runId);
 
-const formatClarificationsForPrompt = (clarifications: ClarificationQuestion[]): string => {
+export const readCodexLatestRunSummary = async (projectPath: string, ticketId: string): Promise<RunSummary | null> => {
+  const ticket = await readTicket(projectPath, ticketId);
+  const runId = ticket.frontMatter.lastRunId;
+  if (!runId) return null;
+  return readRunSummary(projectPath, ticketId, runId, ticket.frontMatter.runStatus);
+};
+
+function formatClarificationsForPrompt(clarifications: ClarificationQuestion[]): string {
   if (clarifications.length === 0) return "No clarification questions have been recorded for this ticket.";
   return clarifications
     .map((question) => {
@@ -753,7 +1128,7 @@ const formatClarificationsForPrompt = (clarifications: ClarificationQuestion[]):
       return `- [${status}] ${question.question}${answer}`;
     })
     .join("\n");
-};
+}
 
 const ticketUpdateRunKey = (projectPath: string, ticketId: string): string => `${pathResolve(projectPath)}:${ticketId}`;
 
@@ -868,11 +1243,12 @@ const startTicketUpdateRunPromise = async (
       resolveStarted();
     };
 
-    const emitFailure = async (message: string): Promise<void> => {
+    const emitFailure = async (message: string, finalStatus: RunStatus = "failed"): Promise<void> => {
       await emitStarted();
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
         message,
+        finalStatus,
         timestamp: nowIso()
       });
     };
@@ -954,6 +1330,7 @@ const startTicketUpdateRunPromise = async (
                   update.clarificationQuestions.length === 1 ? "" : "s"
                 }.`,
                 usage: event.usage,
+                finalStatus: "completed",
                 timestamp: nowIso()
               });
               await logInfo("codex:ticket-update", "ticket update run completed", {
@@ -977,7 +1354,7 @@ const startTicketUpdateRunPromise = async (
         }
       } catch (error) {
         const message = abortController.signal.aborted ? "Ticket update was cancelled." : errorMessage(error, "Ticket update failed.");
-        await emitFailure(message);
+        await emitFailure(message, abortController.signal.aborted ? "cancelled" : "failed");
         if (abortController.signal.aborted) {
           await logWarn("codex:ticket-update", "ticket update run cancelled", { projectPath, ticketId, runId, threadId: currentThreadId });
         } else {
@@ -1267,6 +1644,7 @@ const beginRunPromise = async (
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
         message: errorMessage(error, "Codex run failed before streaming started."),
+        finalStatus: "failed",
         timestamp: nowIso()
       });
     } catch (emitError) {
@@ -1336,6 +1714,7 @@ const beginRunPromise = async (
             await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
               type: "run.failed",
               message,
+              finalStatus: "failed",
               timestamp: nowIso()
             });
             resolveOnce(currentThreadId);
@@ -1412,6 +1791,7 @@ const beginRunPromise = async (
               type: "run.completed",
               finalResponse: handoff,
               usage: event.usage,
+              finalStatus: "completed",
               timestamp: nowIso()
             });
             resolveOnce(currentThreadId);
@@ -1425,6 +1805,7 @@ const beginRunPromise = async (
         await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
           type: "run.failed",
           message: error instanceof Error ? error.message : "Codex run failed.",
+          finalStatus: aborted ? "cancelled" : "failed",
           timestamp: nowIso()
         });
         resolveOnce(currentThreadId);

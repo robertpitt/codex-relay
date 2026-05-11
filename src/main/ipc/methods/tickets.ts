@@ -1,6 +1,7 @@
 import type { TicketDraftStartResult } from "../../../shared/types";
 import {
   cancelTicketUpdateRun,
+  maybeResumeTicketDraftAfterClarification,
   startTicketDraftRun,
   startTicketUpdateRun,
   ticketDraftErrorToPayload
@@ -145,9 +146,17 @@ export const ticketIpcMethods = [
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(() => {
+      fromPromise(async () => {
         const parsed = clarificationAnswerInputSchema.parse(input);
-        return answerClarificationQuestion(parsed.projectPath, parsed.ticketId, parsed.questionId, parsed.answer);
+        const answer = await answerClarificationQuestion(parsed.projectPath, parsed.ticketId, parsed.questionId, parsed.answer);
+        void maybeResumeTicketDraftAfterClarification(parsed.projectPath, parsed.ticketId).catch((error) =>
+          logError("codex:draft", "auto-resume after clarification failed", error, {
+            projectPath: parsed.projectPath,
+            ticketId: parsed.ticketId,
+            questionId: parsed.questionId
+          })
+        );
+        return answer;
       })
   }),
   defineRelayIpcMethod({

@@ -33,6 +33,7 @@ export type RelayActor = "user" | "codex" | "system";
 export type RelayEventSource =
   | "manual_board"
   | "manual_ticket_edit"
+  | "draft_generation"
   | "agent_execution"
   | "clarification_ui"
   | "system_reconciliation";
@@ -164,12 +165,16 @@ export type TicketDraftSubticket = {
   researchFindings: string[];
   requirements: string[];
   implementationPlan: string[];
+  testPlan?: string[];
   acceptanceCriteria: string[];
   clarificationQuestions: string[];
+  assumptions?: string[];
   implementationNotes: string[];
 };
 
 export type TicketDraft = TicketDraftSubticket & {
+  draftState?: "ready" | "needs_clarification";
+  blockingClarificationQuestions?: string[];
   ticketType: TicketType;
   subtickets: TicketDraftSubticket[];
   research: TicketDraftResearch;
@@ -218,6 +223,7 @@ export type TicketDraftErrorCode =
   | "codex_unauthenticated"
   | "timeout"
   | "cancelled"
+  | "clarification_required"
   | "invalid_response"
   | "backend_failure";
 
@@ -392,8 +398,8 @@ export type RelayCodexEvent =
   | { type: "approval.resolved"; approvalId: string; decision: string; timestamp: string }
   | { type: "ticket.status_changed"; fromStatus: string; toStatus: string; actor: RelayActor; source: RelayEventSource; timestamp: string }
   | { type: "clarification.requested"; questions: ClarificationQuestion[]; timestamp: string }
-  | { type: "run.completed"; finalResponse: string; usage?: unknown; timestamp: string }
-  | { type: "run.failed"; message: string; details?: unknown; timestamp: string };
+  | { type: "run.completed"; finalResponse: string; usage?: unknown; finalStatus?: RunStatus; timestamp: string }
+  | { type: "run.failed"; message: string; details?: unknown; finalStatus?: RunStatus; timestamp: string };
 
 export type RendererRunEvent = RelayCodexEvent & {
   projectPath: string;
@@ -436,6 +442,7 @@ export type CreateDraftInput = {
   projectPath: string;
   idea: string;
   preferredTicketType?: TicketType;
+  ticketId?: string;
 };
 
 export type RunLogLine = {
@@ -446,6 +453,28 @@ export type RunLogLine = {
   threadId: string;
   type: RelayCodexEvent["type"];
   payload: Record<string, unknown>;
+};
+
+export type RunUsageSummary = {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
+  totalTokens: number | null;
+};
+
+export type RunSummary = {
+  schemaVersion: number;
+  ticketId: string;
+  runId: string;
+  threadId: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+  finalStatus: RunStatus | null;
+  usage: RunUsageSummary | null;
+  eventCount: number;
+  latestEventAt: string | null;
 };
 
 export type RelayApi = {
@@ -486,6 +515,7 @@ export type RelayApi = {
     cancelRun: (runId: string) => Promise<void>;
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => Promise<void>;
     readRunEvents: (projectPath: string, ticketId: string, runId: string) => Promise<RendererRunEvent[]>;
+    readLatestRunSummary: (projectPath: string, ticketId: string) => Promise<RunSummary | null>;
     onRunEvent: (listener: (event: RendererRunEvent) => void) => () => void;
   };
 };

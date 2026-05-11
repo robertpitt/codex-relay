@@ -2325,6 +2325,78 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.agent-run-summary {
+  display: grid;
+  gap: var(--relay-space-2);
+  padding: var(--relay-space-3);
+  border-top: 1px solid rgb(255 255 255 / 5%);
+  background: rgb(0 0 0 / 8%);
+}
+
+.agent-run-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--relay-space-2);
+}
+
+.agent-run-facts div,
+.agent-usage-grid div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border-radius: var(--relay-radius-sm);
+  background: rgb(255 255 255 / 3.5%);
+  padding: 8px;
+}
+
+.agent-run-facts span,
+.agent-usage-grid span,
+.agent-usage-title,
+.agent-usage-unavailable {
+  color: var(--relay-text-subtle);
+  font-size: var(--relay-text-sm);
+  font-weight: 540;
+}
+
+.agent-run-facts strong,
+.agent-run-facts code,
+.agent-usage-grid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--relay-text);
+  font-size: var(--relay-text-md);
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-run-facts code {
+  font-family: var(--relay-font-mono);
+}
+
+.agent-usage {
+  display: grid;
+  gap: var(--relay-space-2);
+}
+
+.agent-usage-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--relay-space-2);
+}
+
+.agent-usage-unavailable {
+  border-radius: var(--relay-radius-sm);
+  background: rgb(255 255 255 / 3.5%);
+  padding: 9px;
+}
+
 .agent-progress-foot,
 .agent-recent-title,
 .agent-inline-state {
@@ -2820,6 +2892,8 @@ kbd {
   }
 
   .agent-metrics,
+  .agent-run-facts,
+  .agent-usage-grid,
   .agent-recent-row,
   .agent-log-item,
   .link-existing-row,

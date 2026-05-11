@@ -67,6 +67,7 @@ test("agent activity panel exposes a dedicated log entry point", () => {
       ]}
       status="running"
       runId="run_1"
+      runSummary={null}
       logLoading={false}
       logError={null}
       onOpenLogs={() => undefined}
@@ -77,6 +78,79 @@ test("agent activity panel exposes a dedicated log entry point", () => {
   assert.match(markup, /Agent Activity/);
   assert.match(markup, /Open Logs/);
   assert.match(markup, /Recent Activity/);
+});
+
+test("agent activity panel renders run summary timing and token usage", () => {
+  const markup = renderToStaticMarkup(
+    <AgentActivityPanel
+      events={[
+        event({ type: "run.started", runId: "run_1", threadId: "thread_1", timestamp: "2026-05-11T10:00:00.000Z" }),
+        event({ type: "run.completed", finalResponse: "Done.", timestamp: "2026-05-11T10:01:05.000Z" })
+      ]}
+      status="completed"
+      runId="run_1"
+      runSummary={{
+        schemaVersion: 1,
+        ticketId: "tkt_1",
+        runId: "run_1",
+        threadId: "thread_1",
+        startedAt: "2026-05-11T10:00:00.000Z",
+        endedAt: "2026-05-11T10:01:05.000Z",
+        durationMs: 65_000,
+        finalStatus: "completed",
+        usage: {
+          inputTokens: 1200,
+          cachedInputTokens: 400,
+          outputTokens: 300,
+          reasoningOutputTokens: 50,
+          totalTokens: 1500
+        },
+        eventCount: 2,
+        latestEventAt: "2026-05-11T10:01:05.000Z"
+      }}
+      logLoading={false}
+      logError={null}
+      onOpenLogs={() => undefined}
+      onRevealFile={() => undefined}
+    />
+  );
+
+  assert.match(markup, /Latest run summary/);
+  assert.match(markup, /Duration/);
+  assert.match(markup, /01:05/);
+  assert.match(markup, /Token Usage/);
+  assert.match(markup, /1,500/);
+});
+
+test("agent activity panel marks token usage unavailable when absent", () => {
+  const markup = renderToStaticMarkup(
+    <AgentActivityPanel
+      events={[event({ type: "run.failed", message: "The operation was aborted.", timestamp: "2026-05-11T10:00:30.000Z" })]}
+      status="cancelled"
+      runId="run_1"
+      runSummary={{
+        schemaVersion: 1,
+        ticketId: "tkt_1",
+        runId: "run_1",
+        threadId: "thread_1",
+        startedAt: "2026-05-11T10:00:00.000Z",
+        endedAt: "2026-05-11T10:00:30.000Z",
+        durationMs: 30_000,
+        finalStatus: "cancelled",
+        usage: null,
+        eventCount: 1,
+        latestEventAt: "2026-05-11T10:00:30.000Z"
+      }}
+      logLoading={false}
+      logError={null}
+      onOpenLogs={() => undefined}
+      onRevealFile={() => undefined}
+    />
+  );
+
+  assert.match(markup, /Cancelled/);
+  assert.match(markup, /Token Usage/);
+  assert.match(markup, /Unavailable from this run log/);
 });
 
 test("agent log viewer orders events chronologically and labels event types", () => {

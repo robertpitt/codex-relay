@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import matter from "gray-matter";
 import {
   DEFAULT_COLUMNS,
+  RELAY_NEEDS_CLARIFICATION_STATUS,
   RELAY_REVIEW_STATUS,
   RELAY_SCHEMA_VERSION,
   RELAY_TODO_STATUS,
@@ -22,6 +23,7 @@ import {
   type EpicSubticketCreateInput,
   type TicketCreateInput,
   type TicketDraft,
+  type TicketDraftResearch,
   type TicketDraftSubticket,
   type TicketFrontMatter,
   type SubticketCreateInput,
@@ -493,40 +495,44 @@ export const writeTicket = async (projectPath: string, ticket: TicketRecord): Pr
 
 type TicketMarkdownDraft = TicketDraftSubticket & { research?: TicketDraft["research"] };
 
-const markdownList = (items: string[]): string => {
+const markdownList = (items: readonly string[] | undefined): string => {
+  if (!items) return "- None.";
   const cleaned = items.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
   return cleaned.length > 0 ? cleaned.map((item) => `- ${item}`).join("\n") : "- None.";
 };
 
+const researchMetadataMarkdown = (research?: TicketDraftResearch): string => {
+  if (
+    !research ||
+    (research.checkedUrls.length === 0 && research.inspectedFiles.length === 0 && research.limitations.length === 0)
+  ) {
+    return "- No research metadata recorded.";
+  }
+  const urls = research.checkedUrls.map((source) => {
+    const title = source.title ? ` (${source.title})` : "";
+    const reason = source.reason ? ` - ${source.reason}` : "";
+    return `- URL ${source.status}: ${source.url}${title}; characters read: ${source.charactersRead}${reason}`;
+  });
+  const files = research.inspectedFiles.map((file) => {
+    const symbols = file.symbols.length > 0 ? `; symbols: ${file.symbols.slice(0, 6).join(", ")}` : "";
+    const matches =
+      file.matches.length > 0 ? `\n  Matched lines:\n${file.matches.map((match) => `  - ${match}`).join("\n")}` : "";
+    return `- File inspected: ${file.path} - ${file.reason}; characters read: ${file.charactersRead}${symbols}${matches}`;
+  });
+  const limitations = research.limitations.map((limitation) => `- Limitation: ${limitation}`);
+  return [...urls, ...files, ...limitations].join("\n");
+};
+
 export const ticketMarkdownFromDraft = (draft: TicketMarkdownDraft): string => {
-  const researchMetadata = (): string => {
-    if (
-      !draft.research ||
-      (draft.research.checkedUrls.length === 0 &&
-        draft.research.inspectedFiles.length === 0 &&
-        draft.research.limitations.length === 0)
-    ) {
-      return "- No research metadata recorded.";
-    }
-    const urls = draft.research.checkedUrls.map((source) => {
-      const title = source.title ? ` (${source.title})` : "";
-      const reason = source.reason ? ` - ${source.reason}` : "";
-      return `- URL ${source.status}: ${source.url}${title}; characters read: ${source.charactersRead}${reason}`;
-    });
-    const files = draft.research.inspectedFiles.map((file) => {
-      const symbols = file.symbols.length > 0 ? `; symbols: ${file.symbols.slice(0, 6).join(", ")}` : "";
-      return `- File inspected: ${file.path} - ${file.reason}; characters read: ${file.charactersRead}${symbols}`;
-    });
-    const limitations = draft.research.limitations.map((limitation) => `- Limitation: ${limitation}`);
-    return [...urls, ...files, ...limitations].join("\n");
-  };
+  const questions = [...(draft.clarificationQuestions ?? [])];
+  const assumptions = [...(draft.assumptions ?? [])];
   return `# ${draft.title}
 
 ## Context
 
 ${draft.context || "No additional context provided."}
 
-## Research Findings
+## Codebase Findings
 
 ${markdownList(draft.researchFindings)}
 
@@ -538,13 +544,17 @@ ${markdownList(draft.requirements)}
 
 ${markdownList(draft.implementationPlan)}
 
+## Test Plan
+
+${markdownList(draft.testPlan)}
+
 ## Acceptance Criteria
 
 ${markdownList(draft.acceptanceCriteria)}
 
-## Clarification Questions
+## Assumptions / Open Questions
 
-${markdownList(draft.clarificationQuestions)}
+${markdownList([...assumptions, ...questions])}
 
 ## Implementation Notes
 
@@ -552,7 +562,7 @@ ${markdownList(draft.implementationNotes)}
 
 ## Research Metadata
 
-${researchMetadata()}
+${researchMetadataMarkdown(draft.research)}
 
 ## Codex Handoff
 
@@ -570,7 +580,7 @@ ${parentTitle}
 
 ${draft.context || "No additional context provided."}
 
-## Research Findings
+## Codebase Findings
 
 ${markdownList(draft.researchFindings)}
 
@@ -582,13 +592,17 @@ ${markdownList(draft.requirements)}
 
 ${markdownList(draft.implementationPlan)}
 
+## Test Plan
+
+${markdownList(draft.testPlan)}
+
 ## Acceptance Criteria
 
 ${markdownList(draft.acceptanceCriteria)}
 
-## Clarification Questions
+## Assumptions / Open Questions
 
-${markdownList(draft.clarificationQuestions)}
+${markdownList([...(draft.assumptions ?? []), ...(draft.clarificationQuestions ?? [])])}
 
 ## Implementation Notes
 
@@ -644,6 +658,34 @@ ${idea.trim() || "No idea was provided."}
 ## Codex Handoff
 
 Ticket draft generation failed before a generated plan could be applied.
+`;
+
+const ticketMarkdownFromDraftClarification = (
+  title: string,
+  idea: string,
+  questions: readonly string[],
+  research?: TicketDraftResearch
+): string => `# ${title}
+
+## Drafting State
+
+Codex researched this draft but needs user input before it can produce an implementation-ready ticket. Answer the clarification questions below; drafting will resume automatically once every question is answered.
+
+## Original Idea
+
+${idea.trim() || "No idea was provided."}
+
+## Open Clarification Questions
+
+${markdownList(questions)}
+
+## Research Metadata
+
+${researchMetadataMarkdown(research)}
+
+## Codex Handoff
+
+Ticket draft generation is blocked on clarification.
 `;
 
 const createSingleTicket = async (projectPath: string, input: TicketCreateInput): Promise<TicketRecord> => {
@@ -809,6 +851,31 @@ export const failPendingTicketDraft = async (
     frontMatter: {
       ...existing.frontMatter,
       runStatus: "draft_failed",
+      lastRunId: runId
+    }
+  });
+};
+
+export const blockPendingTicketDraftForClarification = async (
+  projectPath: string,
+  ticketId: string,
+  idea: string,
+  runId: string,
+  questions: readonly string[],
+  research?: TicketDraftResearch
+): Promise<TicketRecord> => {
+  const existing = await readTicket(projectPath, ticketId);
+  const config = await readProjectConfig(projectPath);
+  const status = config.columns.some((column) => column.id === RELAY_NEEDS_CLARIFICATION_STATUS)
+    ? RELAY_NEEDS_CLARIFICATION_STATUS
+    : existing.frontMatter.status;
+  return writeTicket(projectPath, {
+    ...existing,
+    markdown: ticketMarkdownFromDraftClarification(existing.frontMatter.title, idea, questions, research),
+    frontMatter: {
+      ...existing.frontMatter,
+      status,
+      runStatus: "blocked",
       lastRunId: runId
     }
   });

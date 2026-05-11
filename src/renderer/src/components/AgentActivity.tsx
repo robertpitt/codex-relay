@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { Activity, Clock, FileText, Files, Globe2, List, Loader2, X } from "lucide-react";
+import { Activity, Clock, FileText, Files, Globe2, Hash, List, Loader2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import type { RendererRunEvent, RunStatus } from "@shared/types";
+import type { RendererRunEvent, RunStatus, RunSummary, RunUsageSummary } from "@shared/types";
 import { MarkdownBlock } from "./MarkdownBlock";
 import { useShortcutOverlay } from "../lib/keyboardShortcuts";
 import {
@@ -10,6 +10,7 @@ import {
   agentEventText,
   agentEventTone,
   deriveAgentProgress,
+  formatElapsedDuration,
   isAgentSessionActive,
   isMarkdownAgentEvent,
   sortAgentEvents
@@ -53,6 +54,112 @@ const formatTimestamp = (timestamp: string): string =>
 
 const metricValue = (value: number | null): string => (value === null ? "Unavailable" : String(value));
 
+const formatDateTime = (timestamp: string | null): string => {
+  if (!timestamp) return "Unavailable";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Unavailable";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+};
+
+const formatStatus = (status: RunStatus | null): string => {
+  switch (status) {
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    case "blocked":
+      return "Blocked";
+    case "draft_complete":
+      return "Draft ready";
+    case "draft_failed":
+      return "Draft failed";
+    case "running":
+      return "Running";
+    case "drafting":
+      return "Drafting";
+    case "idle":
+      return "Idle";
+    default:
+      return "Unavailable";
+  }
+};
+
+const formatIdentifier = (value: string | null): string => {
+  if (!value) return "Unavailable";
+  if (value.length <= 18) return value;
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+};
+
+const formatTokenCount = (value: number | null): string => (value === null ? "Unavailable" : new Intl.NumberFormat().format(value));
+
+const usageRows = (usage: RunUsageSummary): Array<[string, number | null]> => [
+  ["Input", usage.inputTokens],
+  ["Cached", usage.cachedInputTokens],
+  ["Output", usage.outputTokens],
+  ["Reasoning", usage.reasoningOutputTokens],
+  ["Total", usage.totalTokens]
+];
+
+function AgentRunSummaryDetails({ summary }: { summary: RunSummary }): ReactElement {
+  return (
+    <div className="agent-run-summary" aria-label="Latest run summary">
+      <div className="agent-run-facts">
+        <div>
+          <span>Status</span>
+          <strong>{formatStatus(summary.finalStatus)}</strong>
+        </div>
+        <div>
+          <span>Started</span>
+          <strong>{formatDateTime(summary.startedAt)}</strong>
+        </div>
+        <div>
+          <span>Ended</span>
+          <strong>{formatDateTime(summary.endedAt)}</strong>
+        </div>
+        <div>
+          <span>Duration</span>
+          <strong>{formatElapsedDuration(summary.durationMs)}</strong>
+        </div>
+        <div>
+          <span>Thread</span>
+          <code title={summary.threadId ?? undefined}>{formatIdentifier(summary.threadId)}</code>
+        </div>
+        <div>
+          <span>Events</span>
+          <strong>{summary.eventCount}</strong>
+        </div>
+      </div>
+
+      <div className="agent-usage">
+        <div className="agent-usage-title">
+          <Hash size={14} />
+          <span>Token Usage</span>
+        </div>
+        {summary.usage ? (
+          <div className="agent-usage-grid">
+            {usageRows(summary.usage).map(([label, value]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <strong>{formatTokenCount(value)}</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="agent-usage-unavailable">Unavailable from this run log</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function AgentProgressSummary({
   events,
   status,
@@ -83,7 +190,7 @@ export function AgentProgressSummary({
       <div className="agent-metrics" aria-label="Agent progress metrics">
         <div className="agent-metric">
           <Clock size={15} />
-          <span>Elapsed</span>
+          <span>{active ? "Elapsed" : "Duration"}</span>
           <strong>{progress.elapsedLabel}</strong>
         </div>
         <div className="agent-metric">
@@ -110,6 +217,7 @@ export function AgentActivityPanel({
   events,
   status,
   runId,
+  runSummary,
   logLoading,
   logError,
   onOpenLogs,
@@ -118,6 +226,7 @@ export function AgentActivityPanel({
   events: RendererRunEvent[];
   status: RunStatus;
   runId: string | null;
+  runSummary: RunSummary | null;
   logLoading: boolean;
   logError: string | null;
   onOpenLogs: () => void;
@@ -147,7 +256,15 @@ export function AgentActivityPanel({
         </div>
       </header>
 
-      <AgentProgressSummary events={events} status={status} metricsAvailable={events.length > 0} />
+      <AgentProgressSummary
+        events={events}
+        status={status}
+        startedAt={runSummary?.startedAt}
+        endedAt={runSummary?.endedAt}
+        metricsAvailable={Boolean(runSummary) || events.length > 0}
+      />
+
+      {runSummary && <AgentRunSummaryDetails summary={runSummary} />}
 
       <div className="agent-recent">
         <div className="agent-recent-title">

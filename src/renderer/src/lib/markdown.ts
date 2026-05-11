@@ -1,6 +1,7 @@
 import type { TicketDraft, TicketDraftSubticket } from "@shared/types";
 
-const list = (items: string[]): string => {
+const list = (items: readonly string[] | undefined): string => {
+  if (!items) return "- None.";
   const cleaned = items.map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean);
   return cleaned.length > 0 ? cleaned.map((item) => `- ${item}`).join("\n") : "- None.";
 };
@@ -44,7 +45,9 @@ const researchMetadata = (draft: TicketMarkdownDraft): string => {
   });
   const files = draft.research.inspectedFiles.map((file) => {
     const symbols = file.symbols.length > 0 ? `; symbols: ${file.symbols.slice(0, 6).join(", ")}` : "";
-    return `- File inspected: ${file.path} - ${file.reason}; characters read: ${file.charactersRead}${symbols}`;
+    const matches =
+      file.matches.length > 0 ? `\n  Matched lines:\n${file.matches.map((match) => `  - ${match}`).join("\n")}` : "";
+    return `- File inspected: ${file.path} - ${file.reason}; characters read: ${file.charactersRead}${symbols}${matches}`;
   });
   const limitations = draft.research.limitations.map((limitation) => `- Limitation: ${limitation}`);
   return [...urls, ...files, ...limitations].join("\n");
@@ -56,7 +59,7 @@ export const markdownFromDraft = (draft: TicketMarkdownDraft): string => `# ${dr
 
 ${draft.context || "No additional context provided."}
 
-## Research Findings
+## Codebase Findings
 
 ${list(draft.researchFindings)}
 
@@ -68,13 +71,17 @@ ${list(draft.requirements)}
 
 ${list(draft.implementationPlan)}
 
+## Test Plan
+
+${list(draft.testPlan)}
+
 ## Acceptance Criteria
 
 ${list(draft.acceptanceCriteria)}
 
-## Clarification Questions
+## Assumptions / Open Questions
 
-${list(draft.clarificationQuestions)}
+${list([...(draft.assumptions ?? []), ...(draft.clarificationQuestions ?? [])])}
 
 ## Implementation Notes
 
@@ -99,7 +106,7 @@ ${parentTitle}
 
 ${draft.context || "No additional context provided."}
 
-## Research Findings
+## Codebase Findings
 
 ${list(draft.researchFindings)}
 
@@ -111,13 +118,17 @@ ${list(draft.requirements)}
 
 ${list(draft.implementationPlan)}
 
+## Test Plan
+
+${list(draft.testPlan)}
+
 ## Acceptance Criteria
 
 ${list(draft.acceptanceCriteria)}
 
-## Clarification Questions
+## Assumptions / Open Questions
 
-${list(draft.clarificationQuestions)}
+${list([...(draft.assumptions ?? []), ...(draft.clarificationQuestions ?? [])])}
 
 ## Implementation Notes
 

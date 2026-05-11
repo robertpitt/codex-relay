@@ -65,6 +65,7 @@ export const relayActorSchema = z.enum(["user", "codex", "system"]) satisfies z.
 export const relayEventSourceSchema = z.enum([
   "manual_board",
   "manual_ticket_edit",
+  "draft_generation",
   "agent_execution",
   "clarification_ui",
   "system_reconciliation"
@@ -196,13 +197,17 @@ const ticketDraftBaseSchema = z
     researchFindings: z.array(z.string()).default([]),
     requirements: z.array(z.string()).default([]),
     implementationPlan: z.array(z.string()).default([]),
+    testPlan: z.array(z.string()).default([]),
     acceptanceCriteria: z.array(z.string()).default([]),
     clarificationQuestions: z.array(z.string()).default([]),
+    assumptions: z.array(z.string()).default([]),
     implementationNotes: z.array(z.string()).default([])
   })
   .strict();
 
 export const ticketDraftSchema = ticketDraftBaseSchema.extend({
+  draftState: z.enum(["ready", "needs_clarification"]).default("ready"),
+  blockingClarificationQuestions: z.array(z.string()).default([]),
   ticketType: ticketTypeSchema.default("task"),
   subtickets: z.array(ticketDraftBaseSchema).default([]),
   research: ticketDraftResearchSchema.default({
@@ -338,7 +343,8 @@ export const createDraftInputSchema = z
   .object({
     projectPath: z.string(),
     idea: z.string(),
-    preferredTicketType: ticketTypeSchema.optional()
+    preferredTicketType: ticketTypeSchema.optional(),
+    ticketId: z.string().optional()
   })
   .passthrough() satisfies z.ZodType<CreateDraftInput, z.ZodTypeDef, unknown>;
 
@@ -407,8 +413,20 @@ export const relayCodexEventSchema = z.discriminatedUnion("type", [
     timestamp: isoString
   }),
   z.object({ type: z.literal("clarification.requested"), questions: z.array(clarificationQuestionSchema), timestamp: isoString }),
-  z.object({ type: z.literal("run.completed"), finalResponse: z.string(), usage: z.unknown().optional(), timestamp: isoString }),
-  z.object({ type: z.literal("run.failed"), message: z.string(), details: z.unknown().optional(), timestamp: isoString })
+  z.object({
+    type: z.literal("run.completed"),
+    finalResponse: z.string(),
+    usage: z.unknown().optional(),
+    finalStatus: runStatusSchema.optional(),
+    timestamp: isoString
+  }),
+  z.object({
+    type: z.literal("run.failed"),
+    message: z.string(),
+    details: z.unknown().optional(),
+    finalStatus: runStatusSchema.optional(),
+    timestamp: isoString
+  })
 ]) satisfies z.ZodType<RelayCodexEvent, z.ZodTypeDef, unknown>;
 
 export const runLogLineSchema = z.object({

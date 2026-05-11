@@ -3,6 +3,7 @@ import {
   cancelCodexRun,
   getCodexStatus,
   preflightCodexRun,
+  readCodexLatestRunSummary,
   readCodexRunEvents,
   resumeCodexRun,
   startCodexRun
@@ -57,5 +58,11 @@ export const codexIpcMethods = [
     result: ipcResult(),
     handler: (_event, projectPath: string, ticketId: string, runId: string) =>
       fromPromise(() => readCodexRunEvents(projectPath, ticketId, runId))
+  }),
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.codexReadLatestRunSummary,
+    payload: ipcArgs([ipcString, ipcString]),
+    result: ipcResult(),
+    handler: (_event, projectPath: string, ticketId: string) => fromPromise(() => readCodexLatestRunSummary(projectPath, ticketId))
   })
 ] satisfies ReadonlyArray<AnyRelayIpcMethod>;

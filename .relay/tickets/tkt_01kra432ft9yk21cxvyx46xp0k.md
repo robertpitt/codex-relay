@@ -2,18 +2,22 @@
 schemaVersion: 1
 id: tkt_01kra432ft9yk21cxvyx46xp0k
 title: Persist Run Usage and Duration Metrics
-status: todo
-position: 6000
+ticketType: task
+status: review
+position: 1000
 priority: medium
 labels:
   - developer-experience
   - agent-readiness
   - relay
+parentEpicId: null
+subticketIds: []
+blockedByIds: []
 createdAt: '2026-05-10T23:38:20.023Z'
-updatedAt: '2026-05-10T23:38:20.023Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T21:33:54.625Z'
+codexThreadId: 019e18ec-539c-7d83-8e2e-0232e605cce7
+runStatus: completed
+lastRunId: run_01krcerm4yp8ks39b9bx0bf915
 ---
 # Persist Run Usage and Duration Metrics
 
@@ -53,5 +57,47 @@ Relay already writes normalized run events to `.relay/runs/<ticket-id>/<run-id>.
 - This ticket is observability-only and should not change how Codex runs are launched.
 
 ## Codex Handoff
+
+### 5/11/2026, 10:33:54 PM
+
+Summary of changes made:
+- Added derived run summaries from existing JSONL logs: start/end time, duration, final status, thread ID, event count, and normalized token usage.
+- Added optional `finalStatus` to new terminal run events while keeping old logs valid.
+- Exposed `codex.readLatestRunSummary` through IPC/preload.
+- Updated the ticket detail run area to show duration, status/timing/thread details, and token usage when present. Board cards are unchanged.
+- Added focused tests for usage-present, usage-absent, failed, and cancelled summaries.
+
+Files changed:
+- `src/main/services/run-events/index.ts`
+- `src/main/services/codex/index.ts`
+- `src/main/services/schemas.ts`
+- `src/main/ipc/methods/codex.ts`
+- `src/shared/types.ts`
+- `src/shared/ipc.ts`
+- `src/preload/index.ts`
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/components/AgentActivity.tsx`
+- `src/renderer/src/styles.css`
+- `tests/agent-progress.test.tsx`
+- `tests/run-events.test.ts`
+- `tests/run-tests.mjs`
+
+Commands run:
+- Inspection via `git status`, `git ls-files`, `grep`, `sed`, and `git diff`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+- `git diff --check`
+
+Tests run and results:
+- `npm run typecheck`: passed
+- `npm test`: passed, 78/78 tests
+- `npm run build`: passed
+- `git diff --check`: passed
+
+Remaining risks or follow-up:
+- No known code/test blockers. I did not manually inspect the Electron UI, but renderer coverage and the production build both passed.
+- The worktree had pre-existing unrelated `.relay` and `.effect` changes before this work; I left them untouched.
+
 
 No Codex run has been started.

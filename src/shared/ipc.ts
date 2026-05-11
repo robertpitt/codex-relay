@@ -17,6 +17,7 @@ import type {
   ProjectSummary,
   RelayApprovalDecision,
   RendererRunEvent,
+  RunSummary,
   StartRunInput,
   TicketCreateInput,
   TicketDraftStartResult,
@@ -57,6 +58,7 @@ export type RelayIpcContract = {
   "codex:cancelRun": { args: [runId: string]; result: void };
   "codex:approveAction": { args: [approvalId: string, decision: RelayApprovalDecision]; result: void };
   "codex:readRunEvents": { args: [projectPath: string, ticketId: string, runId: string]; result: RendererRunEvent[] };
+  "codex:readLatestRunSummary": { args: [projectPath: string, ticketId: string]; result: RunSummary | null };
 };
 
 export type RelayIpcChannel = keyof RelayIpcContract;
@@ -93,5 +95,6 @@ export const relayIpcChannels = {
   codexResumeRun: "codex:resumeRun",
   codexCancelRun: "codex:cancelRun",
   codexApproveAction: "codex:approveAction",
-  codexReadRunEvents: "codex:readRunEvents"
+  codexReadRunEvents: "codex:readRunEvents",
+  codexReadLatestRunSummary: "codex:readLatestRunSummary"
 } as const satisfies Record<string, RelayIpcChannel>;

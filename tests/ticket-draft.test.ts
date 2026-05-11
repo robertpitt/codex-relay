@@ -4,9 +4,11 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  cancelCodexRun,
   createTicketDraft,
   draftToCreateInput,
   extractTicketDraftUrls,
+  maybeResumeTicketDraftAfterClarification,
   startTicketDraftRun,
   TicketDraftServiceError,
   type TicketDraftCodexClient,
@@ -14,7 +16,7 @@ import {
   type TicketDraftStartDependencies,
   type TicketDraftThread
 } from "../src/main/services/codex";
-import { initializeProject, readBoard, readTicket } from "../src/main/services/storage";
+import { answerClarificationQuestion, initializeProject, readBoard, readClarificationQuestions, readTicket } from "../src/main/services/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
 import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
 
@@ -75,19 +77,54 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>, label: strin
   assert.fail(`Timed out waiting for ${label}`);
 };
 
+const assertStrictSchemaRequiresAllProperties = (schema: unknown, label = "$"): void => {
+  if (!schema || typeof schema !== "object") return;
+  const objectSchema = schema as { properties?: Record<string, unknown>; required?: unknown; items?: unknown };
+  if (objectSchema.properties) {
+    assert.ok(Array.isArray(objectSchema.required), `${label}.required must be an array`);
+    const required = new Set(objectSchema.required);
+    for (const key of Object.keys(objectSchema.properties)) {
+      assert.ok(required.has(key), `${label}.required is missing ${key}`);
+      assertStrictSchemaRequiresAllProperties(objectSchema.properties[key], `${label}.${key}`);
+    }
+  }
+  if (objectSchema.items) assertStrictSchemaRequiresAllProperties(objectSchema.items, `${label}[]`);
+};
+
 const validDraftJson = (title: string): string =>
   JSON.stringify({
     title,
     priority: "medium",
     labels: ["codex"],
     context: "Context from Codex.",
-    researchFindings: [],
+    researchFindings: ["Draft research found no blocking ambiguity."],
     requirements: ["Build the requested behavior."],
-    implementationPlan: [],
+    implementationPlan: ["Apply the requested behavior using the existing project patterns."],
+    testPlan: ["Run npm test."],
     acceptanceCriteria: ["The requested behavior is covered."],
     clarificationQuestions: [],
+    assumptions: [],
     implementationNotes: ["Keep the change focused."]
   });
+
+test("ticket draft output schema requires every declared property for strict response format", async () => {
+  const projectPath = await createProject();
+  let outputSchema: unknown;
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "tdr_schema_required",
+    disableResearch: true,
+    createCodexClient: () =>
+      createDraftCodexClient(async (_prompt, options) => {
+        outputSchema = options.outputSchema;
+        return { finalResponse: validDraftJson("Schema-compatible draft") };
+      })
+  };
+
+  await createTicketDraft({ projectPath, idea: "Draft a ticket" }, dependencies);
+
+  assertStrictSchemaRequiresAllProperties(outputSchema);
+});
 
 const validEpicDraftJson = (): string =>
   JSON.stringify({
@@ -99,8 +136,10 @@ const validEpicDraftJson = (): string =>
     researchFindings: ["Inspected account service boundaries."],
     requirements: ["Coordinate API, UI, and persistence changes."],
     implementationPlan: ["Create child tickets for each independently shippable slice."],
+    testPlan: ["Run the relevant account migration tests for each child ticket."],
     acceptanceCriteria: ["All generated subtickets can be reviewed before storage."],
     clarificationQuestions: [],
+    assumptions: ["Use normal task tickets for every child scope."],
     implementationNotes: ["Nested epics are not supported."],
     subtickets: [
       {
@@ -111,8 +150,10 @@ const validEpicDraftJson = (): string =>
         researchFindings: ["API routes were identified."],
         requirements: ["Preserve existing account behavior."],
         implementationPlan: ["Update API handlers and tests."],
+        testPlan: ["Run account API tests."],
         acceptanceCriteria: ["Account API tests pass."],
         clarificationQuestions: [],
+        assumptions: [],
         implementationNotes: []
       },
       {
@@ -123,11 +164,33 @@ const validEpicDraftJson = (): string =>
         researchFindings: ["Account UI entry points were identified."],
         requirements: ["Keep account status and error states visible."],
         implementationPlan: ["Update data loading and interaction tests."],
+        testPlan: ["Run account UI tests."],
         acceptanceCriteria: ["Account UI can complete the migrated workflow."],
         clarificationQuestions: [],
+        assumptions: [],
         implementationNotes: []
       }
     ]
+  });
+
+const clarificationDraftJson = (question = "Which storage backend should this target?"): string =>
+  JSON.stringify({
+    draftState: "needs_clarification",
+    blockingClarificationQuestions: [question],
+    title: "Blocked implementation draft",
+    ticketType: "task",
+    priority: "medium",
+    labels: ["clarification"],
+    context: "Codex needs one product decision before drafting the implementation ticket.",
+    researchFindings: ["The codebase research completed enough to identify a blocking decision."],
+    requirements: [],
+    implementationPlan: [],
+    testPlan: [],
+    acceptanceCriteria: [],
+    clarificationQuestions: [question],
+    assumptions: [],
+    implementationNotes: ["Drafting is blocked until the user answers the clarification question."],
+    subtickets: []
   });
 
 test("ticket draft creation succeeds with a mocked Codex response", async () => {
@@ -196,6 +259,11 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
   assert.equal(events[0]?.type, "run.started");
 
   await waitFor(() => resolveDraft !== null, "Codex draft request to start");
+  await waitFor(
+    () => events.some((event) => event.type === "agent.message.completed" && /Codex is writing the implementation-ready ticket draft/.test(event.text)),
+    "draft progress events"
+  );
+  assert.ok(events.some((event) => event.type === "agent.message.completed" && /Draft research completed/.test(event.text)));
   const completeDraft = resolveDraft as unknown as TicketDraftRunResolver;
   completeDraft({ finalResponse: validDraftJson("Asynchronous ticket drafting") });
 
@@ -241,6 +309,114 @@ test("async ticket draft keeps the pending ticket visible when Codex drafting fa
   assert.equal(board.tickets.length, 1);
   assert.equal(board.tickets[0].id, started.ticket.frontMatter.id);
   assert.equal(events.at(-1)?.type, "run.failed");
+});
+
+test("async ticket draft can be cancelled through the shared run cancellation flow", async () => {
+  const projectPath = await createProject();
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_cancel_draft",
+    createRequestId: () => "tdr_cancel_draft",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient((_prompt, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              const error = new Error("The operation was aborted.");
+              error.name = "AbortError";
+              reject(error);
+            },
+            { once: true }
+          );
+        })
+      )
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Cancel this draft" }, dependencies);
+  await waitFor(() => events.some((event) => event.type === "agent.message.completed" && /Codex is writing/.test(event.text)), "draft model wait");
+
+  await cancelCodexRun(started.runId);
+
+  await waitFor(async () => (await readTicket(projectPath, started.ticket.frontMatter.id)).frontMatter.runStatus === "cancelled", "draft cancellation");
+  await waitFor(() => events.some((event) => event.type === "run.failed"), "draft cancellation event");
+  const cancelled = await readTicket(projectPath, started.ticket.frontMatter.id);
+  const failureEvents = events.filter((event): event is RendererRunEvent & { type: "run.failed" } => event.type === "run.failed");
+
+  assert.equal(cancelled.frontMatter.runStatus, "cancelled");
+  assert.equal(failureEvents.at(-1)?.finalStatus, "cancelled");
+});
+
+test("async ticket draft stores formal clarification questions when drafting is blocked", async () => {
+  const projectPath = await createProject();
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_draft_clarification",
+    createRequestId: () => "tdr_draft_clarification",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient(async () => ({ finalResponse: clarificationDraftJson("Which database should this use?") }))
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Draft a storage migration ticket" }, dependencies);
+
+  await waitFor(async () => (await readTicket(projectPath, started.ticket.frontMatter.id)).frontMatter.runStatus === "blocked", "draft clarification");
+  const blocked = await readTicket(projectPath, started.ticket.frontMatter.id);
+  const questions = await readClarificationQuestions(projectPath, started.ticket.frontMatter.id);
+
+  assert.equal(blocked.frontMatter.status, "needs_clarification");
+  assert.match(blocked.markdown, /Open Clarification Questions/);
+  assert.match(blocked.markdown, /Which database should this use\?/);
+  assert.equal(questions.length, 1);
+  assert.equal(questions[0].source, "draft_generation");
+  assert.equal(questions[0].createdBy, "codex");
+  assert.equal(events.at(-1)?.type, "clarification.requested");
+});
+
+test("answering all draft clarification questions auto-resumes drafting on the same ticket", async () => {
+  const projectPath = await createProject();
+  const prompts: string[] = [];
+  let runCounter = 0;
+  let requestCounter = 0;
+  let codexAttempt = 0;
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => `run_auto_resume_${++runCounter}`,
+    createRequestId: () => `tdr_auto_resume_${++requestCounter}`,
+    disableResearch: true,
+    createCodexClient: () =>
+      createDraftCodexClient(async (prompt) => {
+        prompts.push(prompt);
+        codexAttempt += 1;
+        if (codexAttempt === 1) return { finalResponse: clarificationDraftJson("Which storage backend should this target?") };
+        return { finalResponse: validDraftJson("Storage backend migration") };
+      })
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Draft a storage migration ticket" }, dependencies);
+  const ticketId = started.ticket.frontMatter.id;
+
+  await waitFor(async () => (await readTicket(projectPath, ticketId)).frontMatter.runStatus === "blocked", "blocked draft");
+  const [question] = await readClarificationQuestions(projectPath, ticketId);
+  await answerClarificationQuestion(projectPath, ticketId, question.id, "Use SQLite for the first implementation.");
+
+  const resumed = await maybeResumeTicketDraftAfterClarification(projectPath, ticketId, dependencies);
+  assert.equal(resumed?.ticket.frontMatter.id, ticketId);
+  assert.equal(resumed?.runId, "run_auto_resume_2");
+
+  await waitFor(async () => (await readTicket(projectPath, ticketId)).frontMatter.runStatus === "draft_complete", "resumed draft completion");
+  const completed = await readTicket(projectPath, ticketId);
+
+  assert.equal(completed.frontMatter.title, "Storage backend migration");
+  assert.equal(completed.frontMatter.lastRunId, "run_auto_resume_2");
+  assert.match(completed.markdown, /## Codebase Findings/);
+  assert.match(prompts[1], /Answer: Use SQLite for the first implementation\./);
+  assert.match(prompts[1], /Existing draft ticket markdown/);
 });
 
 test("async ticket drafts can run concurrently and update only their own placeholder tickets", async () => {
@@ -339,8 +515,10 @@ test("ticket draft URL research fetches detected URLs and renders source metadat
             researchFindings: ["External Draft Spec says URLs should be fetched before ticket writing."],
             requirements: ["Fetch URLs detected in the rough idea."],
             implementationPlan: ["Extract URLs, fetch bounded content, and pass summarized findings to Codex."],
+            testPlan: ["Run ticket draft URL research tests."],
             acceptanceCriteria: ["The generated markdown references fetched URLs."],
             clarificationQuestions: [],
+            assumptions: [],
             implementationNotes: []
           })
         };
@@ -355,7 +533,7 @@ test("ticket draft URL research fetches detected URLs and renders source metadat
   assert.equal(draft.research.checkedUrls[0].title, "External Draft Spec");
   assert.match(prompt, /External Draft Spec/);
   assert.match(prompt, /Research-aware drafting/);
-  assert.match(markdown, /## Research Findings/);
+  assert.match(markdown, /## Codebase Findings/);
   assert.match(markdown, /External Draft Spec says URLs should be fetched/);
   assert.match(markdown, /URL fetched: https:\/\/example\.test\/spec\?draft=1 \(External Draft Spec\)/);
 });
@@ -422,61 +600,65 @@ test("ticket draft research records URL and codebase limitations in generated ma
   assert.match(markdown, /Limitation:/);
 });
 
-test("ticket draft timeout is typed, recoverable, and aborts the Codex request", async () => {
+test("ticket draft waits for slow Codex responses without an internal timeout", async () => {
   const projectPath = await createProject();
   const signals: AbortSignal[] = [];
-  const dependencies: TicketDraftDependencies = {
-    getStatus: async () => readyStatus,
-    createRequestId: () => "tdr_timeout",
-    draftTimeoutMs: 5,
-    unrefTimeout: false,
-    createCodexClient: () =>
-      createDraftCodexClient((_prompt, options) => {
-        signals.push(options.signal);
-        return new Promise<never>(() => undefined);
-      })
-  };
+  const resolvers: TicketDraftRunResolver[] = [];
+  const draftPromises: ReturnType<typeof createTicketDraft>[] = [];
+  const runStarted = new Promise<void>((resolve) => {
+    const dependencies: TicketDraftDependencies = {
+      getStatus: async () => readyStatus,
+      createRequestId: () => "tdr_slow_draft",
+      draftTimeoutMs: 1,
+      unrefTimeout: false,
+      createCodexClient: () =>
+        createDraftCodexClient((_prompt, options) => {
+          signals.push(options.signal);
+          resolve();
+          return new Promise((nextResolve) => {
+            resolvers.push(nextResolve);
+          });
+        })
+    };
 
-  await assert.rejects(
-    createTicketDraft({ projectPath, idea: "Timeout this draft" }, dependencies),
-    (error) => {
-      assert.ok(error instanceof TicketDraftServiceError);
-      assert.equal(error.code, "timeout");
-      assert.equal(error.recoverable, true);
-      assert.equal(error.requestId, "tdr_timeout");
-      assert.equal(error.timeoutMs, 5);
-      return true;
-    }
-  );
-  assert.equal(signals[0].aborted, true);
+    draftPromises.push(createTicketDraft({ projectPath, idea: "Wait for this draft" }, dependencies));
+  });
+
+  await runStarted;
+  assert.equal(signals[0].aborted, false);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(signals[0].aborted, false);
+  resolvers[0]({ finalResponse: validDraftJson("Slow draft completed") });
+  const draft = await draftPromises[0];
+
+  assert.equal(draft.title, "Slow draft completed");
+  assert.equal(signals[0].aborted, false);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
 });
 
-test("ticket draft retry after timeout uses an independent Codex request", async () => {
+test("ticket draft retry after backend failure uses an independent Codex request", async () => {
   const projectPath = await createProject();
   const signals: AbortSignal[] = [];
   let attempt = 0;
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => `tdr_retry_${attempt + 1}`,
-    draftTimeoutMs: 5,
-    unrefTimeout: false,
     createCodexClient: () =>
       createDraftCodexClient((_prompt, options) => {
         signals.push(options.signal);
         attempt += 1;
-        if (attempt === 1) return new Promise<never>(() => undefined);
+        if (attempt === 1) throw new Error("temporary backend failure");
         return Promise.resolve({ finalResponse: validDraftJson("Retry succeeded") });
       })
   };
 
-  await assert.rejects(createTicketDraft({ projectPath, idea: "Retry after timeout" }, dependencies), TicketDraftServiceError);
-  const retryDraft = await createTicketDraft({ projectPath, idea: "Retry after timeout" }, dependencies);
+  await assert.rejects(createTicketDraft({ projectPath, idea: "Retry after backend failure" }, dependencies), TicketDraftServiceError);
+  const retryDraft = await createTicketDraft({ projectPath, idea: "Retry after backend failure" }, dependencies);
 
   assert.equal(retryDraft.title, "Retry succeeded");
   assert.equal(signals.length, 2);
   assert.notEqual(signals[0], signals[1]);
-  assert.equal(signals[0].aborted, true);
+  assert.equal(signals[0].aborted, false);
   assert.equal(signals[1].aborted, false);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
 });
@@ -507,6 +689,43 @@ test("ticket draft creation supports epic output with reviewable subtickets", as
   assert.match(createInput.subtickets?.[0].markdown ?? "", /## Parent Epic/);
   assert.doesNotMatch(createInput.subtickets?.[0].markdown ?? "", /## Research Metadata/);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
+});
+
+test("ticket draft rejects ready plans that defer core research to implementation", async () => {
+  const projectPath = await createProject();
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "tdr_deferred_research",
+    disableResearch: true,
+    createCodexClient: () =>
+      createDraftCodexClient(async () => ({
+        finalResponse: JSON.stringify({
+          title: "Deferred research ticket",
+          ticketType: "task",
+          priority: "medium",
+          labels: ["drafts"],
+          context: "This draft is intentionally too weak.",
+          researchFindings: ["No useful codebase findings were recorded."],
+          requirements: ["Improve ticket drafting."],
+          implementationPlan: ["Inspect the current flow to find the relevant files."],
+          testPlan: ["Run npm test."],
+          acceptanceCriteria: ["The ticket is stronger."],
+          clarificationQuestions: [],
+          assumptions: [],
+          implementationNotes: [],
+          subtickets: []
+        })
+      }))
+  };
+
+  await assert.rejects(
+    createTicketDraft({ projectPath, idea: "Make ticket drafting stronger" }, dependencies),
+    (error) => {
+      assert.ok(error instanceof TicketDraftServiceError);
+      assert.equal(error.code, "invalid_response");
+      return true;
+    }
+  );
 });
 
 test("ticket draft rejects malformed task output that contains subtickets", async () => {

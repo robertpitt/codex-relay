@@ -34,6 +34,7 @@ import type {
   ProjectSummary,
   RelayColumn,
   RendererRunEvent,
+  RunSummary,
   RunStatus,
   TicketDraft,
   TicketDraftErrorPayload,
@@ -85,8 +86,10 @@ type DraftArrayField =
   | "researchFindings"
   | "requirements"
   | "implementationPlan"
+  | "testPlan"
   | "acceptanceCriteria"
   | "clarificationQuestions"
+  | "assumptions"
   | "implementationNotes";
 
 type TicketReferenceMenuRect = {
@@ -243,7 +246,7 @@ ${parentTitle}
 
 Subticket of ${parentTitle}.
 
-## Research Findings
+## Codebase Findings
 
 - None.
 
@@ -255,11 +258,15 @@ Subticket of ${parentTitle}.
 
 - Review the parent epic context and narrow this ticket to one implementation path.
 
+## Test Plan
+
+- Run the relevant focused validation for the child task once implemented.
+
 ## Acceptance Criteria
 
 - The child task has specific acceptance criteria before work starts.
 
-## Clarification Questions
+## Assumptions / Open Questions
 
 - None.
 
@@ -1040,13 +1047,13 @@ function CreateTicketModal({
 
   const renderPlanListField = (
     label: string,
-    value: string[],
+    value: string[] | undefined,
     onChange: (value: string[]) => void,
     placeholder: string
   ): ReactElement => (
     <label className="field">
       <span>{label}</span>
-      <textarea className="draft-plan-textarea" value={linesToInput(value)} placeholder={placeholder} onChange={(event) => onChange(linesFromInput(event.target.value))} />
+      <textarea className="draft-plan-textarea" value={linesToInput(value ?? [])} placeholder={placeholder} onChange={(event) => onChange(linesFromInput(event.target.value))} />
     </label>
   );
 
@@ -1252,7 +1259,7 @@ ${idea.trim() || "No additional details provided."}
                 <span>Context</span>
                 <textarea className="draft-plan-textarea" value={draft.context} onChange={(event) => updateDraftText("context", event.target.value)} />
               </label>
-              {renderPlanListField("Research Findings", draft.researchFindings, (value) => updateDraftArrayField("researchFindings", value), "One finding per line")}
+              {renderPlanListField("Codebase Findings", draft.researchFindings, (value) => updateDraftArrayField("researchFindings", value), "One finding per line")}
               {renderPlanListField("Requirements", draft.requirements, (value) => updateDraftArrayField("requirements", value), "One requirement per line")}
               {renderPlanListField(
                 "Implementation Plan",
@@ -1260,14 +1267,16 @@ ${idea.trim() || "No additional details provided."}
                 (value) => updateDraftArrayField("implementationPlan", value),
                 "One implementation step per line"
               )}
+              {renderPlanListField("Test Plan", draft.testPlan, (value) => updateDraftArrayField("testPlan", value), "One test command or scenario per line")}
               {renderPlanListField(
                 "Acceptance Criteria",
                 draft.acceptanceCriteria,
                 (value) => updateDraftArrayField("acceptanceCriteria", value),
                 "One acceptance criterion per line"
               )}
+              {renderPlanListField("Assumptions", draft.assumptions, (value) => updateDraftArrayField("assumptions", value), "One assumption per line")}
               {renderPlanListField(
-                "Clarification Questions",
+                "Open Questions",
                 draft.clarificationQuestions,
                 (value) => updateDraftArrayField("clarificationQuestions", value),
                 "One question per line"
@@ -1326,7 +1335,7 @@ ${idea.trim() || "No additional details provided."}
                           onChange={(event) => updateSubticket(index, { context: event.target.value })}
                         />
                       </label>
-                      {renderPlanListField("Research Findings", subticket.researchFindings, (value) => updateSubticket(index, { researchFindings: value }), "One finding per line")}
+                      {renderPlanListField("Codebase Findings", subticket.researchFindings, (value) => updateSubticket(index, { researchFindings: value }), "One finding per line")}
                       {renderPlanListField("Requirements", subticket.requirements, (value) => updateSubticket(index, { requirements: value }), "One requirement per line")}
                       {renderPlanListField(
                         "Implementation Plan",
@@ -1334,14 +1343,16 @@ ${idea.trim() || "No additional details provided."}
                         (value) => updateSubticket(index, { implementationPlan: value }),
                         "One implementation step per line"
                       )}
+                      {renderPlanListField("Test Plan", subticket.testPlan, (value) => updateSubticket(index, { testPlan: value }), "One test command or scenario per line")}
                       {renderPlanListField(
                         "Acceptance Criteria",
                         subticket.acceptanceCriteria,
                         (value) => updateSubticket(index, { acceptanceCriteria: value }),
                         "One acceptance criterion per line"
                       )}
+                      {renderPlanListField("Assumptions", subticket.assumptions, (value) => updateSubticket(index, { assumptions: value }), "One assumption per line")}
                       {renderPlanListField(
-                        "Clarification Questions",
+                        "Open Questions",
                         subticket.clarificationQuestions,
                         (value) => updateSubticket(index, { clarificationQuestions: value }),
                         "One question per line"
@@ -1413,6 +1424,7 @@ function TicketDetail({
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
   const [submittingAnswerId, setSubmittingAnswerId] = useState<string | null>(null);
   const [persistedEvents, setPersistedEvents] = useState<RendererRunEvent[]>([]);
+  const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -1461,6 +1473,7 @@ function TicketDetail({
       setTicket(null);
       setClarifications([]);
       setPersistedEvents([]);
+      setRunSummary(null);
       setBlockedByIds([]);
       setDetailError(message);
       setToast({ kind: "error", message });
@@ -1481,6 +1494,7 @@ function TicketDetail({
     setTicketUpdateCancelling(false);
     setTicketUpdateLogViewerOpen(false);
     setRunPreflight(null);
+    setRunSummary(null);
     setAddTicketsOpen(false);
     setBlockerPanelOpen(false);
     setNewSubticketTitle("");
@@ -1510,6 +1524,7 @@ function TicketDetail({
     let cancelled = false;
     if (!runId) {
       setPersistedEvents([]);
+      setRunSummary(null);
       setLogError(null);
       setLogLoading(false);
       return undefined;
@@ -1517,14 +1532,20 @@ function TicketDetail({
 
     setLogLoading(true);
     setLogError(null);
-    void getRelayApi().codex
-      .readRunEvents(projectPath, ticketId, runId)
-      .then((runEvents) => {
-        if (!cancelled) setPersistedEvents(runEvents);
+    void Promise.all([
+      getRelayApi().codex.readRunEvents(projectPath, ticketId, runId),
+      getRelayApi().codex.readLatestRunSummary(projectPath, ticketId)
+    ])
+      .then(([runEvents, summary]) => {
+        if (!cancelled) {
+          setPersistedEvents(runEvents);
+          setRunSummary(summary);
+        }
       })
       .catch((error) => {
         if (!cancelled) {
           setPersistedEvents([]);
+          setRunSummary(null);
           setLogError(error instanceof Error ? error.message : "Unknown error");
         }
       })
@@ -1535,7 +1556,7 @@ function TicketDetail({
     return () => {
       cancelled = true;
     };
-  }, [projectPath, runId, ticketId]);
+  }, [projectPath, runId, ticket?.frontMatter.runStatus, ticketId]);
 
   const currentRunEvents = useMemo(() => {
     const liveRunEvents = runId ? events.filter((event) => event.runId === runId) : [];
@@ -2012,7 +2033,7 @@ function TicketDetail({
               Start Fresh Thread
             </button>
           )}
-          {runId && ticket.frontMatter.runStatus === "running" && (
+          {runId && (ticket.frontMatter.runStatus === "running" || draftInProgress) && (
             <button onClick={cancelRun}>
               <X size={16} />
               Stop
@@ -2430,6 +2451,7 @@ function TicketDetail({
           events={currentRunEvents}
           status={ticket.frontMatter.runStatus}
           runId={runId}
+          runSummary={runSummary}
           logLoading={logLoading}
           logError={logError}
           onOpenLogs={() => setLogViewerOpen(true)}
