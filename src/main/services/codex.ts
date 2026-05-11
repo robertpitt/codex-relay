@@ -7,6 +7,9 @@ import { promisify } from "node:util";
 import { Codex, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
 import { ZodError } from "zod";
 import {
+  type AgentTicketUpdate,
+  type AgentTicketUpdateInput,
+  type AgentTicketUpdateStartResult,
   type ClarificationQuestion,
   type CodexStatus,
   type CreateDraftInput,
@@ -22,7 +25,7 @@ import {
   type TicketDraftErrorPayload
 } from "../../shared/types";
 import { extractClarificationRequest } from "./clarificationParser";
-import { ticketDraftSchema } from "./schemas";
+import { agentTicketUpdateSchema, ticketDraftSchema } from "./schemas";
 import { logError, logInfo, logWarn } from "./logger";
 import {
   appendCodexHandoff,
@@ -49,6 +52,8 @@ type ActiveRun = {
 };
 
 const activeRuns = new Map<string, ActiveRun>();
+const activeTicketUpdateRuns = new Map<string, ActiveRun>();
+const activeTicketUpdateRunsByTicket = new Map<string, string>();
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -74,6 +79,17 @@ export type CodexRunDependencies = {
   createRunId?: () => string;
 };
 
+type TicketUpdateThread = Pick<Thread, "id" | "runStreamed">;
+
+type TicketUpdateCodex = {
+  startThread: (options: ThreadOptions) => TicketUpdateThread;
+};
+
+export type TicketUpdateDependencies = {
+  createCodexClient?: () => TicketUpdateCodex;
+  createRunId?: () => string;
+};
+
 const threadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => {
   const config = await readProjectConfig(projectPath);
   const git = await isGitRepository(projectPath);
@@ -87,6 +103,14 @@ const threadOptionsForProject = async (projectPath: string): Promise<ThreadOptio
     webSearchMode: "disabled"
   };
 };
+
+const ticketUpdateThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => ({
+  ...(await threadOptionsForProject(projectPath)),
+  approvalPolicy: "never",
+  sandboxMode: "read-only",
+  networkAccessEnabled: false,
+  webSearchMode: "disabled"
+});
 
 const ticketDraftSchemaJson = {
   type: "object",
@@ -114,6 +138,19 @@ const ticketDraftSchemaJson = {
     acceptanceCriteria: { type: "array", items: { type: "string" } },
     clarificationQuestions: { type: "array", items: { type: "string" } },
     implementationNotes: { type: "array", items: { type: "string" } }
+  }
+} as const;
+
+const agentTicketUpdateSchemaJson = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "priority", "labels", "markdown", "clarificationQuestions"],
+  properties: {
+    title: { type: "string" },
+    priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+    labels: { type: "array", items: { type: "string" } },
+    markdown: { type: "string" },
+    clarificationQuestions: { type: "array", items: { type: "string" } }
   }
 } as const;
 
@@ -1264,6 +1301,248 @@ const formatClarificationsForPrompt = (clarifications: ClarificationQuestion[]):
       return `- [${status}] ${question.question}${answer}`;
     })
     .join("\n");
+};
+
+const ticketUpdateRunKey = (projectPath: string, ticketId: string): string => `${path.resolve(projectPath)}:${ticketId}`;
+
+const parseAgentTicketUpdate = (value: string): AgentTicketUpdate => {
+  const parsed = agentTicketUpdateSchema.parse(parseJsonResponse(value)) as AgentTicketUpdate;
+  const title = normalizeWhitespace(parsed.title);
+  const markdown = parsed.markdown.trimStart();
+  if (!title) throw new Error("Agent ticket update must include a title.");
+  if (!markdown.trim()) throw new Error("Agent ticket update must include markdown content.");
+  if (/^---\s*(?:\r?\n|$)/.test(markdown)) {
+    throw new Error("Agent ticket update markdown must not include YAML front matter.");
+  }
+
+  const labels = [...new Set(parsed.labels.map((label) => normalizeWhitespace(label)).filter(Boolean))];
+  const clarificationQuestions = parsed.clarificationQuestions.map((question) => normalizeWhitespace(question)).filter(Boolean);
+  return {
+    title,
+    priority: parsed.priority,
+    labels,
+    markdown,
+    clarificationQuestions
+  };
+};
+
+const buildTicketUpdatePrompt = (
+  ticket: Awaited<ReturnType<typeof readTicket>>,
+  clarifications: ClarificationQuestion[],
+  request: string,
+  projectName: string
+): string => `You are helping update one Relay ticket.
+
+Update the ticket content only. Do not implement the ticket. Do not modify files. Do not move the ticket to another column. Do not change run history or Codex execution metadata.
+
+Return only structured JSON matching the requested schema:
+- title: full updated ticket title.
+- priority: one of low, medium, high, urgent.
+- labels: complete updated label list.
+- markdown: complete updated ticket markdown body, without YAML front matter.
+- clarificationQuestions: new user-answerable clarification questions to store as formal Relay clarification records. Use an empty array when no new formal clarification records are needed.
+
+The markdown field must be the full replacement body for the ticket. Preserve useful existing sections unless the user's request asks for a rewrite. Keep existing implementation handoff/history content when it is present.
+
+Project: ${projectName}
+Ticket front matter, for context only:
+${JSON.stringify(ticket.frontMatter, null, 2)}
+
+Clarification records already attached to this ticket:
+${formatClarificationsForPrompt(clarifications)}
+
+Current ticket markdown:
+${ticket.markdown}
+
+User change request:
+${request}`;
+
+export const startTicketUpdateRun = async (
+  browserWindow: BrowserWindow,
+  input: AgentTicketUpdateInput,
+  dependencies: TicketUpdateDependencies = {}
+): Promise<AgentTicketUpdateStartResult> => {
+  const projectPath = path.resolve(input.projectPath);
+  const ticketId = input.ticketId;
+  const request = input.request.trim();
+  if (!request) throw new Error("Enter a ticket update request before starting the agent.");
+
+  const updateKey = ticketUpdateRunKey(projectPath, ticketId);
+  if (activeTicketUpdateRunsByTicket.has(updateKey)) {
+    throw new Error("A ticket update agent is already running for this ticket.");
+  }
+
+  await logInfo("codex:ticket-update", "starting ticket update run", { projectPath, ticketId, requestLength: request.length });
+  const config = await readProjectConfig(projectPath);
+  const ticket = await readTicket(projectPath, ticketId);
+  const clarifications = await readClarificationQuestions(projectPath, ticketId);
+  const runId = dependencies.createRunId?.() ?? newId("run");
+  const codex = dependencies.createCodexClient?.() ?? createCodex();
+  const thread = codex.startThread(await ticketUpdateThreadOptionsForProject(projectPath));
+  const abortController = new AbortController();
+  let currentThreadId = thread.id ?? `pending_${runId}`;
+  const outputOffsets = new Map<string, number>();
+  const prompt = buildTicketUpdatePrompt(ticket, clarifications, request, config.name);
+
+  activeTicketUpdateRuns.set(runId, { abortController, ticketId, projectPath });
+  activeTicketUpdateRunsByTicket.set(updateKey, runId);
+
+  let streamed: Awaited<ReturnType<TicketUpdateThread["runStreamed"]>>;
+  try {
+    streamed = await thread.runStreamed(prompt, { outputSchema: agentTicketUpdateSchemaJson, signal: abortController.signal });
+  } catch (error) {
+    activeTicketUpdateRuns.delete(runId);
+    activeTicketUpdateRunsByTicket.delete(updateKey);
+    throw error;
+  }
+
+  return new Promise<AgentTicketUpdateStartResult>((resolve) => {
+    let started = false;
+    const resolveStarted = (): void => {
+      if (!started) {
+        started = true;
+        resolve({ runId, threadId: currentThreadId });
+      }
+    };
+
+    const emitStarted = async (): Promise<void> => {
+      if (started) return;
+      await emitRunEvent(browserWindow, projectPath, ticketId, runId, currentThreadId, {
+        type: "run.started",
+        runId,
+        threadId: currentThreadId,
+        timestamp: nowIso()
+      });
+      resolveStarted();
+    };
+
+    const emitFailure = async (message: string): Promise<void> => {
+      await emitStarted();
+      await emitRunEvent(browserWindow, projectPath, ticketId, runId, currentThreadId, {
+        type: "run.failed",
+        message,
+        timestamp: nowIso()
+      });
+    };
+
+    void (async () => {
+      let finalResponse = "";
+      try {
+        for await (const event of streamed.events) {
+          if (event.type === "thread.started") {
+            currentThreadId = event.thread_id;
+            await emitStarted();
+            continue;
+          }
+
+          await emitStarted();
+
+          if (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed") {
+            const text = finalTextFromItem(event.item);
+            if (event.item.type === "agent_message" && text) finalResponse = text;
+            const normalized = normalizeItemEvent(event, outputOffsets);
+            for (const relayEvent of normalized) {
+              await emitRunEvent(browserWindow, projectPath, ticketId, runId, currentThreadId, relayEvent);
+            }
+            continue;
+          }
+
+          if (event.type === "turn.failed" || event.type === "error") {
+            const message = event.type === "turn.failed" ? event.error.message : event.message;
+            await emitFailure(message);
+            return;
+          }
+
+          if (event.type === "turn.completed") {
+            let update: AgentTicketUpdate;
+            try {
+              update = parseAgentTicketUpdate(finalResponse);
+            } catch (error) {
+              await emitFailure(`Agent ticket update was invalid and was not applied: ${errorMessage(error, "Invalid ticket update.")}`);
+              await logWarn("codex:ticket-update", "ticket update output rejected", {
+                projectPath,
+                ticketId,
+                runId,
+                threadId: currentThreadId,
+                error: errorMessage(error, "Invalid ticket update.")
+              });
+              return;
+            }
+
+            try {
+              const latest = await readTicket(projectPath, ticketId);
+              await writeTicket(projectPath, {
+                ...latest,
+                markdown: update.markdown,
+                frontMatter: {
+                  ...latest.frontMatter,
+                  title: update.title,
+                  priority: update.priority,
+                  labels: update.labels
+                }
+              });
+
+              if (update.clarificationQuestions.length > 0) {
+                await createClarificationQuestions(
+                  projectPath,
+                  ticketId,
+                  update.clarificationQuestions.map((question) => ({ question })),
+                  {
+                    actor: "codex",
+                    source: "manual_ticket_edit",
+                    runId,
+                    codexThreadId: currentThreadId
+                  }
+                );
+              }
+
+              await emitRunEvent(browserWindow, projectPath, ticketId, runId, currentThreadId, {
+                type: "run.completed",
+                finalResponse: `Ticket updated with ${update.clarificationQuestions.length} new clarification question${
+                  update.clarificationQuestions.length === 1 ? "" : "s"
+                }.`,
+                usage: event.usage,
+                timestamp: nowIso()
+              });
+              await logInfo("codex:ticket-update", "ticket update run completed", {
+                projectPath,
+                ticketId,
+                runId,
+                threadId: currentThreadId,
+                clarificationQuestionCount: update.clarificationQuestions.length
+              });
+            } catch (error) {
+              await emitFailure(`Ticket update could not be persisted: ${errorMessage(error, "Persistence failed.")}`);
+              await logError("codex:ticket-update", "ticket update persistence failed", error, {
+                projectPath,
+                ticketId,
+                runId,
+                threadId: currentThreadId
+              });
+            }
+            return;
+          }
+        }
+      } catch (error) {
+        const message = abortController.signal.aborted ? "Ticket update was cancelled." : errorMessage(error, "Ticket update failed.");
+        await emitFailure(message);
+        if (abortController.signal.aborted) {
+          await logWarn("codex:ticket-update", "ticket update run cancelled", { projectPath, ticketId, runId, threadId: currentThreadId });
+        } else {
+          await logError("codex:ticket-update", "ticket update run failed", error, { projectPath, ticketId, runId, threadId: currentThreadId });
+        }
+      } finally {
+        activeTicketUpdateRuns.delete(runId);
+        activeTicketUpdateRunsByTicket.delete(updateKey);
+      }
+    })();
+  });
+};
+
+export const cancelTicketUpdateRun = async (runId: string): Promise<void> => {
+  const run = activeTicketUpdateRuns.get(runId);
+  if (!run) return;
+  run.abortController.abort();
 };
 
 const buildExecutionPrompt = (ticketMarkdown: string, clarifications: ClarificationQuestion[]): string => `You are working inside the local project folder for this Relay ticket.

@@ -1729,6 +1729,58 @@ kbd {
   justify-self: end;
 }
 
+.ticket-update-panel {
+  margin-top: var(--relay-space-4);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--relay-radius-md);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 4%), transparent),
+    var(--relay-surface);
+  padding: var(--relay-space-3);
+  display: grid;
+  gap: var(--relay-space-3);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 5%);
+}
+
+.ticket-update-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--relay-space-3);
+}
+
+.ticket-update-panel h3 {
+  margin: 0;
+  font-size: var(--relay-text-base);
+  font-weight: 560;
+}
+
+.ticket-update-input {
+  min-height: 92px;
+}
+
+.ticket-update-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--relay-space-2);
+  flex-wrap: wrap;
+}
+
+.ticket-update-error {
+  border: 0;
+  border-radius: var(--relay-radius-md);
+  background: var(--relay-danger-muted);
+  color: var(--relay-danger-text);
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: var(--relay-space-2);
+  font-size: var(--relay-text-md);
+}
+
 .detail-markdown {
   min-height: 360px;
 }
@@ -2344,6 +2396,7 @@ kbd {
   .topbar-actions,
   .modal-footer,
   .detail-actions,
+  .ticket-update-actions,
   .agent-panel-actions,
   .danger-row {
     display: grid;
@@ -2353,6 +2406,7 @@ kbd {
   .topbar-actions button,
   .modal-footer button,
   .detail-actions button,
+  .ticket-update-actions button,
   .agent-panel-actions button,
   .danger-row button {
     width: 100%;

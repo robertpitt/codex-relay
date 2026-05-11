@@ -145,6 +145,16 @@ export const ticketDraftSchema = z.object({
   })
 });
 
+export const agentTicketUpdateSchema = z
+  .object({
+    title: z.string().min(1),
+    priority: z.enum(["low", "medium", "high", "urgent"]),
+    labels: z.array(z.string()).default([]),
+    markdown: z.string().min(1),
+    clarificationQuestions: z.array(z.string()).default([])
+  })
+  .strict();
+
 export const clarificationQuestionSchema = z
   .object({
     id: z.string().min(1),

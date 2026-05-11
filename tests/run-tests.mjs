@@ -17,7 +17,8 @@ const entryPoints = [
   path.join(testsDir, "markdown-block.test.tsx"),
   path.join(testsDir, "project-sidebar.test.tsx"),
   path.join(testsDir, "ticket-references.test.ts"),
-  path.join(testsDir, "ticket-draft.test.ts")
+  path.join(testsDir, "ticket-draft.test.ts"),
+  path.join(testsDir, "ticket-update.test.ts")
 ];
 const electronShimPlugin = {
   name: "electron-shim",

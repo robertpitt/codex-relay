@@ -211,6 +211,25 @@ export type TicketDraftResult =
       error: TicketDraftErrorPayload;
     };
 
+export type AgentTicketUpdate = {
+  title: string;
+  priority: TicketPriority;
+  labels: string[];
+  markdown: string;
+  clarificationQuestions: string[];
+};
+
+export type AgentTicketUpdateInput = {
+  projectPath: string;
+  ticketId: string;
+  request: string;
+};
+
+export type AgentTicketUpdateStartResult = {
+  runId: string;
+  threadId: string;
+};
+
 export type TicketCreateInput = {
   title: string;
   priority: TicketPriority;
@@ -359,6 +378,8 @@ export type RelayApi = {
   ticket: {
     createDraft: (input: CreateDraftInput) => Promise<TicketDraftResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
+    startAgentUpdate: (input: AgentTicketUpdateInput) => Promise<AgentTicketUpdateStartResult>;
+    cancelAgentUpdate: (runId: string) => Promise<void>;
     references: (projectPath: string) => Promise<TicketReferenceCandidate[]>;
     read: (projectPath: string, ticketId: string) => Promise<TicketRecord>;
     save: (input: TicketSaveInput) => Promise<TicketRecord>;

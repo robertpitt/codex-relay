@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01kra3y7psvjh476nz7z4jwfed",
+  "questions": [
+    {
+      "id": "clar_01krbg0ktx6zry20ngnctwz0ey",
+      "ticketId": "tkt_01kra3y7psvjh476nz7z4jwfed",
+      "question": "Should Relay store workflow content in `.relay/workflow.md`, in the Relay settings file, or support both with a documented precedence order?",
+      "answerType": "text",
+      "answer": "no, lets just keep a single .relay/workflow.md file",
+      "createdAt": "2026-05-11T12:25:56.829Z",
+      "updatedAt": "2026-05-11T12:26:33.789Z",
+      "answeredAt": "2026-05-11T12:26:33.789Z",
+      "createdBy": "codex",
+      "source": "manual_ticket_edit",
+      "runId": "run_01krbfzjewhy83vmrzzbbw8gpa",
+      "codexThreadId": "019e16ff-ca29-79b1-9958-52fd6bab5742"
+    },
+    {
+      "id": "clar_01krbg0ktx4hy3naccgvgrck9q",
+      "ticketId": "tkt_01kra3y7psvjh476nz7z4jwfed",
+      "question": "If settings-file workflow support is required, should the settings contain the workflow body directly or a path/reference to the workflow document?",
+      "answerType": "text",
+      "answer": "settings not required, ignore this",
+      "createdAt": "2026-05-11T12:25:56.829Z",
+      "updatedAt": "2026-05-11T12:26:17.050Z",
+      "answeredAt": "2026-05-11T12:26:17.050Z",
+      "createdBy": "codex",
+      "source": "manual_ticket_edit",
+      "runId": "run_01krbfzjewhy83vmrzzbbw8gpa",
+      "codexThreadId": "019e16ff-ca29-79b1-9958-52fd6bab5742"
+    },
+    {
+      "id": "clar_01krbg37f28cm3mbwqb7k3q7rk",
+      "ticketId": "tkt_01kra3y7psvjh476nz7z4jwfed",
+      "question": "Should the Relay workflow definition be treated as required project metadata, optional documentation, or an experimental convention?",
+      "answerType": "text",
+      "answer": null,
+      "createdAt": "2026-05-11T12:27:22.466Z",
+      "updatedAt": "2026-05-11T12:27:22.466Z",
+      "answeredAt": null,
+      "createdBy": "codex",
+      "source": "manual_ticket_edit",
+      "runId": "run_01krbg2b8rvvex4pp4dmpnwn5r",
+      "codexThreadId": "019e1701-2d71-7582-9776-9b09d637c6c9"
+    }
+  ]
+}

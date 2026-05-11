@@ -11,6 +11,7 @@ import type {
   TicketSaveInput
 } from "../shared/types";
 import {
+  cancelTicketUpdateRun,
   createTicketDraft,
   getCodexStatus,
   startCodexRun,
@@ -18,6 +19,7 @@ import {
   cancelCodexRun,
   approveCodexAction,
   readCodexRunEvents,
+  startTicketUpdateRun,
   ticketDraftErrorToPayload
 } from "./services/codex";
 import { readCachedGitMetadata } from "./services/git";
@@ -167,6 +169,13 @@ const registerIpc = (): void => {
   ipcMain.handle("ticket:createManual", async (_event, projectPath: string, input: TicketCreateInput) =>
     createTicket(projectPath, input)
   );
+
+  ipcMain.handle("ticket:startAgentUpdate", async (_event, input) => {
+    if (!mainWindow) throw new Error("Relay window is not ready.");
+    return startTicketUpdateRun(mainWindow, input);
+  });
+
+  ipcMain.handle("ticket:cancelAgentUpdate", async (_event, runId: string) => cancelTicketUpdateRun(runId));
 
   ipcMain.handle("ticket:references", async (_event, projectPath: string) => listTicketReferenceCandidates(projectPath));
 

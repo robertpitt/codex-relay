@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Send,
   Trash2,
   X
 } from "lucide-react";
@@ -41,7 +42,7 @@ import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "./comp
 import { ClarificationPanel } from "./components/ClarificationPanel";
 import { GitMetadataPill, loadingGitMetadata } from "./components/GitMetadata";
 import { MarkdownBlock } from "./components/MarkdownBlock";
-import { mergeRunEvents } from "./lib/agentProgress";
+import { isAgentSessionActive, mergeRunEvents } from "./lib/agentProgress";
 import {
   createTicketShortcutLabel,
   isCreateTicketShortcut,
@@ -999,6 +1000,14 @@ function TicketDetail({
   const [logError, setLogError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
+  const [ticketUpdateRequest, setTicketUpdateRequest] = useState("");
+  const [ticketUpdateRunId, setTicketUpdateRunId] = useState<string | null>(null);
+  const [ticketUpdateStatus, setTicketUpdateStatus] = useState<RunStatus>("idle");
+  const [ticketUpdateStartedAt, setTicketUpdateStartedAt] = useState<string | null>(null);
+  const [ticketUpdateEndedAt, setTicketUpdateEndedAt] = useState<string | null>(null);
+  const [ticketUpdateError, setTicketUpdateError] = useState<string | null>(null);
+  const [ticketUpdateCancelling, setTicketUpdateCancelling] = useState(false);
+  const [ticketUpdateLogViewerOpen, setTicketUpdateLogViewerOpen] = useState(false);
 
   const load = useCallback(async () => {
     setDetailError(null);
@@ -1031,6 +1040,17 @@ function TicketDetail({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setTicketUpdateRequest("");
+    setTicketUpdateRunId(null);
+    setTicketUpdateStatus("idle");
+    setTicketUpdateStartedAt(null);
+    setTicketUpdateEndedAt(null);
+    setTicketUpdateError(null);
+    setTicketUpdateCancelling(false);
+    setTicketUpdateLogViewerOpen(false);
+  }, [projectPath, ticketId]);
 
   useEffect(() => {
     if (events.some((event) => event.type === "clarification.requested")) void load();
@@ -1068,14 +1088,53 @@ function TicketDetail({
   }, [projectPath, runId, ticketId]);
 
   const currentRunEvents = useMemo(() => {
-    const liveRunEvents = runId ? events.filter((event) => event.runId === runId) : events;
+    const liveRunEvents = runId ? events.filter((event) => event.runId === runId) : [];
     return mergeRunEvents(persistedEvents, liveRunEvents);
   }, [events, persistedEvents, runId]);
+  const ticketUpdateEvents = useMemo(
+    () => (ticketUpdateRunId ? events.filter((event) => event.runId === ticketUpdateRunId) : []),
+    [events, ticketUpdateRunId]
+  );
+  const ticketUpdateActive = isAgentSessionActive(ticketUpdateStatus) || ticketUpdateCancelling;
+
+  useEffect(() => {
+    if (!ticketUpdateRunId || ticketUpdateEndedAt) return;
+    const terminalEvent = [...ticketUpdateEvents]
+      .reverse()
+      .find((event) => event.type === "run.completed" || event.type === "run.failed");
+    if (!terminalEvent) return;
+
+    setTicketUpdateEndedAt(terminalEvent.timestamp);
+    setTicketUpdateCancelling(false);
+    if (terminalEvent.type === "run.completed") {
+      setTicketUpdateStatus("completed");
+      setTicketUpdateError(null);
+      setTicketUpdateRequest("");
+      setToast({ kind: "success", message: "Ticket updated by agent." });
+      onChanged();
+      void load();
+      return;
+    }
+
+    if (ticketUpdateStatus === "cancelled" || /cancelled/i.test(terminalEvent.message)) {
+      setTicketUpdateStatus("cancelled");
+      setTicketUpdateError(null);
+      setToast({ kind: "info", message: "Ticket update cancelled." });
+      return;
+    }
+
+    setTicketUpdateStatus("failed");
+    setTicketUpdateError(terminalEvent.message || "Ticket update failed.");
+    setToast({ kind: "error", message: terminalEvent.message || "Ticket update failed." });
+  }, [load, onChanged, setToast, ticketUpdateEndedAt, ticketUpdateEvents, ticketUpdateRunId, ticketUpdateStatus]);
+
   const hasUnsavedChanges = useMemo(() => {
-    if (!ticket) return Boolean(busy || submittingAnswerId);
+    if (!ticket) return Boolean(busy || submittingAnswerId || ticketUpdateActive || ticketUpdateRequest.trim());
     return (
       busy ||
       Boolean(submittingAnswerId) ||
+      ticketUpdateActive ||
+      ticketUpdateRequest.trim().length > 0 ||
       title !== ticket.frontMatter.title ||
       priority !== ticket.frontMatter.priority ||
       status !== ticket.frontMatter.status ||
@@ -1083,7 +1142,7 @@ function TicketDetail({
       markdown !== ticket.markdown ||
       Object.values(answerDrafts).some((answer) => answer.trim().length > 0)
     );
-  }, [answerDrafts, busy, labels, markdown, priority, status, submittingAnswerId, ticket, title]);
+  }, [answerDrafts, busy, labels, markdown, priority, status, submittingAnswerId, ticket, ticketUpdateActive, ticketUpdateRequest, title]);
 
   useShortcutOverlay({
     id: `ticket-detail:${ticketId}`,
@@ -1124,6 +1183,48 @@ function TicketDetail({
       await load();
     } finally {
       setBusy(false);
+    }
+  };
+
+  const startTicketUpdate = async (): Promise<void> => {
+    if (!ticket || ticketUpdateActive) return;
+    const request = ticketUpdateRequest.trim();
+    if (!request) {
+      setTicketUpdateError("Enter a change request before starting the ticket update agent.");
+      return;
+    }
+
+    const startedAt = new Date().toISOString();
+    setTicketUpdateStatus("running");
+    setTicketUpdateStartedAt(startedAt);
+    setTicketUpdateEndedAt(null);
+    setTicketUpdateError(null);
+    setTicketUpdateCancelling(false);
+    try {
+      const result = await window.relay.ticket.startAgentUpdate({ projectPath, ticketId, request });
+      setTicketUpdateRunId(result.runId);
+      setToast({ kind: "info", message: `Ticket update agent started: ${result.runId}` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ticket update agent failed to start.";
+      setTicketUpdateStatus("failed");
+      setTicketUpdateEndedAt(new Date().toISOString());
+      setTicketUpdateError(message);
+      setToast({ kind: "error", message });
+    }
+  };
+
+  const cancelTicketUpdate = async (): Promise<void> => {
+    if (!ticketUpdateRunId || !ticketUpdateActive) return;
+    setTicketUpdateStatus("cancelled");
+    setTicketUpdateCancelling(true);
+    try {
+      await window.relay.ticket.cancelAgentUpdate(ticketUpdateRunId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to cancel ticket update.";
+      setTicketUpdateStatus("running");
+      setTicketUpdateCancelling(false);
+      setTicketUpdateError(message);
+      setToast({ kind: "error", message });
     }
   };
 
@@ -1233,7 +1334,7 @@ function TicketDetail({
         </header>
 
         <div className="detail-actions">
-          <button className="primary-button" onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))} disabled={busy}>
+          <button className="primary-button" onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))} disabled={busy || ticketUpdateActive}>
             {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
             {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
           </button>
@@ -1243,7 +1344,7 @@ function TicketDetail({
               Stop
             </button>
           )}
-          <button onClick={save} disabled={busy}>
+          <button onClick={save} disabled={busy || ticketUpdateActive}>
             <Save size={16} />
             Save
           </button>
@@ -1256,6 +1357,61 @@ function TicketDetail({
           onDraftChange={(questionId, answer) => setAnswerDrafts((current) => ({ ...current, [questionId]: answer }))}
           onSubmit={(questionId) => void submitClarificationAnswer(questionId)}
         />
+
+        <section className="ticket-update-panel">
+          <header>
+            <h3>Agent Ticket Update</h3>
+            <span className={clsx("run-pill", ticketUpdateStatus)}>{runLabel(ticketUpdateStatus)}</span>
+          </header>
+          <label className="field">
+            <span>Change Request</span>
+            <textarea
+              className="ticket-update-input"
+              value={ticketUpdateRequest}
+              placeholder="Add acceptance criteria, revise requirements, capture new context..."
+              disabled={ticketUpdateActive}
+              onChange={(event) => {
+                setTicketUpdateRequest(event.target.value);
+                if (ticketUpdateError) setTicketUpdateError(null);
+              }}
+            />
+          </label>
+          <div className="ticket-update-actions">
+            <button
+              className="primary-button"
+              onClick={() => void startTicketUpdate()}
+              disabled={ticketUpdateActive || ticketUpdateRequest.trim().length === 0}
+            >
+              {ticketUpdateActive ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+              Update Ticket
+            </button>
+            {ticketUpdateActive && ticketUpdateRunId && (
+              <button onClick={() => void cancelTicketUpdate()} disabled={ticketUpdateCancelling}>
+                {ticketUpdateCancelling ? <Loader2 className="spin" size={16} /> : <X size={16} />}
+                Stop
+              </button>
+            )}
+            <button onClick={() => setTicketUpdateLogViewerOpen(true)} disabled={!ticketUpdateRunId && ticketUpdateEvents.length === 0}>
+              <CircleDashed size={16} />
+              Logs
+            </button>
+          </div>
+          {ticketUpdateError && (
+            <div className="ticket-update-error" role="alert">
+              <AlertTriangle size={16} />
+              <span>{ticketUpdateError}</span>
+            </div>
+          )}
+          {(ticketUpdateRunId || ticketUpdateStatus !== "idle") && (
+            <AgentProgressSummary
+              events={ticketUpdateEvents}
+              status={ticketUpdateStatus}
+              startedAt={ticketUpdateStartedAt}
+              endedAt={ticketUpdateEndedAt}
+              metricsAvailable={ticketUpdateEvents.length > 0}
+            />
+          )}
+        </section>
 
         <div className="editor-stack">
           <label className="field">
@@ -1327,6 +1483,17 @@ function TicketDetail({
           loading={logLoading}
           error={logError}
           onClose={() => setLogViewerOpen(false)}
+          onCopied={(kind) => setToast(copyToast(kind))}
+          onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
+        />
+      )}
+      {ticketUpdateLogViewerOpen && (
+        <AgentLogViewer
+          title={`${ticket.frontMatter.title} Ticket Update Logs`}
+          events={ticketUpdateEvents}
+          loading={false}
+          error={null}
+          onClose={() => setTicketUpdateLogViewerOpen(false)}
           onCopied={(kind) => setToast(copyToast(kind))}
           onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
         />

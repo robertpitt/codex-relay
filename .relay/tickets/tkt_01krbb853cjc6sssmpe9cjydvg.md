@@ -2,8 +2,8 @@
 schemaVersion: 1
 id: tkt_01krbb853cjc6sssmpe9cjydvg
 title: Add Agent-Assisted Ticket Update Input
-status: todo
-position: 10000
+status: completed
+position: 21000
 priority: medium
 labels:
   - feature
@@ -11,10 +11,10 @@ labels:
   - tickets
   - renderer
 createdAt: '2026-05-11T11:02:41.004Z'
-updatedAt: '2026-05-11T11:02:41.004Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T12:24:10.964Z'
+codexThreadId: 019e16f4-6e9e-7f83-b86e-88e675a53e92
+runStatus: completed
+lastRunId: run_01krbf8vgjbpt6qha1nb2feht5
 ---
 # Add Agent-Assisted Ticket Update Input
 
@@ -87,5 +87,37 @@ When a user is viewing a Relay ticket, they should be able to enter a short chan
 - File inspected: README.md - Matched terms: want, implement, able, type, input, changes, agent; characters read: 8905
 
 ## Codex Handoff
+
+### 5/11/2026, 1:24:10 PM
+
+**Summary**
+Implemented agent-assisted ticket updates from the ticket detail panel. The new workflow runs Codex in read-only mode, asks for a strict structured ticket update, validates it, applies only allowed fields, persists through existing `.relay` ticket storage, and leaves implementation-run metadata alone. The UI now shows update progress/logs, prevents duplicate active submissions, supports cancellation, clears the request on success, and shows recoverable errors on failure or invalid output.
+
+**Files Changed**
+- [src/shared/types.ts](/Users/robertpitt/Projects/relay/src/shared/types.ts)
+- [src/main/services/schemas.ts](/Users/robertpitt/Projects/relay/src/main/services/schemas.ts)
+- [src/main/services/codex.ts](/Users/robertpitt/Projects/relay/src/main/services/codex.ts)
+- [src/main/index.ts](/Users/robertpitt/Projects/relay/src/main/index.ts)
+- [src/preload/index.ts](/Users/robertpitt/Projects/relay/src/preload/index.ts)
+- [src/renderer/src/App.tsx](/Users/robertpitt/Projects/relay/src/renderer/src/App.tsx)
+- [src/renderer/src/styles.css](/Users/robertpitt/Projects/relay/src/renderer/src/styles.css)
+- [tests/ticket-update.test.ts](/Users/robertpitt/Projects/relay/tests/ticket-update.test.ts)
+- [tests/run-tests.mjs](/Users/robertpitt/Projects/relay/tests/run-tests.mjs)
+
+Pre-existing `.relay/` worktree changes were present before I started and were left alone.
+
+**Commands Run**
+- Code inspection: `find`, `grep`, `sed`, `git status --short`, `git diff`
+- Verification: `npm run typecheck`, `npm test`, `npm run build`
+- Cleanup checks: `git diff --check`, `git status --short`
+
+**Tests Run**
+- `npm run typecheck`: passed
+- `npm test`: passed, 45/45 tests
+- `npm run build`: passed, Electron/Vite production bundles built
+
+**Remaining Risks**
+I did not run a live interactive Electron/Codex update against a real Codex session; the workflow is covered with mocked Codex stream tests plus typecheck and production build verification.
+
 
 No Codex run has been started.
