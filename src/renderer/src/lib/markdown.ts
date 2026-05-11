@@ -3,6 +3,27 @@ import type { TicketDraft } from "@shared/types";
 const list = (items: string[]): string =>
   items.length > 0 ? items.map((item) => `- ${item.replace(/\s+/g, " ").trim()}`).join("\n") : "- None.";
 
+const cleanMarkdownText = (value: string): string =>
+  value
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+.*$/gm, " ")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/[>*_~|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const truncatePreviewText = (value: string, maxLength: number): string => {
+  if (value.length <= maxLength) return value;
+  const truncated = value.slice(0, maxLength + 1);
+  const wordBoundary = truncated.lastIndexOf(" ");
+  const cutoff = wordBoundary >= Math.floor(maxLength * 0.65) ? wordBoundary : maxLength;
+  return `${value.slice(0, cutoff).trim().replace(/[.,;:!?-]+$/, "")}...`;
+};
+
 const researchMetadata = (draft: TicketDraft): string => {
   if (
     draft.research.checkedUrls.length === 0 &&
@@ -63,28 +84,11 @@ ${researchMetadata(draft)}
 No Codex run has been started.
 `;
 
-export const emptyTicketMarkdown = (title: string): string => `# ${title}
+export const ticketDraftDialogSubtext = (draft: TicketDraft, maxLength = 150): string => {
+  const summary = cleanMarkdownText((draft as TicketDraft & { summary?: string | null }).summary ?? "");
+  if (summary.length > 0) return summary;
 
-## Context
-
-
-## Requirements
-
-- 
-
-## Acceptance Criteria
-
-- 
-
-## Clarification Questions
-
-- None.
-
-## Implementation Notes
-
-- 
-
-## Codex Handoff
-
-No Codex run has been started.
-`;
+  const bodyMarkdown = markdownFromDraft(draft).replace(/^# .*\n+/, "");
+  const bodyText = cleanMarkdownText(bodyMarkdown);
+  return truncatePreviewText(bodyText, maxLength);
+};

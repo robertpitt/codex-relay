@@ -2,8 +2,8 @@
 schemaVersion: 1
 id: tkt_01krbfxjdbf3r1yevxspkjwjad
 title: Simplify create ticket modal to agent-generated drafts only
-status: todo
-position: 12000
+status: completed
+position: 22000
 priority: medium
 labels:
   - frontend
@@ -11,10 +11,10 @@ labels:
   - agent-draft
   - ux
 createdAt: '2026-05-11T12:24:17.067Z'
-updatedAt: '2026-05-11T12:24:17.067Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T12:36:21.569Z'
+codexThreadId: 019e1702-8215-70f3-96be-4016305d096a
+runStatus: completed
+lastRunId: run_01krbg50dfv0rt4zfp7vxxd94t
 ---
 # Simplify create ticket modal to agent-generated drafts only
 
@@ -85,5 +85,35 @@ The create ticket modal currently exposes manual entry areas for title, labels, 
 - File inspected: src/renderer/src/App.tsx - Matched terms: create, see, title, labels, markdown, they, draft, ticketdraft; characters read: 12000; symbols: DragEndEvent, ShortcutDirection, TicketMentionToken, Toast, LocalAgentProgress, TicketReferenceSurface
 
 ## Codex Handoff
+
+### 5/11/2026, 1:36:21 PM
+
+Summary of changes made:
+- Removed the create modal Manual Draft path and editable title, labels, and markdown fields.
+- Create flow now stores the agent draft directly and creates tickets from generated title, priority, labels, and markdown.
+- Modal header updates to the generated draft title, with subtext from `summary` when present or a clean ~150-char markdown fallback.
+- Updated stale draft error copy that referenced manual fields/save manually.
+- Removed the manual fallback test and added draft subtext coverage.
+
+Files changed:
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/lib/markdown.ts`
+- `src/renderer/src/styles.css`
+- `src/main/services/codex.ts`
+- `tests/ticket-draft.test.ts`
+
+Commands run:
+- Inspection with `grep`, `sed`, `find`, `git status`, and `git diff` (`rg` was unavailable).
+- `npm run typecheck`
+- `npm test`
+
+Tests run and results:
+- `npm run typecheck`: passed.
+- `npm test`: passed, 44/44 tests. An earlier run failed on a new overly-specific assertion; I adjusted the assertion and reran successfully.
+
+Remaining risks or follow-up:
+- I did not run an interactive Electron/browser smoke test.
+- Existing `.relay` staged/working-tree changes were already present and left untouched.
+
 
 No Codex run has been started.

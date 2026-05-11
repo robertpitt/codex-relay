@@ -12,6 +12,7 @@ const entryPoints = [
   path.join(testsDir, "agent-progress.test.tsx"),
   path.join(testsDir, "backend.test.ts"),
   path.join(testsDir, "clarification-panel.test.tsx"),
+  path.join(testsDir, "create-ticket-mention-layout.test.ts"),
   path.join(testsDir, "git-metadata.test.tsx"),
   path.join(testsDir, "keyboard-shortcuts.test.ts"),
   path.join(testsDir, "markdown-block.test.tsx"),

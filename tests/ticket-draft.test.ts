@@ -10,7 +10,8 @@ import {
   TicketDraftServiceError,
   type TicketDraftDependencies
 } from "../src/main/services/codex";
-import { createTicket, initializeProject, readBoard } from "../src/main/services/storage";
+import { initializeProject, readBoard } from "../src/main/services/storage";
+import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
 import type { CodexStatus } from "../src/shared/types";
 
 const readyStatus: CodexStatus = {
@@ -67,6 +68,13 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
   assert.match(prompt, /Research context:/);
   assert.equal(signals[0].aborted, false);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
+  const draftWithSummary = { ...draft, summary: "**Generated** [summary](https://example.test)." };
+  assert.equal(ticketDraftDialogSubtext(draftWithSummary), "Generated summary.");
+  const fallbackSubtext = ticketDraftDialogSubtext(draft, 80);
+  assert.match(fallbackSubtext, /^Context from Codex\./);
+  assert.doesNotMatch(fallbackSubtext, /Recoverable timeout handling/);
+  assert.doesNotMatch(fallbackSubtext, /[#*\[\]]/);
+  assert.ok(fallbackSubtext.length <= 83);
 });
 
 test("ticket draft prompt preserves markdown ticket references from the idea", async () => {
@@ -279,35 +287,4 @@ test("ticket draft retry after timeout uses an independent Codex request", async
   assert.equal(signals[0].aborted, true);
   assert.equal(signals[1].aborted, false);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
-});
-
-test("manual ticket save still works after a draft timeout", async () => {
-  const projectPath = await createProject();
-  const idea = "Preserve this rough idea\nwith more detail";
-  const dependencies: TicketDraftDependencies = {
-    getStatus: async () => readyStatus,
-    createRequestId: () => "tdr_manual_fallback",
-    draftTimeoutMs: 5,
-    unrefTimeout: false,
-    createCodexClient: () =>
-      ({
-        startThread: () => ({
-          run: () => new Promise(() => undefined)
-        })
-      }) as any
-  };
-
-  await assert.rejects(createTicketDraft({ projectPath, idea }, dependencies), TicketDraftServiceError);
-  const title = idea.split("\n")[0].trim();
-  const ticket = await createTicket(projectPath, {
-    title,
-    priority: "medium",
-    labels: [],
-    markdown: `# ${title}\n\n${idea}\n`
-  });
-
-  const board = await readBoard(projectPath);
-  assert.equal(board.tickets.length, 1);
-  assert.equal(board.tickets[0].id, ticket.frontMatter.id);
-  assert.equal(board.tickets[0].title, "Preserve this rough idea");
 });

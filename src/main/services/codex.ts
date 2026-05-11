@@ -925,7 +925,7 @@ const ticketDraftTimeoutError = (requestId: string, durationMs: number, timeoutM
     "timeout",
     requestId,
     durationMs,
-    `Codex ticket drafting timed out after ${formatTimeout(timeoutMs)}. Your ticket idea and manual fields were preserved; retry Codex or save manually.`,
+    `Codex ticket drafting timed out after ${formatTimeout(timeoutMs)}. Your rough idea is still available; retry Codex when ready.`,
     "codex_generation_timeout",
     { timeoutMs, cause }
   );
@@ -947,7 +947,7 @@ const normalizeTicketDraftError = (
       "cancelled",
       context.requestId,
       context.durationMs,
-      "Codex ticket drafting was cancelled. Your ticket idea and manual fields were preserved.",
+      "Codex ticket drafting was cancelled. Your rough idea is still available.",
       "codex_generation_cancelled",
       { timeoutMs: context.timeoutMs, cause: error }
     );
@@ -957,7 +957,7 @@ const normalizeTicketDraftError = (
       "invalid_response",
       context.requestId,
       context.durationMs,
-      "Codex returned an invalid ticket draft. Your ticket idea and manual fields were preserved.",
+      "Codex returned an invalid ticket draft. Your rough idea is still available; retry Codex when ready.",
       "invalid_codex_response",
       { timeoutMs: context.timeoutMs, cause: error }
     );
@@ -1108,7 +1108,7 @@ ${idea}`;
         "invalid_response",
         requestId,
         durationMs(),
-        "Codex returned an invalid ticket draft. Your ticket idea and manual fields were preserved.",
+        "Codex returned an invalid ticket draft. Your rough idea is still available; retry Codex when ready.",
         "invalid_codex_response",
         { timeoutMs: draftTimeoutMs, cause: error }
       );

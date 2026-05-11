@@ -1244,6 +1244,17 @@ kbd {
   margin-top: var(--relay-space-4);
 }
 
+.draft-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--relay-space-2);
+  flex-wrap: wrap;
+}
+
+.draft-meta .labels {
+  margin: 0;
+}
+
 .two-fields {
   display: grid;
   grid-template-columns: 180px 1fr;
@@ -1275,6 +1286,13 @@ kbd {
     inset 0 0 0 1px var(--relay-border-strong),
     var(--relay-shadow-panel);
   padding: 6px;
+}
+
+.ticket-reference-menu.floating {
+  position: fixed;
+  z-index: 80;
+  right: auto;
+  bottom: auto;
 }
 
 .idea-reference-editor .ticket-reference-menu {
@@ -1581,6 +1599,10 @@ kbd {
   display: flex;
   justify-content: flex-end;
   gap: var(--relay-space-2);
+}
+
+.create-modal .modal-footer {
+  margin-top: var(--relay-space-4);
 }
 
 .detail-panel {
