@@ -89,6 +89,13 @@ test("markdown block escapes raw HTML and blocks unsafe links", () => {
   assert.match(markup, /class="markdown-link-unsafe"/);
 });
 
+test("markdown block renders relative ticket links as safe anchors", () => {
+  const markup = renderToStaticMarkup(<MarkdownBlock source="[Referenceable ticket](./tkt_001.md)" />);
+
+  assert.match(markup, /href="\.\/tkt_001\.md"/);
+  assert.doesNotMatch(markup, /markdown-link-unsafe/);
+});
+
 test("copy helpers preserve markdown source and code block contents", async () => {
   const written: string[] = [];
   const clipboard: ClipboardWriter = {

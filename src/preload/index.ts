@@ -27,6 +27,7 @@ const api: RelayApi = {
   ticket: {
     createDraft: (input: CreateDraftInput) => ipcRenderer.invoke("ticket:createDraft", input),
     createManual: (projectPath: string, input: TicketCreateInput) => ipcRenderer.invoke("ticket:createManual", projectPath, input),
+    references: (projectPath: string) => ipcRenderer.invoke("ticket:references", projectPath),
     read: (projectPath: string, ticketId: string) => ipcRenderer.invoke("ticket:read", projectPath, ticketId),
     save: (input: TicketSaveInput) => ipcRenderer.invoke("ticket:save", input),
     move: (input: TicketMoveInput) => ipcRenderer.invoke("ticket:move", input),

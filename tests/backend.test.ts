@@ -11,6 +11,7 @@ import {
   createTicket,
   initializeProject,
   isTicketNotFoundError,
+  listTicketReferenceCandidates,
   moveTicket,
   readBoard,
   readClarificationQuestions,
@@ -192,6 +193,55 @@ test("ticket reads stay scoped to the requested project after switching projects
   const scopedRecord = await readTicket(secondProject, secondTicket.frontMatter.id);
   assert.equal(scopedRecord.frontMatter.title, "Second project ticket");
   assert.equal(scopedRecord.filePath, path.join(secondProject, ".relay", "tickets", `${secondTicket.frontMatter.id}.md`));
+});
+
+test("ticket reference candidates expose local display paths and sibling-relative links", async () => {
+  const projectPath = await createProject();
+  const todoTicket = await createTicket(projectPath, {
+    title: "Referenceable todo",
+    priority: "medium",
+    labels: [],
+    markdown: "# Referenceable todo\n"
+  });
+  const completedTicket = await createTicket(projectPath, {
+    title: "Completed reference",
+    priority: "low",
+    labels: [],
+    markdown: "# Completed reference\n"
+  });
+  await moveTicket({
+    projectPath,
+    ticketId: completedTicket.frontMatter.id,
+    targetStatus: "completed"
+  });
+
+  const references = await listTicketReferenceCandidates(projectPath);
+
+  assert.deepEqual(
+    references.map((reference) => ({
+      id: reference.id,
+      title: reference.title,
+      columnName: reference.columnName,
+      relativePath: reference.relativePath,
+      linkPath: reference.linkPath
+    })),
+    [
+      {
+        id: todoTicket.frontMatter.id,
+        title: "Referenceable todo",
+        columnName: "Todo",
+        relativePath: `.relay/tickets/${todoTicket.frontMatter.id}.md`,
+        linkPath: `./${todoTicket.frontMatter.id}.md`
+      },
+      {
+        id: completedTicket.frontMatter.id,
+        title: "Completed reference",
+        columnName: "Completed",
+        relativePath: `.relay/tickets/${completedTicket.frontMatter.id}.md`,
+        linkPath: `./${completedTicket.frontMatter.id}.md`
+      }
+    ]
+  );
 });
 
 test("codex runs preserve the selected project context after a cross-project switch", async () => {

@@ -2,8 +2,8 @@
 schemaVersion: 1
 id: tkt_01krbd7ytw9a1fngv3pfmvg0bn
 title: Add @-reference autocomplete for linking tickets while drafting
-status: in_progress
-position: 1000
+status: completed
+position: 19000
 priority: medium
 labels:
   - feature
@@ -11,9 +11,9 @@ labels:
   - editor
   - markdown
 createdAt: '2026-05-11T11:37:31.740Z'
-updatedAt: '2026-05-11T11:37:48.703Z'
+updatedAt: '2026-05-11T11:46:50.952Z'
 codexThreadId: 019e16d4-3d6b-7bd0-ad55-34eccbc7dbcb
-runStatus: running
+runStatus: completed
 lastRunId: run_01krbd8f89wf6qwc2g0h3h9smw
 ---
 # Add @-reference autocomplete for linking tickets while drafting
@@ -91,5 +91,42 @@ While creating a ticket, users should be able to type @, search existing tickets
 - File inspected: src/main/services/schemas.ts - Matched terms: search, url, fetch; characters read: 4997; symbols: isoString, relayColumnSchema, projectSettingsSchema, projectConfigSchema, ticketFrontMatterSchema, appRegistrySchema
 
 ## Codex Handoff
+
+### 5/11/2026, 12:46:50 PM
+
+**Summary**
+Implemented `@` ticket reference autocomplete in the create-ticket Markdown editor. It loads local ticket candidates for the active project, filters by title/path/status, supports arrow navigation, Enter/Tab selection, Escape close, and click selection, then inserts a plain Markdown link like `[Ticket Title](./tkt_id.md)` while preserving focus/cursor.
+
+**Files Changed**
+- `src/shared/types.ts`
+- `src/main/services/storage.ts`
+- `src/main/index.ts`
+- `src/preload/index.ts`
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/styles.css`
+- `src/renderer/src/lib/ticketReferences.ts`
+- `tests/backend.test.ts`
+- `tests/markdown-block.test.tsx`
+- `tests/ticket-references.test.ts`
+- `tests/run-tests.mjs`
+
+Note: `.relay/runs/tkt_01krbd7ytw9a1fngv3pfmvg0bn/run_01krbd8f89wf6qwc2g0h3h9smw.jsonl` is also modified in git status from Relay runtime logging, not implementation code.
+
+**Commands Run**
+- `git ls-files`, `grep`, `sed`, `nl`, `git diff`, `git status`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+- `git diff --check`
+
+**Tests**
+- `npm run typecheck`: passed
+- `npm test`: passed, 41 tests
+- `npm run build`: passed
+- `git diff --check`: passed
+
+**Remaining Risks**
+I did not do an interactive Electron UI run. The behavior is covered by helper tests, backend candidate tests, Markdown rendering tests, typecheck, and production build.
+
 
 No Codex run has been started.

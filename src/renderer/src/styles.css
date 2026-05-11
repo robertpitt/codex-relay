@@ -1256,6 +1256,98 @@ kbd {
   line-height: 1.5;
 }
 
+.ticket-reference-editor {
+  position: relative;
+}
+
+.ticket-reference-menu {
+  position: absolute;
+  z-index: 35;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  max-height: min(284px, calc(100% - 20px));
+  overflow-y: auto;
+  border-radius: var(--relay-radius-md);
+  background: color-mix(in srgb, var(--relay-popover) 96%, black);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px var(--relay-border-strong),
+    var(--relay-shadow-panel);
+  padding: 6px;
+}
+
+.idea-reference-editor .ticket-reference-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+  max-height: min(260px, 48vh);
+}
+
+.ticket-reference-option {
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title status"
+    "path status";
+  align-items: center;
+  gap: 2px 12px;
+  border-radius: var(--relay-radius-sm);
+  padding: 8px 9px;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.ticket-reference-option:hover,
+.ticket-reference-option.active {
+  background: var(--relay-surface-hover);
+  box-shadow: var(--relay-inset-highlight);
+  transform: none;
+}
+
+.ticket-reference-option strong {
+  grid-area: title;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--relay-text);
+  font-size: var(--relay-text-md);
+  font-weight: 610;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-reference-option span {
+  grid-area: path;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--relay-text-muted);
+  font-family: var(--relay-font-mono);
+  font-size: var(--relay-text-xs);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-reference-option em {
+  grid-area: status;
+  border-radius: var(--relay-radius-xs);
+  background: var(--relay-info-muted);
+  color: var(--relay-info-text);
+  padding: 3px 6px;
+  font-size: var(--relay-text-xs);
+  font-style: normal;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.ticket-reference-empty {
+  color: var(--relay-text-muted);
+  font-size: var(--relay-text-md);
+  padding: 9px 10px;
+}
+
 .markdown-block {
   overflow: hidden;
   border: 0;

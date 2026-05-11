@@ -30,6 +30,7 @@ import {
   answerClarificationQuestion,
   initializeProject,
   isTicketNotFoundError,
+  listTicketReferenceCandidates,
   moveTicket,
   readBoard,
   readClarificationQuestions,
@@ -166,6 +167,8 @@ const registerIpc = (): void => {
   ipcMain.handle("ticket:createManual", async (_event, projectPath: string, input: TicketCreateInput) =>
     createTicket(projectPath, input)
   );
+
+  ipcMain.handle("ticket:references", async (_event, projectPath: string) => listTicketReferenceCandidates(projectPath));
 
   ipcMain.handle("ticket:read", async (_event, projectPath: string, ticketId: string) => {
     const resolvedProjectPath = path.resolve(projectPath);

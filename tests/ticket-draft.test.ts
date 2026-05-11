@@ -69,6 +69,29 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
 });
 
+test("ticket draft prompt preserves markdown ticket references from the idea", async () => {
+  const projectPath = await createProject();
+  const idea = "Build on [Referenceable todo](./tkt_001.md) before adding the next flow.";
+  let prompt = "";
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "tdr_ticket_reference",
+    createCodexClient: () =>
+      ({
+        startThread: () => ({
+          run: async (nextPrompt: string) => {
+            prompt = nextPrompt;
+            return { finalResponse: validDraftJson("Reference-aware draft") };
+          }
+        })
+      }) as any
+  };
+
+  await createTicketDraft({ projectPath, idea }, dependencies);
+
+  assert.match(prompt, /\[Referenceable todo\]\(\.\/tkt_001\.md\)/);
+});
+
 test("ticket draft URL research fetches detected URLs and renders source metadata", async () => {
   const projectPath = await createProject();
   const idea = "Use the behavior described at https://example.test/spec?draft=1.";

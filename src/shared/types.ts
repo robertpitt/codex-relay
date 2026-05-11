@@ -112,6 +112,15 @@ export type TicketSummary = TicketFrontMatter & {
   filePath: string;
 };
 
+export type TicketReferenceCandidate = {
+  id: string;
+  title: string;
+  status: string;
+  columnName: string;
+  relativePath: string;
+  linkPath: string;
+};
+
 export type InvalidTicket = {
   filePath: string;
   reason: string;
@@ -350,6 +359,7 @@ export type RelayApi = {
   ticket: {
     createDraft: (input: CreateDraftInput) => Promise<TicketDraftResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
+    references: (projectPath: string) => Promise<TicketReferenceCandidate[]>;
     read: (projectPath: string, ticketId: string) => Promise<TicketRecord>;
     save: (input: TicketSaveInput) => Promise<TicketRecord>;
     move: (input: TicketMoveInput) => Promise<BoardSnapshot>;

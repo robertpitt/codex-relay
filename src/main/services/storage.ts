@@ -22,6 +22,7 @@ import {
   type TicketDraft,
   type TicketFrontMatter,
   type TicketMoveInput,
+  type TicketReferenceCandidate,
   type TicketRecord,
   type TicketSaveInput,
   type TicketSummary
@@ -317,6 +318,38 @@ export const readBoard = async (projectPath: string, lastOpenedAt?: string): Pro
 };
 
 const ticketPath = (projectPath: string, ticketId: string): string => path.join(ticketsPath(projectPath), `${ticketId}.md`);
+
+const slashPath = (value: string): string => value.split(path.sep).join("/");
+
+const relativeMarkdownPath = (fromDirectory: string, toFile: string): string => {
+  const relativePath = slashPath(path.relative(fromDirectory, toFile));
+  if (relativePath.startsWith(".") || relativePath.startsWith("/")) return relativePath;
+  return `./${relativePath}`;
+};
+
+export const listTicketReferenceCandidates = async (projectPath: string): Promise<TicketReferenceCandidate[]> => {
+  const resolvedProjectPath = resolveProjectPath(projectPath);
+  const config = await readProjectConfig(resolvedProjectPath);
+  const columnNames = new Map(config.columns.map((column) => [column.id, column.name]));
+  const columnPositions = new Map(config.columns.map((column) => [column.id, column.position]));
+  const { tickets } = await readTickets(resolvedProjectPath, config.columns);
+  const ticketDirectory = ticketsPath(resolvedProjectPath);
+
+  return [...tickets]
+    .sort((a, b) => {
+      const columnDelta = (columnPositions.get(a.status) ?? Number.MAX_SAFE_INTEGER) - (columnPositions.get(b.status) ?? Number.MAX_SAFE_INTEGER);
+      if (columnDelta !== 0) return columnDelta;
+      return a.position - b.position;
+    })
+    .map((ticket) => ({
+      id: ticket.id,
+      title: ticket.title,
+      status: ticket.status,
+      columnName: columnNames.get(ticket.status) ?? ticket.status,
+      relativePath: slashPath(path.relative(resolvedProjectPath, ticket.filePath)),
+      linkPath: relativeMarkdownPath(ticketDirectory, ticket.filePath)
+    }));
+};
 
 export const readTicket = async (projectPath: string, ticketId: string): Promise<TicketRecord> => {
   const resolvedProjectPath = resolveProjectPath(projectPath);

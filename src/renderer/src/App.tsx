@@ -21,7 +21,7 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactElement } from "react";
+import type { KeyboardEvent, ReactElement } from "react";
 import type {
   BoardSnapshot,
   ClarificationQuestion,
@@ -33,6 +33,7 @@ import type {
   RunStatus,
   TicketDraftErrorPayload,
   TicketPriority,
+  TicketReferenceCandidate,
   TicketRecord,
   TicketSummary
 } from "@shared/types";
@@ -52,9 +53,20 @@ import {
   type ShortcutDirection
 } from "./lib/keyboardShortcuts";
 import { emptyTicketMarkdown, markdownFromDraft } from "./lib/markdown";
+import {
+  filterTicketReferenceCandidates,
+  getActiveTicketMention,
+  replaceTicketMention,
+  type TicketMentionToken
+} from "./lib/ticketReferences";
 
 type Toast = { kind: "info" | "error" | "success"; message: string } | null;
 type LocalAgentProgress = { status: RunStatus; startedAt: string; endedAt?: string | null };
+type TicketReferenceSurface = "idea" | "markdown";
+type ActiveTicketReferenceMention = {
+  surface: TicketReferenceSurface;
+  token: TicketMentionToken;
+};
 
 const priorityOptions: TicketPriority[] = ["low", "medium", "high", "urgent"];
 
@@ -536,7 +548,14 @@ function CreateTicketModal({
   const [draftMessageKind, setDraftMessageKind] = useState<"info" | "error">("info");
   const [draftFailure, setDraftFailure] = useState<TicketDraftErrorPayload | null>(null);
   const [draftProgress, setDraftProgress] = useState<LocalAgentProgress | null>(null);
+  const [ticketReferences, setTicketReferences] = useState<TicketReferenceCandidate[]>([]);
+  const [ticketReferencesLoading, setTicketReferencesLoading] = useState(false);
+  const [ticketReferencesError, setTicketReferencesError] = useState<string | null>(null);
+  const [ticketReferenceMention, setTicketReferenceMention] = useState<ActiveTicketReferenceMention | null>(null);
+  const [activeTicketReferenceIndex, setActiveTicketReferenceIndex] = useState(0);
   const draftRequestRef = useRef(0);
+  const ideaEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const markdownEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const hasUnsavedInput = useMemo(
     () =>
       busy ||
@@ -545,6 +564,12 @@ function CreateTicketModal({
       [idea, manualTitle, manualMarkdown, labels].some((value) => value.trim().length > 0),
     [busy, idea, labels, manualMarkdown, manualTitle, priority, saving]
   );
+  const filteredTicketReferences = useMemo(
+    () => filterTicketReferenceCandidates(ticketReferences, ticketReferenceMention?.token.query ?? ""),
+    [ticketReferenceMention?.token.query, ticketReferences]
+  );
+  const ideaTicketReferenceMenuOpen = ticketReferenceMention?.surface === "idea";
+  const markdownTicketReferenceMenuOpen = ticketReferenceMention?.surface === "markdown";
 
   useShortcutOverlay({
     id: "create-ticket-modal",
@@ -559,10 +584,149 @@ function CreateTicketModal({
     }
   });
 
+  useEffect(() => {
+    let active = true;
+    setTicketReferencesLoading(true);
+    setTicketReferencesError(null);
+    void window.relay.ticket
+      .references(projectPath)
+      .then((candidates) => {
+        if (!active) return;
+        setTicketReferences(candidates);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setTicketReferences([]);
+        setTicketReferencesError(error instanceof Error ? error.message : "Unable to load ticket references.");
+      })
+      .finally(() => {
+        if (active) setTicketReferencesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [projectPath]);
+
+  useEffect(() => {
+    setActiveTicketReferenceIndex((current) => {
+      if (filteredTicketReferences.length === 0) return 0;
+      return Math.min(current, filteredTicketReferences.length - 1);
+    });
+  }, [filteredTicketReferences.length]);
+
   const seedManualFallback = (ideaSnapshot: string): void => {
     const fallbackTitle = ideaSnapshot.split("\n")[0]?.trim() || "Untitled Ticket";
     setManualTitle((current) => (current.trim().length > 0 ? current : fallbackTitle));
     setManualMarkdown((current) => (current.trim().length > 0 ? current : emptyTicketMarkdown(fallbackTitle)));
+    setTicketReferenceMention(null);
+  };
+
+  const updateTicketReferenceMention = (
+    surface: TicketReferenceSurface,
+    value: string,
+    selectionStart: number,
+    selectionEnd = selectionStart
+  ): void => {
+    const token = getActiveTicketMention(value, selectionStart, selectionEnd);
+    setTicketReferenceMention(token ? { surface, token } : null);
+    setActiveTicketReferenceIndex(0);
+  };
+
+  const closeTicketReferenceMenu = (surface: TicketReferenceSurface): void => {
+    setTicketReferenceMention((current) => (current?.surface === surface ? null : current));
+  };
+
+  const insertTicketReference = (candidate: TicketReferenceCandidate, surface = ticketReferenceMention?.surface): void => {
+    if (!surface) return;
+
+    const editor = surface === "idea" ? ideaEditorRef.current : markdownEditorRef.current;
+    const currentValue = surface === "idea" ? idea : manualMarkdown;
+    const currentMention =
+      ticketReferenceMention?.surface === surface
+        ? ticketReferenceMention.token
+        : editor
+          ? getActiveTicketMention(currentValue, editor.selectionStart, editor.selectionEnd)
+          : null;
+    if (!currentMention) return;
+
+    const next = replaceTicketMention(currentValue, currentMention, candidate);
+    if (surface === "idea") {
+      setIdea(next.value);
+    } else {
+      setManualMarkdown(next.value);
+    }
+    setTicketReferenceMention(null);
+    window.requestAnimationFrame(() => {
+      editor?.focus();
+      editor?.setSelectionRange(next.cursor, next.cursor);
+    });
+  };
+
+  const handleTicketReferenceKeyDown = (surface: TicketReferenceSurface, event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (ticketReferenceMention?.surface !== surface) return;
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setTicketReferenceMention(null);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveTicketReferenceIndex((current) =>
+        filteredTicketReferences.length === 0 ? 0 : (current + 1) % filteredTicketReferences.length
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveTicketReferenceIndex((current) =>
+        filteredTicketReferences.length === 0 ? 0 : (current - 1 + filteredTicketReferences.length) % filteredTicketReferences.length
+      );
+      return;
+    }
+
+    if ((event.key === "Enter" || event.key === "Tab") && filteredTicketReferences.length > 0) {
+      event.preventDefault();
+      insertTicketReference(filteredTicketReferences[activeTicketReferenceIndex] ?? filteredTicketReferences[0], surface);
+    }
+  };
+
+  const renderTicketReferenceMenu = (surface: TicketReferenceSurface, menuId: string): ReactElement | null => {
+    if (ticketReferenceMention?.surface !== surface) return null;
+
+    return (
+      <div className="ticket-reference-menu" id={menuId} role="listbox" aria-label="Ticket references">
+        {ticketReferencesLoading && <div className="ticket-reference-empty">Loading local tickets...</div>}
+        {!ticketReferencesLoading && ticketReferencesError && <div className="ticket-reference-empty">{ticketReferencesError}</div>}
+        {!ticketReferencesLoading && !ticketReferencesError && filteredTicketReferences.length === 0 && (
+          <div className="ticket-reference-empty">
+            {ticketReferences.length === 0 ? "No tickets in this project." : "No matching tickets."}
+          </div>
+        )}
+        {!ticketReferencesLoading &&
+          !ticketReferencesError &&
+          filteredTicketReferences.map((candidate, index) => (
+            <button
+              key={candidate.id}
+              type="button"
+              className={clsx("ticket-reference-option", index === activeTicketReferenceIndex && "active")}
+              role="option"
+              aria-selected={index === activeTicketReferenceIndex}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveTicketReferenceIndex(index)}
+              onClick={() => insertTicketReference(candidate, surface)}
+            >
+              <strong>{candidate.title}</strong>
+              <span>{candidate.relativePath}</span>
+              <em>{candidate.columnName}</em>
+            </button>
+          ))}
+      </div>
+    );
   };
 
   const draftTicket = async (): Promise<void> => {
@@ -591,6 +755,7 @@ function CreateTicketModal({
       const nextDraft = result.draft;
       setManualTitle(nextDraft.title);
       setManualMarkdown(markdownFromDraft(nextDraft));
+      setTicketReferenceMention(null);
       setPriority(nextDraft.priority);
       setLabels(nextDraft.labels.join(", "));
       setDraftFailure(null);
@@ -654,7 +819,31 @@ function CreateTicketModal({
         <div className="modal-grid">
           <label className="field">
             <span>Idea</span>
-            <textarea value={idea} onChange={(event) => setIdea(event.target.value)} placeholder="Describe what you want built..." />
+            <div className="ticket-reference-editor idea-reference-editor">
+              <textarea
+                ref={ideaEditorRef}
+                value={idea}
+                placeholder="Describe what you want built..."
+                aria-autocomplete="list"
+                aria-controls="idea-ticket-reference-menu"
+                aria-expanded={ideaTicketReferenceMenuOpen}
+                onChange={(event) => {
+                  setIdea(event.target.value);
+                  updateTicketReferenceMention("idea", event.target.value, event.target.selectionStart, event.target.selectionEnd);
+                }}
+                onFocus={(event) =>
+                  updateTicketReferenceMention("idea", event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)
+                }
+                onSelect={(event) =>
+                  updateTicketReferenceMention("idea", event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)
+                }
+                onKeyDown={(event) => handleTicketReferenceKeyDown("idea", event)}
+                onBlur={() => {
+                  window.setTimeout(() => closeTicketReferenceMenu("idea"), 120);
+                }}
+              />
+              {renderTicketReferenceMenu("idea", "idea-ticket-reference-menu")}
+            </div>
           </label>
           <div className="draft-actions">
             <button className="primary-button" onClick={draftTicket} disabled={busy || idea.trim().length === 0}>
@@ -666,6 +855,7 @@ function CreateTicketModal({
                 const title = idea.split("\n")[0]?.trim() || "Untitled Ticket";
                 setManualTitle(title);
                 setManualMarkdown(emptyTicketMarkdown(title));
+                setTicketReferenceMention(null);
                 setDraftFailure(null);
                 setDraftProgress(null);
                 setDraftMessageKind("info");
@@ -719,12 +909,42 @@ function CreateTicketModal({
           </div>
           <label className="field">
             <span>Ticket Markdown</span>
-            <textarea
-              className="markdown-editor"
-              value={manualMarkdown}
-              placeholder="Use Manual Draft or Draft with Codex to fill this in, or write the ticket here."
-              onChange={(event) => setManualMarkdown(event.target.value)}
-            />
+            <div className="ticket-reference-editor">
+              <textarea
+                ref={markdownEditorRef}
+                className="markdown-editor"
+                value={manualMarkdown}
+                placeholder="Use Manual Draft or Draft with Codex to fill this in, or write the ticket here."
+                aria-autocomplete="list"
+                aria-controls="markdown-ticket-reference-menu"
+                aria-expanded={markdownTicketReferenceMenuOpen}
+                onChange={(event) => {
+                  setManualMarkdown(event.target.value);
+                  updateTicketReferenceMention("markdown", event.target.value, event.target.selectionStart, event.target.selectionEnd);
+                }}
+                onFocus={(event) =>
+                  updateTicketReferenceMention(
+                    "markdown",
+                    event.currentTarget.value,
+                    event.currentTarget.selectionStart,
+                    event.currentTarget.selectionEnd
+                  )
+                }
+                onSelect={(event) =>
+                  updateTicketReferenceMention(
+                    "markdown",
+                    event.currentTarget.value,
+                    event.currentTarget.selectionStart,
+                    event.currentTarget.selectionEnd
+                  )
+                }
+                onKeyDown={(event) => handleTicketReferenceKeyDown("markdown", event)}
+                onBlur={() => {
+                  window.setTimeout(() => closeTicketReferenceMenu("markdown"), 120);
+                }}
+              />
+              {renderTicketReferenceMenu("markdown", "markdown-ticket-reference-menu")}
+            </div>
           </label>
           <MarkdownBlock
             className="ticket-markdown-preview"
