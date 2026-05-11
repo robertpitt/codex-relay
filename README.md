@@ -9,6 +9,7 @@ Relay is designed for one developer working across local project folders. Each p
 - [Project Overview](#project-overview)
 - [Prerequisites](#prerequisites)
 - [Local Setup](#local-setup)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Environment Variables and Secrets](#environment-variables-and-secrets)
 - [Local Data and Services](#local-data-and-services)
 - [Development Commands](#development-commands)
@@ -69,6 +70,17 @@ In the app:
 3. Confirm initialization when Relay asks to create `.relay/`.
 4. Create a manual ticket or use Codex to draft one.
 5. Open a ticket and start or resume a Codex run when needed.
+
+## Keyboard Shortcuts
+
+Relay keeps `Tab` for normal accessibility focus traversal. Ticket browsing uses Arrow keys or `J`/`K` when focus is on the board, a ticket card, or the page body.
+
+| Shortcut | Action |
+| --- | --- |
+| `Esc` | Close the topmost dialog, modal, or ticket drawer when there is no unsaved input. |
+| `Cmd`+`Space` on macOS, `Ctrl`+`Space` elsewhere | Open Create Ticket from the main board context. |
+| `Arrow Down` / `Arrow Right` / `J` | Focus the next ticket on the board. |
+| `Arrow Up` / `Arrow Left` / `K` | Focus the previous ticket on the board. |
 
 ## Environment Variables and Secrets
 

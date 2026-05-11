@@ -68,15 +68,81 @@ export const appRegistrySchema = z
   })
   .passthrough();
 
+const ticketDraftResearchLimitsSchema = z.object({
+  maxResearchMs: z.number(),
+  maxUrls: z.number(),
+  maxUrlFetchMs: z.number(),
+  maxUrlContentChars: z.number(),
+  maxFilesToScan: z.number(),
+  maxFilesToRead: z.number(),
+  maxFileReadChars: z.number(),
+  maxMatchesPerFile: z.number()
+});
+
+const ticketDraftResearchSchema = z.object({
+  generatedAt: z.string().default(""),
+  checkedUrls: z
+    .array(
+      z.object({
+        url: z.string(),
+        status: z.enum(["fetched", "failed", "skipped"]),
+        title: z.string().nullable().default(null),
+        reason: z.string().nullable().default(null),
+        charactersRead: z.number().default(0)
+      })
+    )
+    .default([]),
+  inspectedFiles: z
+    .array(
+      z.object({
+        path: z.string(),
+        reason: z.string(),
+        symbols: z.array(z.string()).default([]),
+        matches: z.array(z.string()).default([]),
+        charactersRead: z.number().default(0)
+      })
+    )
+    .default([]),
+  limitations: z.array(z.string()).default([]),
+  limits: ticketDraftResearchLimitsSchema.default({
+    maxResearchMs: 0,
+    maxUrls: 0,
+    maxUrlFetchMs: 0,
+    maxUrlContentChars: 0,
+    maxFilesToScan: 0,
+    maxFilesToRead: 0,
+    maxFileReadChars: 0,
+    maxMatchesPerFile: 0
+  })
+});
+
 export const ticketDraftSchema = z.object({
   title: z.string().min(1),
   priority: z.enum(["low", "medium", "high", "urgent"]),
   labels: z.array(z.string()).default([]),
   context: z.string().default(""),
+  researchFindings: z.array(z.string()).default([]),
   requirements: z.array(z.string()).default([]),
+  implementationPlan: z.array(z.string()).default([]),
   acceptanceCriteria: z.array(z.string()).default([]),
   clarificationQuestions: z.array(z.string()).default([]),
-  implementationNotes: z.array(z.string()).default([])
+  implementationNotes: z.array(z.string()).default([]),
+  research: ticketDraftResearchSchema.default({
+    generatedAt: "",
+    checkedUrls: [],
+    inspectedFiles: [],
+    limitations: [],
+    limits: {
+      maxResearchMs: 0,
+      maxUrls: 0,
+      maxUrlFetchMs: 0,
+      maxUrlContentChars: 0,
+      maxFilesToScan: 0,
+      maxFilesToRead: 0,
+      maxFileReadChars: 0,
+      maxMatchesPerFile: 0
+    }
+  })
 });
 
 export const clarificationQuestionSchema = z

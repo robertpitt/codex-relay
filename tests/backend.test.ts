@@ -16,6 +16,7 @@ import {
   readClarificationQuestions,
   readProjectConfig,
   readTicket,
+  summarizeProject,
   transitionTicketStatus,
   writeProjectConfig
 } from "../src/main/services/storage";
@@ -120,6 +121,41 @@ test("manual ticket moves still work for existing columns", async () => {
 
   assert.equal(board.tickets.find((item) => item.id === ticket.frontMatter.id)?.status, "not_doing");
   assert.equal((await readTicket(projectPath, ticket.frontMatter.id)).frontMatter.status, "not_doing");
+});
+
+test("project summaries include ordered swimlane counts including empty lanes", async () => {
+  const projectPath = await createProject();
+  const firstTicket = await createTicket(projectPath, {
+    title: "Todo ticket",
+    priority: "medium",
+    labels: [],
+    markdown: "# Todo ticket\n"
+  });
+  await createTicket(projectPath, {
+    title: "Second todo ticket",
+    priority: "low",
+    labels: [],
+    markdown: "# Second todo ticket\n"
+  });
+
+  await moveTicket({
+    projectPath,
+    ticketId: firstTicket.frontMatter.id,
+    targetStatus: "in_progress"
+  });
+
+  const summary = await summarizeProject(projectPath);
+
+  assert.deepEqual(
+    summary.swimlanes.map((swimlane) => [swimlane.id, swimlane.ticketCount]),
+    [
+      ["todo", 1],
+      ["in_progress", 1],
+      ["needs_clarification", 0],
+      ["not_doing", 0],
+      ["completed", 0]
+    ]
+  );
 });
 
 test("ticket reads stay scoped to the requested project after switching projects", async () => {

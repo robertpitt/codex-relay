@@ -5,6 +5,7 @@ import clsx from "clsx";
 import {
   AlertTriangle,
   Check,
+  ChevronRight,
   CircleDashed,
   Code2,
   Copy,
@@ -40,6 +41,16 @@ import { ClarificationPanel } from "./components/ClarificationPanel";
 import { GitMetadataPill, loadingGitMetadata } from "./components/GitMetadata";
 import { MarkdownBlock } from "./components/MarkdownBlock";
 import { mergeRunEvents } from "./lib/agentProgress";
+import {
+  createTicketShortcutLabel,
+  isCreateTicketShortcut,
+  KeyboardShortcutProvider,
+  ticketNavigationDirection,
+  ticketNavigationShortcutLabel,
+  useKeyboardShortcut,
+  useShortcutOverlay,
+  type ShortcutDirection
+} from "./lib/keyboardShortcuts";
 import { emptyTicketMarkdown, markdownFromDraft } from "./lib/markdown";
 
 type Toast = { kind: "info" | "error" | "success"; message: string } | null;
@@ -60,6 +71,13 @@ const shortPath = (projectPath: string): string => {
   if (parts.length <= 4) return projectPath;
   return `.../${parts.slice(-3).join("/")}`;
 };
+
+const projectDisclosureTargetId = (project: ProjectSummary, index: number): string => {
+  const stableKey = project.projectId ?? `${project.name}-${index}-${project.path}`;
+  return `project-swimlanes-${stableKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+};
+
+const ticketCountLabel = (count: number): string => `${count} ${count === 1 ? "ticket" : "tickets"}`;
 
 const runLabel = (status: TicketSummary["runStatus"]): string => {
   switch (status) {
@@ -82,6 +100,11 @@ const runLabel = (status: TicketSummary["runStatus"]): string => {
   }
 };
 
+const emptyColumnMessage = (columnName: string): { title: string; detail: string } => ({
+  title: `${columnName} is clear`,
+  detail: "Tickets will settle here when work reaches this stage."
+});
+
 // Markdown audit: create-ticket drafts, ticket detail bodies, clarification text,
 // and generated Codex completion/final-response console events use MarkdownBlock.
 // Board excerpts and command output stay plain text because they are summaries/logs.
@@ -90,7 +113,7 @@ const copyToast = (kind: "markdown" | "code"): Toast => ({
   message: kind === "code" ? "Code copied." : "Markdown source copied."
 });
 
-function ProjectSidebar({
+export function ProjectSidebar({
   projects,
   selectedPath,
   gitMetadataByPath,
@@ -98,7 +121,8 @@ function ProjectSidebar({
   onAdd,
   onSelect,
   onRemove,
-  onReveal
+  onReveal,
+  defaultExpandedProjectPaths = []
 }: {
   projects: ProjectSummary[];
   selectedPath: string | null;
@@ -108,7 +132,22 @@ function ProjectSidebar({
   onSelect: (projectPath: string) => void;
   onRemove: (projectPath: string) => void;
   onReveal: (projectPath: string) => void;
+  defaultExpandedProjectPaths?: string[];
 }): ReactElement {
+  const [expandedProjectPaths, setExpandedProjectPaths] = useState<Set<string>>(() => new Set(defaultExpandedProjectPaths));
+
+  const toggleProject = useCallback((projectPath: string): void => {
+    setExpandedProjectPaths((current) => {
+      const next = new Set(current);
+      if (next.has(projectPath)) {
+        next.delete(projectPath);
+      } else {
+        next.add(projectPath);
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <aside className="sidebar" aria-label="Projects">
       <div className="brand">
@@ -124,26 +163,65 @@ function ProjectSidebar({
         Add Project
       </button>
 
-      <div className="sidebar-list">
-        {projects.map((project) => {
+      <div className="sidebar-list" role="list">
+        {projects.map((project, index) => {
           const gitMetadata = gitMetadataByPath[project.path] ?? loadingGitMetadata();
+          const expanded = expandedProjectPaths.has(project.path);
+          const swimlaneListId = projectDisclosureTargetId(project, index);
           return (
-            <button
-              className={clsx("project-row", selectedPath === project.path && "selected")}
-              key={project.path}
-              onClick={() => onSelect(project.path)}
-              aria-current={selectedPath === project.path ? "page" : undefined}
-            >
-              <span className="project-main">
-                <span className="project-name">{project.name}</span>
-                <span className="project-path">{shortPath(project.path)}</span>
-                <GitMetadataPill metadata={gitMetadata} compact />
-              </span>
-              <span className="project-badges">
-                {project.health !== "ok" && <AlertTriangle size={13} />}
-                {project.activeRunCount > 0 && <CircleDashed size={13} />}
-              </span>
-            </button>
+            <div className="project-group" key={project.path} role="listitem">
+              <div className={clsx("project-row-shell", selectedPath === project.path && "selected")}>
+                <button
+                  type="button"
+                  className="project-disclosure"
+                  onClick={() => toggleProject(project.path)}
+                  aria-expanded={expanded}
+                  aria-controls={swimlaneListId}
+                  aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} swimlanes`}
+                >
+                  <ChevronRight className={clsx("project-disclosure-icon", expanded && "expanded")} size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={clsx("project-row", selectedPath === project.path && "selected")}
+                  onClick={() => onSelect(project.path)}
+                  aria-current={selectedPath === project.path ? "page" : undefined}
+                >
+                  <span className="project-main">
+                    <span className="project-name">{project.name}</span>
+                    <span className="project-path">{shortPath(project.path)}</span>
+                    <GitMetadataPill metadata={gitMetadata} compact />
+                  </span>
+                  <span className="project-badges">
+                    {project.health !== "ok" && <AlertTriangle size={13} />}
+                    {project.activeRunCount > 0 && <CircleDashed size={13} />}
+                  </span>
+                </button>
+              </div>
+              {expanded && (
+                <div id={swimlaneListId} className="project-swimlane-list" role="list" aria-label={`${project.name} swimlanes`}>
+                  {project.swimlanes.length > 0 ? (
+                    project.swimlanes.map((swimlane) => (
+                      <div
+                        className="project-swimlane-row"
+                        key={swimlane.id}
+                        role="listitem"
+                        aria-label={`${swimlane.name}: ${ticketCountLabel(swimlane.ticketCount)}`}
+                      >
+                        <span className="project-swimlane-name">{swimlane.name}</span>
+                        <span className="project-swimlane-count" aria-hidden="true">
+                          {swimlane.ticketCount}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="project-swimlane-empty" role="listitem">
+                      No swimlanes
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
@@ -167,13 +245,20 @@ function ProjectSidebar({
 function DroppableColumn({
   column,
   tickets,
-  onOpen
+  selectedTicketId,
+  onOpen,
+  onTicketFocus,
+  onTicketButtonRef
 }: {
   column: RelayColumn;
   tickets: TicketSummary[];
+  selectedTicketId: string | null;
   onOpen: (ticketId: string) => void;
+  onTicketFocus: (ticketId: string) => void;
+  onTicketButtonRef: (ticketId: string, node: HTMLButtonElement | null) => void;
 }): ReactElement {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
+  const emptyMessage = emptyColumnMessage(column.name);
   return (
     <section ref={setNodeRef} className={clsx("board-column", isOver && "over")}>
       <header className="column-header">
@@ -182,31 +267,69 @@ function DroppableColumn({
       </header>
       <div className="column-body">
         {tickets.map((ticket) => (
-          <DraggableCard key={ticket.id} ticket={ticket} onOpen={onOpen} />
+          <DraggableCard
+            key={ticket.id}
+            ticket={ticket}
+            selected={ticket.id === selectedTicketId}
+            onOpen={onOpen}
+            onFocus={onTicketFocus}
+            onTicketButtonRef={onTicketButtonRef}
+          />
         ))}
-        {tickets.length === 0 && <div className="empty-column">No tickets</div>}
+        {tickets.length === 0 && (
+          <div className="empty-column">
+            <span>{emptyMessage.title}</span>
+            <p>{emptyMessage.detail}</p>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function DraggableCard({ ticket, onOpen }: { ticket: TicketSummary; onOpen: (ticketId: string) => void }): ReactElement {
+function DraggableCard({
+  ticket,
+  selected,
+  onOpen,
+  onFocus,
+  onTicketButtonRef
+}: {
+  ticket: TicketSummary;
+  selected: boolean;
+  onOpen: (ticketId: string) => void;
+  onFocus: (ticketId: string) => void;
+  onTicketButtonRef: (ticketId: string, node: HTMLButtonElement | null) => void;
+}): ReactElement {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: ticket.id });
-  const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
+  const dragTransform = transform ? CSS.Translate.toString(transform) : null;
+  const style = dragTransform ? { transform: dragTransform } : undefined;
+  const visibleLabels = ticket.labels.slice(0, 2);
+  const hiddenLabelCount = ticket.labels.length - visibleLabels.length;
+  const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
+  const showRunStatus = ticket.runStatus !== "idle";
   return (
-    <article ref={setNodeRef} style={style} className={clsx("ticket-card", isDragging && "dragging")}>
-      <button className="card-open" onClick={() => onOpen(ticket.id)}>
+    <article ref={setNodeRef} style={style} className={clsx("ticket-card", isDragging && "dragging", selected && "keyboard-selected")}>
+      <button
+        ref={(node) => onTicketButtonRef(ticket.id, node)}
+        className="card-open"
+        data-ticket-id={ticket.id}
+        onClick={() => onOpen(ticket.id)}
+        onFocus={() => onFocus(ticket.id)}
+      >
         <div className="card-title">{ticket.title}</div>
-        <p>{ticket.excerpt || "No details yet."}</p>
-        <div className="card-meta">
-          <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>
-          <span className={clsx("run-pill", ticket.runStatus)}>{runLabel(ticket.runStatus)}</span>
-        </div>
-        {ticket.labels.length > 0 && (
+        <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
+        {(showPriority || showRunStatus) && (
+          <div className="card-meta">
+            {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
+            {showRunStatus && <span className={clsx("run-pill", ticket.runStatus)}>{runLabel(ticket.runStatus)}</span>}
+          </div>
+        )}
+        {visibleLabels.length > 0 && (
           <div className="labels">
-            {ticket.labels.map((label) => (
+            {visibleLabels.map((label) => (
               <span key={label}>{label}</span>
             ))}
+            {hiddenLabelCount > 0 && <span className="label-overflow">+{hiddenLabelCount}</span>}
           </div>
         )}
       </button>
@@ -220,6 +343,7 @@ function DraggableCard({ ticket, onOpen }: { ticket: TicketSummary; onOpen: (tic
 function BoardView({
   board,
   query,
+  ticketNavigationEnabled,
   onQuery,
   onCreate,
   onOpenTicket,
@@ -228,6 +352,7 @@ function BoardView({
 }: {
   board: BoardSnapshot;
   query: string;
+  ticketNavigationEnabled: boolean;
   onQuery: (query: string) => void;
   onCreate: () => void;
   onOpenTicket: (ticketId: string) => void;
@@ -235,6 +360,9 @@ function BoardView({
   gitMetadata: GitMetadata | undefined;
 }): ReactElement {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const ticketButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const filteredTickets = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return board.tickets;
@@ -243,6 +371,72 @@ function BoardView({
       return haystack.includes(q);
     });
   }, [board.tickets, query]);
+  const orderedTickets = useMemo(
+    () =>
+      board.columns.flatMap((column) =>
+        filteredTickets.filter((ticket) => ticket.status === column.id).sort((a, b) => a.position - b.position)
+      ),
+    [board.columns, filteredTickets]
+  );
+  const orderedTicketIds = useMemo(() => orderedTickets.map((ticket) => ticket.id), [orderedTickets]);
+  const createShortcut = createTicketShortcutLabel();
+
+  const setTicketButtonRef = useCallback((ticketId: string, node: HTMLButtonElement | null): void => {
+    if (node) {
+      ticketButtonRefs.current.set(ticketId, node);
+    } else {
+      ticketButtonRefs.current.delete(ticketId);
+    }
+  }, []);
+
+  const isBoardBrowsingTarget = useCallback((event: Parameters<typeof ticketNavigationDirection>[0]): boolean => {
+    const boardNode = boardRef.current;
+    if (!boardNode) return false;
+    if (event.target === document.body || event.target === document.documentElement) return true;
+    return event.target instanceof Node && boardNode.contains(event.target);
+  }, []);
+
+  const focusTicket = useCallback(
+    (direction: ShortcutDirection): boolean => {
+      if (orderedTicketIds.length === 0) return false;
+
+      const activeTicket = document.activeElement instanceof Element ? document.activeElement.closest<HTMLElement>("[data-ticket-id]") : null;
+      const currentTicketId = activeTicket?.dataset.ticketId ?? selectedTicketId;
+      const currentIndex = currentTicketId ? orderedTicketIds.indexOf(currentTicketId) : -1;
+      const nextIndex =
+        direction === "next"
+          ? currentIndex < 0
+            ? 0
+            : (currentIndex + 1) % orderedTicketIds.length
+          : currentIndex < 0
+            ? orderedTicketIds.length - 1
+            : (currentIndex - 1 + orderedTicketIds.length) % orderedTicketIds.length;
+      const nextTicketId = orderedTicketIds[nextIndex];
+      const nextButton = ticketButtonRefs.current.get(nextTicketId);
+
+      if (!nextButton) return false;
+      nextButton.focus();
+      setSelectedTicketId(nextTicketId);
+      return true;
+    },
+    [orderedTicketIds, selectedTicketId]
+  );
+
+  useEffect(() => {
+    if (selectedTicketId && !orderedTicketIds.includes(selectedTicketId)) {
+      setSelectedTicketId(null);
+    }
+  }, [orderedTicketIds, selectedTicketId]);
+
+  useKeyboardShortcut({
+    id: "ticket-navigation",
+    enabled: ticketNavigationEnabled && orderedTicketIds.length > 0,
+    matcher: (event) => ticketNavigationDirection(event) !== null && isBoardBrowsingTarget(event),
+    handler: (event) => {
+      const direction = ticketNavigationDirection(event);
+      return direction ? focusTicket(direction) : false;
+    }
+  });
 
   return (
     <main className="workspace">
@@ -264,9 +458,15 @@ function BoardView({
               aria-label="Search tickets"
             />
           </label>
-          <button className="primary-button" onClick={onCreate}>
+          <button
+            className="primary-button"
+            onClick={onCreate}
+            aria-keyshortcuts="Meta+Space Control+Space"
+            title={`Create Ticket (${createShortcut})`}
+          >
             <Plus size={16} />
             Create Ticket
+            <kbd>{createShortcut}</kbd>
           </button>
         </div>
       </div>
@@ -286,13 +486,26 @@ function BoardView({
       )}
 
       <DndContext sensors={sensors} onDragEnd={onMove}>
-        <div className="board">
+        <p className="sr-only" id="ticket-navigation-shortcuts">
+          Use {ticketNavigationShortcutLabel} to move between tickets. Tab moves through controls normally.
+        </p>
+        <div
+          ref={boardRef}
+          className={clsx("board", selectedTicketId && "board-has-focus")}
+          tabIndex={orderedTicketIds.length > 0 ? 0 : undefined}
+          aria-describedby="ticket-navigation-shortcuts"
+          aria-keyshortcuts="ArrowDown ArrowUp ArrowRight ArrowLeft J K"
+          title={`Move between tickets: ${ticketNavigationShortcutLabel}. Tab moves through controls normally.`}
+        >
           {board.columns.map((column) => (
             <DroppableColumn
               key={column.id}
               column={column}
-              tickets={filteredTickets.filter((ticket) => ticket.status === column.id).sort((a, b) => a.position - b.position)}
+              tickets={orderedTickets.filter((ticket) => ticket.status === column.id)}
+              selectedTicketId={selectedTicketId}
               onOpen={onOpenTicket}
+              onTicketFocus={setSelectedTicketId}
+              onTicketButtonRef={setTicketButtonRef}
             />
           ))}
         </div>
@@ -324,6 +537,27 @@ function CreateTicketModal({
   const [draftFailure, setDraftFailure] = useState<TicketDraftErrorPayload | null>(null);
   const [draftProgress, setDraftProgress] = useState<LocalAgentProgress | null>(null);
   const draftRequestRef = useRef(0);
+  const hasUnsavedInput = useMemo(
+    () =>
+      busy ||
+      saving ||
+      priority !== "medium" ||
+      [idea, manualTitle, manualMarkdown, labels].some((value) => value.trim().length > 0),
+    [busy, idea, labels, manualMarkdown, manualTitle, priority, saving]
+  );
+
+  useShortcutOverlay({
+    id: "create-ticket-modal",
+    priority: 100,
+    onEscape: () => {
+      if (hasUnsavedInput) {
+        setToast({ kind: "info", message: "Create ticket has unsaved input. Use Cancel to discard it or Save Ticket to keep it." });
+        return true;
+      }
+      onClose();
+      return true;
+    }
+  });
 
   const seedManualFallback = (ideaSnapshot: string): void => {
     const fallbackTitle = ideaSnapshot.split("\n")[0]?.trim() || "Untitled Ticket";
@@ -617,6 +851,32 @@ function TicketDetail({
     const liveRunEvents = runId ? events.filter((event) => event.runId === runId) : events;
     return mergeRunEvents(persistedEvents, liveRunEvents);
   }, [events, persistedEvents, runId]);
+  const hasUnsavedChanges = useMemo(() => {
+    if (!ticket) return Boolean(busy || submittingAnswerId);
+    return (
+      busy ||
+      Boolean(submittingAnswerId) ||
+      title !== ticket.frontMatter.title ||
+      priority !== ticket.frontMatter.priority ||
+      status !== ticket.frontMatter.status ||
+      labels !== ticket.frontMatter.labels.join(", ") ||
+      markdown !== ticket.markdown ||
+      Object.values(answerDrafts).some((answer) => answer.trim().length > 0)
+    );
+  }, [answerDrafts, busy, labels, markdown, priority, status, submittingAnswerId, ticket, title]);
+
+  useShortcutOverlay({
+    id: `ticket-detail:${ticketId}`,
+    priority: 20,
+    onEscape: () => {
+      if (hasUnsavedChanges) {
+        setToast({ kind: "info", message: "Ticket detail has unsaved input. Save it or use the close button to discard changes." });
+        return true;
+      }
+      onClose();
+      return true;
+    }
+  });
 
   const save = async (): Promise<void> => {
     if (!ticket) return;
@@ -865,6 +1125,14 @@ export function App(): ReactElement {
     );
   }
 
+  return (
+    <KeyboardShortcutProvider>
+      <RelayApp />
+    </KeyboardShortcutProvider>
+  );
+}
+
+function RelayApp(): ReactElement {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardSnapshot | null>(null);
@@ -931,6 +1199,12 @@ export function App(): ReactElement {
     [refreshProjectGitMetadata]
   );
 
+  const updateProjectFromBoard = useCallback((nextBoard: BoardSnapshot): void => {
+    setProjects((current) =>
+      current.map((project) => (project.path === nextBoard.project.path ? { ...project, ...nextBoard.project } : project))
+    );
+  }, []);
+
   const loadProjects = useCallback(async () => {
     const nextProjects = await window.relay.projects.list();
     setProjects(nextProjects);
@@ -949,8 +1223,9 @@ export function App(): ReactElement {
     const nextBoard = await window.relay.board.read(projectPath);
     if (boardRequestRef.current === requestId) {
       setBoard(nextBoard);
+      updateProjectFromBoard(nextBoard);
     }
-  }, [selectedPath]);
+  }, [selectedPath, updateProjectFromBoard]);
 
   const selectProject = useCallback(
     (projectPath: string | null) => {
@@ -1035,6 +1310,7 @@ export function App(): ReactElement {
     if (!ticket || ticket.status === targetStatus) return;
     const nextBoard = await window.relay.ticket.move({ projectPath: selectedPath, ticketId, targetStatus });
     setBoard(nextBoard);
+    updateProjectFromBoard(nextBoard);
   };
 
   const refreshAll = async (): Promise<void> => {
@@ -1046,9 +1322,21 @@ export function App(): ReactElement {
     () => events.filter((event) => event.projectPath === selectedPath && event.ticketId === openTicketId),
     [events, openTicketId, selectedPath]
   );
+  const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !openTicketId);
+
+  useKeyboardShortcut({
+    id: "create-ticket",
+    enabled: createShortcutEnabled,
+    priority: 10,
+    matcher: isCreateTicketShortcut,
+    handler: () => {
+      setCreateOpen(true);
+      return true;
+    }
+  });
 
   return (
-    <div className="app-shell">
+    <div className={clsx("app-shell", openTicketId && "detail-open", createOpen && "modal-open")}>
       <ProjectSidebar
         projects={projects}
         selectedPath={selectedPath}
@@ -1069,6 +1357,7 @@ export function App(): ReactElement {
         <BoardView
           board={board}
           query={query}
+          ticketNavigationEnabled={!createOpen && !openTicketId}
           onQuery={setQuery}
           onCreate={() => setCreateOpen(true)}
           onOpenTicket={setOpenTicketId}

@@ -56,7 +56,15 @@ export type ProjectSummary = {
   health: ProjectHealth;
   healthMessages: string[];
   activeRunCount: number;
+  swimlanes: ProjectSwimlaneSummary[];
   lastOpenedAt?: string;
+};
+
+export type ProjectSwimlaneSummary = {
+  id: string;
+  name: string;
+  position: number;
+  ticketCount: number;
 };
 
 export type GitMetadataState = "loading" | "ready" | "not_git" | "unavailable" | "missing" | "error";
@@ -122,10 +130,48 @@ export type TicketDraft = {
   priority: TicketPriority;
   labels: string[];
   context: string;
+  researchFindings: string[];
   requirements: string[];
+  implementationPlan: string[];
   acceptanceCriteria: string[];
   clarificationQuestions: string[];
   implementationNotes: string[];
+  research: TicketDraftResearch;
+};
+
+export type TicketDraftResearchUrl = {
+  url: string;
+  status: "fetched" | "failed" | "skipped";
+  title: string | null;
+  reason: string | null;
+  charactersRead: number;
+};
+
+export type TicketDraftResearchFile = {
+  path: string;
+  reason: string;
+  symbols: string[];
+  matches: string[];
+  charactersRead: number;
+};
+
+export type TicketDraftResearchLimits = {
+  maxResearchMs: number;
+  maxUrls: number;
+  maxUrlFetchMs: number;
+  maxUrlContentChars: number;
+  maxFilesToScan: number;
+  maxFilesToRead: number;
+  maxFileReadChars: number;
+  maxMatchesPerFile: number;
+};
+
+export type TicketDraftResearch = {
+  generatedAt: string;
+  checkedUrls: TicketDraftResearchUrl[];
+  inspectedFiles: TicketDraftResearchFile[];
+  limitations: string[];
+  limits: TicketDraftResearchLimits;
 };
 
 export type TicketDraftErrorCode =

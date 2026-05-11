@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import type { RendererRunEvent, RunStatus } from "@shared/types";
 import { MarkdownBlock } from "./MarkdownBlock";
+import { useShortcutOverlay } from "../lib/keyboardShortcuts";
 import {
   agentEventLabel,
   agentEventText,
@@ -209,6 +210,14 @@ export function AgentLogViewer({
   onClose: () => void;
 } & CopyHandlers): ReactElement {
   const orderedEvents = useMemo(() => sortAgentEvents(events), [events]);
+  useShortcutOverlay({
+    id: "agent-log-viewer",
+    priority: 110,
+    onEscape: () => {
+      onClose();
+      return true;
+    }
+  });
 
   return (
     <div className="modal-backdrop agent-log-backdrop">

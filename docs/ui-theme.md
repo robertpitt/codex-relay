@@ -24,6 +24,8 @@ The MIT license permits use, modification, and redistribution when the copyright
 
 Prefer semantic tokens that match intent. For example, use `--relay-surface` for panels, `--relay-surface-2` for raised cards, `--relay-input` for editable controls, `--relay-border` for default separators, `--relay-primary` for primary action backgrounds or selected navigation, and `--relay-primary-text` for primary-accent foreground text and icons.
 
+Relay's primary family is a muted dark red. Use the background-oriented primary tokens for filled or selected states, and use `--relay-primary-text` when the primary accent appears as foreground text or icons on dark surfaces.
+
 Repeated UI primitives should inherit from the shared selectors already defined for `button`, `input`, `textarea`, `select`, `.ticket-card`, `.modal`, `.detail-panel`, badges, health alerts, and empty states. Add new class-level styling only when a component needs layout or behavior beyond those primitives.
 
 Keep the design dark-first unless explicit light-mode support is added. If light mode is introduced later, override the same semantic `--relay-*` variables at the theme boundary instead of forking component CSS.
