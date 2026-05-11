@@ -17,7 +17,16 @@ export const DEFAULT_COLUMNS: RelayColumn[] = [
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type TicketType = "task" | "epic";
-export type RunStatus = "idle" | "drafting" | "running" | "blocked" | "failed" | "completed" | "cancelled";
+export type RunStatus =
+  | "idle"
+  | "drafting"
+  | "draft_failed"
+  | "draft_complete"
+  | "running"
+  | "blocked"
+  | "failed"
+  | "completed"
+  | "cancelled";
 export type ProjectHealth = "ok" | "warning" | "error";
 export type ThemePreference = "system" | "light" | "dark";
 export type RelayActor = "user" | "codex" | "system";
@@ -73,6 +82,7 @@ export type ProjectSwimlaneSummary = {
   name: string;
   position: number;
   ticketCount: number;
+  activeRunCount: number;
 };
 
 export type GitMetadataState = "loading" | "ready" | "not_git" | "unavailable" | "missing" | "error";
@@ -225,6 +235,17 @@ export type TicketDraftResult =
   | {
       ok: true;
       draft: TicketDraft;
+    }
+  | {
+      ok: false;
+      error: TicketDraftErrorPayload;
+    };
+
+export type TicketDraftStartResult =
+  | {
+      ok: true;
+      ticket: TicketRecord;
+      runId: string;
     }
   | {
       ok: false;
@@ -440,7 +461,7 @@ export type RelayApi = {
     read: (projectPath: string) => Promise<BoardSnapshot>;
   };
   ticket: {
-    createDraft: (input: CreateDraftInput) => Promise<TicketDraftResult>;
+    createDraft: (input: CreateDraftInput) => Promise<TicketDraftStartResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
     createSubticket: (input: EpicSubticketCreateInput) => Promise<TicketRecord>;
     linkSubticket: (input: EpicSubticketLinkInput) => Promise<BoardSnapshot>;

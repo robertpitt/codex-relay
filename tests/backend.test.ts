@@ -372,7 +372,7 @@ test("missing blocker references warn without crashing board or preflight", asyn
   assert.match(preflight.warnings.join(" "), /Missing blocker reference/);
 });
 
-test("project summaries include ordered swimlane counts including empty lanes", async () => {
+test("project summaries include ordered swimlane counts and active runs including empty lanes", async () => {
   const projectPath = await createProject();
   const firstTicket = await createTicket(projectPath, {
     title: "Todo ticket",
@@ -392,18 +392,26 @@ test("project summaries include ordered swimlane counts including empty lanes", 
     ticketId: firstTicket.frontMatter.id,
     targetStatus: "in_progress"
   });
+  const runningTicket = await readTicket(projectPath, firstTicket.frontMatter.id);
+  await writeTicket(projectPath, {
+    ...runningTicket,
+    frontMatter: {
+      ...runningTicket.frontMatter,
+      runStatus: "running"
+    }
+  });
 
   const summary = await summarizeProject(projectPath);
 
   assert.deepEqual(
-    summary.swimlanes.map((swimlane) => [swimlane.id, swimlane.ticketCount]),
+    summary.swimlanes.map((swimlane) => [swimlane.id, swimlane.ticketCount, swimlane.activeRunCount]),
     [
-      ["todo", 1],
-      ["in_progress", 1],
-      ["needs_clarification", 0],
-      ["review", 0],
-      ["not_doing", 0],
-      ["completed", 0]
+      ["todo", 1, 0],
+      ["in_progress", 1, 1],
+      ["needs_clarification", 0, 0],
+      ["review", 0, 0],
+      ["not_doing", 0, 0],
+      ["completed", 0, 0]
     ]
   );
 });

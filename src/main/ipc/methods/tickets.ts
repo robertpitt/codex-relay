@@ -1,7 +1,7 @@
-import type { TicketDraftResult } from "../../../shared/types";
+import type { TicketDraftStartResult } from "../../../shared/types";
 import {
   cancelTicketUpdateRun,
-  createTicketDraft,
+  startTicketDraftRun,
   startTicketUpdateRun,
   ticketDraftErrorToPayload
 } from "../../services/codex";
@@ -44,9 +44,9 @@ export const ticketIpcMethods = [
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(async (): Promise<TicketDraftResult> => {
+      fromPromise(async (): Promise<TicketDraftStartResult> => {
         try {
-          return { ok: true, draft: await createTicketDraft(createDraftInputSchema.parse(input)) };
+          return { ok: true, ...(await startTicketDraftRun(createDraftInputSchema.parse(input))) };
         } catch (error) {
           return { ok: false, error: ticketDraftErrorToPayload(error) };
         }

@@ -19,7 +19,7 @@ import type {
   RendererRunEvent,
   StartRunInput,
   TicketCreateInput,
-  TicketDraftResult,
+  TicketDraftStartResult,
   TicketMoveInput,
   TicketRecord,
   TicketReferenceCandidate,
@@ -34,7 +34,7 @@ export type RelayIpcContract = {
   "projects:gitMetadata": { args: [projectPath: string, options?: GitMetadataOptions]; result: GitMetadata };
   "projects:revealInFinder": { args: [projectPath: string]; result: void };
   "board:read": { args: [projectPath: string]; result: BoardSnapshot };
-  "ticket:createDraft": { args: [input: CreateDraftInput]; result: TicketDraftResult };
+  "ticket:createDraft": { args: [input: CreateDraftInput]; result: TicketDraftStartResult };
   "ticket:createManual": { args: [projectPath: string, input: TicketCreateInput]; result: TicketRecord };
   "ticket:createSubticket": { args: [input: EpicSubticketCreateInput]; result: TicketRecord };
   "ticket:linkSubticket": { args: [input: EpicSubticketLinkInput]; result: BoardSnapshot };

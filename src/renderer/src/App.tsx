@@ -6,11 +6,12 @@ import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Check,
-  ChevronRight,
   CircleDashed,
   Code2,
   Copy,
   ExternalLink,
+  Folder,
+  FolderOpen,
   FolderPlus,
   Loader2,
   Play,
@@ -162,20 +163,15 @@ const initialCodexStatus: CodexStatus = {
   message: "Checking Codex..."
 };
 
-const shortPath = (projectPath: string): string => {
-  const parts = projectPath.split("/");
-  if (parts.length <= 4) return projectPath;
-  return `.../${parts.slice(-3).join("/")}`;
-};
-
 const projectDisclosureTargetId = (project: ProjectSummary, index: number): string => {
   const stableKey = project.projectId ?? `${project.name}-${index}-${project.path}`;
   return `project-swimlanes-${stableKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 };
 
-const ticketCountLabel = (count: number): string => `${count} ${count === 1 ? "ticket" : "tickets"}`;
+const taskCountLabel = (count: number): string => `${count} ${count === 1 ? "task" : "tasks"}`;
+const activeTaskCountLabel = (count: number): string => `${count} active ${count === 1 ? "task" : "tasks"}`;
 
-const runLabel = (status: TicketSummary["runStatus"]): string => {
+const runLabel = (status: RunStatus): string => {
   switch (status) {
     case "idle":
       return "Idle";
@@ -191,10 +187,35 @@ const runLabel = (status: TicketSummary["runStatus"]): string => {
       return "Cancelled";
     case "drafting":
       return "Drafting";
+    case "draft_failed":
+      return "Draft Failed";
+    case "draft_complete":
+      return "Draft Ready";
     default:
       return "Idle";
   }
 };
+
+export function TicketRunStatusPill({ status }: { status: RunStatus }): ReactElement {
+  return (
+    <span className={clsx("run-pill", status)}>
+      {status === "drafting" && <Loader2 className="spin run-pill-icon" size={12} aria-hidden="true" />}
+      <span>{runLabel(status)}</span>
+    </span>
+  );
+}
+
+export function DraftingTicketDetailLoading({ title }: { title: string }): ReactElement {
+  return (
+    <section className="draft-loading-panel" aria-label="Ticket draft loading state">
+      <Loader2 className="spin" size={22} aria-hidden="true" />
+      <div>
+        <h3>Drafting ticket</h3>
+        <p>Codex is preparing the generated ticket content for {title}.</p>
+      </div>
+    </section>
+  );
+}
 
 const ticketTypeLabel = (ticketType: TicketType): string => (ticketType === "epic" ? "Epic" : "Task");
 
@@ -270,7 +291,6 @@ const copyToast = (kind: "markdown" | "code"): Toast => ({
 export function ProjectSidebar({
   projects,
   selectedPath,
-  gitMetadataByPath,
   loading,
   onAdd,
   onSelect,
@@ -280,7 +300,6 @@ export function ProjectSidebar({
 }: {
   projects: ProjectSummary[];
   selectedPath: string | null;
-  gitMetadataByPath: Record<string, GitMetadata | undefined>;
   loading: boolean;
   onAdd: () => void;
   onSelect: (projectPath: string) => void;
@@ -288,86 +307,100 @@ export function ProjectSidebar({
   onReveal: (projectPath: string) => void;
   defaultExpandedProjectPaths?: string[];
 }): ReactElement {
-  const [expandedProjectPaths, setExpandedProjectPaths] = useState<Set<string>>(() => new Set(defaultExpandedProjectPaths));
+  const [expandedProjectPaths, setExpandedProjectPaths] = useState<Set<string>>(
+    () => new Set([...defaultExpandedProjectPaths, ...(selectedPath ? [selectedPath] : [])])
+  );
 
-  const toggleProject = useCallback((projectPath: string): void => {
+  useEffect(() => {
+    if (!selectedPath) return;
     setExpandedProjectPaths((current) => {
+      if (current.has(selectedPath)) return current;
       const next = new Set(current);
-      if (next.has(projectPath)) {
-        next.delete(projectPath);
-      } else {
-        next.add(projectPath);
-      }
+      next.add(selectedPath);
       return next;
     });
-  }, []);
+  }, [selectedPath]);
+
+  const handleProjectClick = useCallback(
+    (projectPath: string): void => {
+      onSelect(projectPath);
+      setExpandedProjectPaths((current) => {
+        const next = new Set(current);
+        if (selectedPath === projectPath && next.has(projectPath)) {
+          next.delete(projectPath);
+        } else {
+          next.add(projectPath);
+        }
+        return next;
+      });
+    },
+    [onSelect, selectedPath]
+  );
 
   return (
     <aside className="sidebar" aria-label="Projects">
-      <div className="brand">
-        <div className="brand-mark">R</div>
-        <div>
-          <h1>Relay</h1>
-          <p>Local Codex boards</p>
-        </div>
+      <div className="sidebar-heading">
+        <span>Projects</span>
+        <button className="sidebar-icon-button" onClick={onAdd} disabled={loading} aria-label="Add project">
+          {loading ? <Loader2 className="spin" size={16} /> : <FolderPlus size={16} />}
+        </button>
       </div>
-
-      <button className="primary-button full" onClick={onAdd} disabled={loading}>
-        {loading ? <Loader2 className="spin" size={16} /> : <FolderPlus size={16} />}
-        Add Project
-      </button>
 
       <div className="sidebar-list" role="list">
         {projects.map((project, index) => {
-          const gitMetadata = gitMetadataByPath[project.path] ?? loadingGitMetadata();
           const expanded = expandedProjectPaths.has(project.path);
           const swimlaneListId = projectDisclosureTargetId(project, index);
+          const ProjectFolderIcon = expanded ? FolderOpen : Folder;
+          const projectActiveLabel = project.activeRunCount > 0 ? `, ${activeTaskCountLabel(project.activeRunCount)}` : "";
           return (
             <div className="project-group" key={project.path} role="listitem">
-              <div className={clsx("project-row-shell", selectedPath === project.path && "selected")}>
-                <button
-                  type="button"
-                  className="project-disclosure"
-                  onClick={() => toggleProject(project.path)}
-                  aria-expanded={expanded}
-                  aria-controls={swimlaneListId}
-                  aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} swimlanes`}
-                >
-                  <ChevronRight className={clsx("project-disclosure-icon", expanded && "expanded")} size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={clsx("project-row", selectedPath === project.path && "selected")}
-                  onClick={() => onSelect(project.path)}
-                  aria-current={selectedPath === project.path ? "page" : undefined}
-                >
-                  <span className="project-main">
-                    <span className="project-name">{project.name}</span>
-                    <span className="project-path">{shortPath(project.path)}</span>
-                    <GitMetadataPill metadata={gitMetadata} compact />
-                  </span>
-                  <span className="project-badges">
-                    {project.health !== "ok" && <AlertTriangle size={13} />}
-                    {project.activeRunCount > 0 && <CircleDashed size={13} />}
-                  </span>
-                </button>
-              </div>
+              <button
+                type="button"
+                className={clsx("project-folder-row", selectedPath === project.path && "selected", expanded && "expanded")}
+                onClick={() => handleProjectClick(project.path)}
+                aria-current={selectedPath === project.path ? "page" : undefined}
+                aria-expanded={expanded}
+                aria-controls={swimlaneListId}
+                aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} swimlanes${projectActiveLabel}`}
+              >
+                <ProjectFolderIcon className="project-folder-icon" size={18} aria-hidden="true" />
+                <span className="project-folder-name">{project.name}</span>
+                <span className="project-folder-status" aria-hidden="true">
+                  {project.health !== "ok" && <AlertTriangle size={13} />}
+                  {project.activeRunCount > 0 && (
+                    <span className="project-folder-active" title={activeTaskCountLabel(project.activeRunCount)}>
+                      <CircleDashed size={13} />
+                    </span>
+                  )}
+                </span>
+              </button>
               {expanded && (
                 <div id={swimlaneListId} className="project-swimlane-list" role="list" aria-label={`${project.name} swimlanes`}>
                   {project.swimlanes.length > 0 ? (
-                    project.swimlanes.map((swimlane) => (
-                      <div
-                        className="project-swimlane-row"
-                        key={swimlane.id}
-                        role="listitem"
-                        aria-label={`${swimlane.name}: ${ticketCountLabel(swimlane.ticketCount)}`}
-                      >
-                        <span className="project-swimlane-name">{swimlane.name}</span>
-                        <span className="project-swimlane-count" aria-hidden="true">
-                          {swimlane.ticketCount}
-                        </span>
-                      </div>
-                    ))
+                    project.swimlanes.map((swimlane) => {
+                      const hasActiveRun = swimlane.activeRunCount > 0;
+                      const activeLabel = hasActiveRun ? `, ${activeTaskCountLabel(swimlane.activeRunCount)}` : "";
+                      return (
+                        <div
+                          className={clsx("project-swimlane-row", hasActiveRun && "active")}
+                          key={swimlane.id}
+                          role="listitem"
+                          aria-label={`${swimlane.name}: ${taskCountLabel(swimlane.ticketCount)}${activeLabel}`}
+                        >
+                          <span className="project-swimlane-name">{swimlane.name}</span>
+                          <span className="project-swimlane-meta">
+                            {hasActiveRun && (
+                              <span className="project-swimlane-active" title={activeTaskCountLabel(swimlane.activeRunCount)} aria-hidden="true">
+                                <Loader2 className="spin" size={12} />
+                              </span>
+                            )}
+                            <span className="project-swimlane-count" aria-hidden="true">
+                              {swimlane.ticketCount}
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })
                   ) : (
                     <div className="project-swimlane-empty" role="listitem">
                       No swimlanes
@@ -500,7 +533,7 @@ function DraggableCard({
               </span>
             )}
             {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
-            {showRunStatus && <span className={clsx("run-pill", ticket.runStatus)}>{runLabel(ticket.runStatus)}</span>}
+            {showRunStatus && <TicketRunStatusPill status={ticket.runStatus} />}
           </div>
         )}
         {visibleLabels.length > 0 && (
@@ -703,7 +736,7 @@ function CreateTicketModal({
 }: {
   projectPath: string;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: () => void | Promise<void>;
   setToast: (toast: Toast) => void;
 }): ReactElement {
   const [idea, setIdea] = useState("");
@@ -943,47 +976,41 @@ function CreateTicketModal({
     const requestSequence = draftRequestRef.current + 1;
     draftRequestRef.current = requestSequence;
     const ideaSnapshot = idea;
+    let accepted = false;
     setBusy(true);
     setDraft(null);
     setDraftFailure(null);
-    setDraftProgress({ status: "drafting", startedAt: new Date().toISOString() });
+    setDraftProgress(null);
     setDraftMessageKind("info");
-    setDraftMessage("Codex is drafting the ticket. If Codex is not authenticated or does not respond, this will time out after 90 seconds.");
+    setDraftMessage("Creating a pending ticket and starting Codex in the background.");
     try {
       const result = await getRelayApi().ticket.createDraft({ projectPath, idea: ideaSnapshot, preferredTicketType: ticketType });
       if (draftRequestRef.current !== requestSequence) return;
       if (!result.ok) {
         setDraftFailure(result.error);
-        setDraftProgress((current) =>
-          current ? { ...current, status: "failed", endedAt: new Date().toISOString() } : current
-        );
         setToast({ kind: "error", message: result.error.message });
         setDraftMessageKind("error");
         setDraftMessage(result.error.message);
         return;
       }
-      const nextDraft = result.draft;
-      setDraft(nextDraft);
-      setTicketType(nextDraft.ticketType);
+      accepted = true;
+      setBusy(false);
       setTicketReferenceMention(null);
       setDraftFailure(null);
-      setDraftProgress((current) =>
-        current ? { ...current, status: "completed", endedAt: new Date().toISOString() } : current
-      );
-      setDraftMessageKind("info");
-      setDraftMessage("Draft ready. Review and edit the plan before creating it.");
+      setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+      onClose();
+      void Promise.resolve(onCreated()).catch((error) => {
+        setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
+      });
     } catch (error) {
       if (draftRequestRef.current !== requestSequence) return;
       const message = error instanceof Error ? error.message : "Ticket drafting failed.";
       setToast({ kind: "error", message });
       setDraftFailure(null);
-      setDraftProgress((current) =>
-        current ? { ...current, status: "failed", endedAt: new Date().toISOString() } : current
-      );
       setDraftMessageKind("error");
       setDraftMessage(message);
     } finally {
-      if (draftRequestRef.current === requestSequence) setBusy(false);
+      if (!accepted && draftRequestRef.current === requestSequence) setBusy(false);
     }
   };
 
@@ -1167,7 +1194,7 @@ ${idea.trim() || "No additional details provided."}
           <div className="draft-actions">
             <button className="primary-button" onClick={draftTicket} disabled={busy || idea.trim().length === 0}>
               {busy ? <Loader2 className="spin" size={16} /> : draftFailure?.recoverable ? <RefreshCw size={16} /> : <Code2 size={16} />}
-              {busy ? "Drafting..." : draftFailure?.recoverable ? "Retry Codex" : "Draft with Codex"}
+              {busy ? "Starting..." : draftFailure?.recoverable ? "Retry Codex" : "Draft with Codex"}
             </button>
           </div>
         </div>
@@ -1465,7 +1492,10 @@ function TicketDetail({
       events.some(
         (event) =>
           event.ticketId === ticketId &&
-          (event.type === "clarification.requested" || event.type === "run.completed" || event.type === "ticket.status_changed")
+          (event.type === "clarification.requested" ||
+            event.type === "run.completed" ||
+            event.type === "run.failed" ||
+            event.type === "ticket.status_changed")
       )
     ) {
       void load();
@@ -1507,6 +1537,12 @@ function TicketDetail({
     const liveRunEvents = runId ? events.filter((event) => event.runId === runId) : [];
     return mergeRunEvents(persistedEvents, liveRunEvents);
   }, [events, persistedEvents, runId]);
+  const draftInProgress = ticket?.frontMatter.runStatus === "drafting";
+  const draftFailed = ticket?.frontMatter.runStatus === "draft_failed";
+  const draftFailureMessage = useMemo(
+    () => [...currentRunEvents].reverse().find((event) => event.type === "run.failed")?.message ?? "Codex ticket drafting failed.",
+    [currentRunEvents]
+  );
   const ticketUpdateEvents = useMemo(
     () => (ticketUpdateRunId ? events.filter((event) => event.runId === ticketUpdateRunId) : []),
     [events, ticketUpdateRunId]
@@ -1645,6 +1681,10 @@ function TicketDetail({
 
   const save = async (): Promise<void> => {
     if (!ticket) return;
+    if (draftInProgress) {
+      setToast({ kind: "info", message: "Wait for Codex to finish drafting before editing this ticket." });
+      return;
+    }
     if (blockerResolution && blockerResolution.selfBlockerIds.length > 0) {
       setToast({ kind: "error", message: "Remove the self blocker before saving this ticket." });
       return;
@@ -1675,7 +1715,7 @@ function TicketDetail({
   };
 
   const startTicketUpdate = async (): Promise<void> => {
-    if (!ticket || ticketUpdateActive) return;
+    if (!ticket || ticketUpdateActive || draftInProgress) return;
     const request = ticketUpdateRequest.trim();
     if (!request) {
       setTicketUpdateError("Enter a change request before starting the ticket update agent.");
@@ -1717,6 +1757,10 @@ function TicketDetail({
   };
 
   const startRun = async (resume: boolean, freshThread = false): Promise<void> => {
+    if (draftInProgress) {
+      setToast({ kind: "info", message: "Wait for Codex to finish drafting before starting a run." });
+      return;
+    }
     setBusy(true);
     try {
       setRunPreflight(null);
@@ -1920,7 +1964,7 @@ function TicketDetail({
         <header className="detail-header">
           <div>
             <div className="detail-status-row">
-              <span className={clsx("run-pill", ticket.frontMatter.runStatus)}>{runLabel(ticket.frontMatter.runStatus)}</span>
+              <TicketRunStatusPill status={ticket.frontMatter.runStatus} />
               {blockerResolution?.isBlocked && (
                 <span className="ticket-blocker-pill active" title={blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
                   Blocked
@@ -1935,12 +1979,16 @@ function TicketDetail({
         </header>
 
         <div className="detail-actions">
-          <button className="primary-button" onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))} disabled={busy || ticketUpdateActive}>
+          <button
+            className="primary-button"
+            onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))}
+            disabled={busy || ticketUpdateActive || draftInProgress}
+          >
             {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
             {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
           </button>
           {ticket.frontMatter.codexThreadId && (
-            <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive}>
+            <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress}>
               {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
               Start Fresh Thread
             </button>
@@ -1952,42 +2000,60 @@ function TicketDetail({
             </button>
           )}
           {completedStatusAvailable && ticket.frontMatter.status === "review" && (
-            <button onClick={() => void moveTicketTo("completed", "Ticket accepted.")} disabled={busy || ticketUpdateActive}>
+            <button onClick={() => void moveTicketTo("completed", "Ticket accepted.")} disabled={busy || ticketUpdateActive || draftInProgress}>
               <Check size={16} />
               Mark Accepted
             </button>
           )}
           {reviewStatusAvailable && ticket.frontMatter.status === "review" && (
-            <button onClick={requestChanges} disabled={busy || ticketUpdateActive}>
+            <button onClick={requestChanges} disabled={busy || ticketUpdateActive || draftInProgress}>
               <Send size={16} />
               Request Changes
             </button>
           )}
           {ticket.frontMatter.status === "completed" && todoStatusAvailable && (
-            <button onClick={() => void moveTicketTo("todo", "Ticket reopened.")} disabled={busy || ticketUpdateActive}>
+            <button onClick={() => void moveTicketTo("todo", "Ticket reopened.")} disabled={busy || ticketUpdateActive || draftInProgress}>
               <RefreshCw size={16} />
               Reopen
             </button>
           )}
-          <button onClick={save} disabled={busy || ticketUpdateActive}>
+          <button onClick={save} disabled={busy || ticketUpdateActive || draftInProgress}>
             <Save size={16} />
             Save
           </button>
         </div>
 
-        {runPreflight && (!runPreflight.ok || runPreflight.warnings.length > 0) && (
-          <div className={clsx("ticket-update-error", runPreflight.ok ? "warning" : "error")} role={runPreflight.ok ? "status" : "alert"}>
-            <AlertTriangle size={16} />
-            <span>{[...runPreflight.errors, ...runPreflight.warnings].join(" ")}</span>
+        {draftInProgress && (
+          <div className="ticket-update-error warning" role="status">
+            <Loader2 className="spin" size={16} />
+            <span>Codex is drafting this ticket. The generated plan will appear here when the background draft run completes.</span>
           </div>
         )}
 
-        {unansweredClarificationCount > 0 && (
+        {draftFailed && (
           <div className="ticket-update-error" role="alert">
             <AlertTriangle size={16} />
-            <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming Codex.</span>
+            <span>{draftFailureMessage}</span>
           </div>
         )}
+
+        {draftInProgress ? (
+          <DraftingTicketDetailLoading title={ticket.frontMatter.title} />
+        ) : (
+          <>
+            {runPreflight && (!runPreflight.ok || runPreflight.warnings.length > 0) && (
+              <div className={clsx("ticket-update-error", runPreflight.ok ? "warning" : "error")} role={runPreflight.ok ? "status" : "alert"}>
+                <AlertTriangle size={16} />
+                <span>{[...runPreflight.errors, ...runPreflight.warnings].join(" ")}</span>
+              </div>
+            )}
+
+            {unansweredClarificationCount > 0 && (
+              <div className="ticket-update-error" role="alert">
+                <AlertTriangle size={16} />
+                <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming Codex.</span>
+              </div>
+            )}
 
         {blockerResolution?.isBlocked && (
           <div className="ticket-update-error warning" role="alert">
@@ -2199,7 +2265,7 @@ function TicketDetail({
               className="ticket-update-input"
               value={ticketUpdateRequest}
               placeholder="Add acceptance criteria, revise requirements, capture new context..."
-              disabled={ticketUpdateActive}
+              disabled={ticketUpdateActive || draftInProgress}
               onChange={(event) => {
                 setTicketUpdateRequest(event.target.value);
                 if (ticketUpdateError) setTicketUpdateError(null);
@@ -2210,7 +2276,7 @@ function TicketDetail({
             <button
               className="primary-button"
               onClick={() => void startTicketUpdate()}
-              disabled={ticketUpdateActive || ticketUpdateRequest.trim().length === 0}
+              disabled={ticketUpdateActive || draftInProgress || ticketUpdateRequest.trim().length === 0}
             >
               {ticketUpdateActive ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
               Update Ticket
@@ -2246,12 +2312,12 @@ function TicketDetail({
         <div className="editor-stack">
           <label className="field">
             <span>Title</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            <input value={title} onChange={(event) => setTitle(event.target.value)} disabled={draftInProgress} />
           </label>
           <div className="two-fields">
             <label className="field">
               <span>Status</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
                 {board.columns.map((column) => (
                   <option value={column.id} key={column.id}>
                     {column.name}
@@ -2261,7 +2327,7 @@ function TicketDetail({
             </label>
             <label className="field">
               <span>Priority</span>
-              <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)}>
+              <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
                 {priorityOptions.map((option) => (
                   <option key={option}>{option}</option>
                 ))}
@@ -2270,11 +2336,16 @@ function TicketDetail({
           </div>
           <label className="field">
             <span>Labels</span>
-            <input value={labels} onChange={(event) => setLabels(event.target.value)} />
+            <input value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
           </label>
           <label className="field">
             <span>Markdown</span>
-            <textarea className="markdown-editor detail-markdown" value={markdown} onChange={(event) => setMarkdown(event.target.value)} />
+            <textarea
+              className="markdown-editor detail-markdown"
+              value={markdown}
+              onChange={(event) => setMarkdown(event.target.value)}
+              disabled={draftInProgress}
+            />
           </label>
           <MarkdownBlock
             className="ticket-markdown-preview"
@@ -2284,6 +2355,8 @@ function TicketDetail({
             onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
           />
         </div>
+          </>
+        )}
 
         <AgentActivityPanel
           events={currentRunEvents}
@@ -2295,16 +2368,18 @@ function TicketDetail({
           onRevealFile={() => void getRelayApi().ticket.revealFile(projectPath, ticketId)}
         />
 
-        <div className="danger-row">
-          <button onClick={duplicate}>
-            <Copy size={16} />
-            Duplicate
-          </button>
-          <button className="danger" onClick={remove}>
-            <Trash2 size={16} />
-            Delete
-          </button>
-        </div>
+        {!draftInProgress && (
+          <div className="danger-row">
+            <button onClick={duplicate}>
+              <Copy size={16} />
+              Duplicate
+            </button>
+            <button className="danger" onClick={remove}>
+              <Trash2 size={16} />
+              Delete
+            </button>
+          </div>
+        )}
       </aside>
       {logViewerOpen && (
         <AgentLogViewer
@@ -2557,7 +2632,6 @@ function RelayApp(): ReactElement {
       <ProjectSidebar
         projects={projects}
         selectedPath={selectedPath}
-        gitMetadataByPath={gitMetadataByPath}
         loading={loading}
         onAdd={addProject}
         onSelect={selectProject}

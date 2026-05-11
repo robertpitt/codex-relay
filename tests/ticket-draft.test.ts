@@ -7,14 +7,16 @@ import {
   createTicketDraft,
   draftToCreateInput,
   extractTicketDraftUrls,
+  startTicketDraftRun,
   TicketDraftServiceError,
   type TicketDraftCodexClient,
   type TicketDraftDependencies,
+  type TicketDraftStartDependencies,
   type TicketDraftThread
 } from "../src/main/services/codex";
-import { initializeProject, readBoard } from "../src/main/services/storage";
+import { initializeProject, readBoard, readTicket } from "../src/main/services/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
-import type { CodexStatus } from "../src/shared/types";
+import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
 
 const readyStatus: CodexStatus = {
   sdkAvailable: true,
@@ -32,6 +34,7 @@ const createProject = async (): Promise<string> => {
 
 type TicketDraftRunOptions = NonNullable<Parameters<TicketDraftThread["run"]>[1]> & { signal: AbortSignal };
 type TicketDraftRunResult = Awaited<ReturnType<TicketDraftThread["run"]>>;
+type TicketDraftRunResolver = (value: Pick<TicketDraftRunResult, "finalResponse">) => void;
 type TicketDraftRunMock = (
   prompt: string,
   options: TicketDraftRunOptions
@@ -47,6 +50,30 @@ const createDraftCodexClient = (run: TicketDraftRunMock): TicketDraftCodexClient
     }
   })
 });
+
+const createFakeRunEventSink = (): {
+  runEventSink: NonNullable<TicketDraftStartDependencies["runEventSink"]>;
+  events: RendererRunEvent[];
+} => {
+  const events: RendererRunEvent[] = [];
+  return {
+    runEventSink: {
+      emit: (event: RendererRunEvent) => {
+        events.push(event);
+      }
+    },
+    events
+  };
+};
+
+const waitFor = async (predicate: () => boolean | Promise<boolean>, label: string): Promise<void> => {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail(`Timed out waiting for ${label}`);
+};
 
 const validDraftJson = (title: string): string =>
   JSON.stringify({
@@ -132,6 +159,138 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
   assert.doesNotMatch(fallbackSubtext, /Recoverable timeout handling/);
   assert.doesNotMatch(fallbackSubtext, /[#*\[\]]/);
   assert.ok(fallbackSubtext.length <= 83);
+});
+
+test("async ticket draft creates a Todo placeholder before Codex completes and applies the draft later", async () => {
+  const projectPath = await createProject();
+  const { runEventSink, events } = createFakeRunEventSink();
+  let resolveDraft: TicketDraftRunResolver | null = null;
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_async_draft",
+    createRequestId: () => "tdr_async_draft",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient(
+        () =>
+          new Promise((resolve) => {
+            resolveDraft = resolve;
+          })
+      )
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Make ticket drafting asynchronous" }, dependencies);
+  const pending = await readTicket(projectPath, started.ticket.frontMatter.id);
+  const pendingBoard = await readBoard(projectPath);
+
+  assert.equal(started.runId, "run_async_draft");
+  assert.equal(pending.frontMatter.status, "todo");
+  assert.equal(pending.frontMatter.runStatus, "drafting");
+  assert.equal(pending.frontMatter.lastRunId, "run_async_draft");
+  assert.match(pending.frontMatter.title, /^Draft: Make ticket drafting asynchronous/);
+  assert.match(pending.markdown, /Original Idea/);
+  assert.match(pending.markdown, /Make ticket drafting asynchronous/);
+  assert.equal(pendingBoard.tickets.length, 1);
+  assert.equal(pendingBoard.tickets[0].runStatus, "drafting");
+  assert.equal(events[0]?.type, "run.started");
+
+  await waitFor(() => resolveDraft !== null, "Codex draft request to start");
+  const completeDraft = resolveDraft as unknown as TicketDraftRunResolver;
+  completeDraft({ finalResponse: validDraftJson("Asynchronous ticket drafting") });
+
+  await waitFor(async () => (await readTicket(projectPath, pending.frontMatter.id)).frontMatter.runStatus === "draft_complete", "draft completion");
+  const completed = await readTicket(projectPath, pending.frontMatter.id);
+  const completedBoard = await readBoard(projectPath);
+
+  assert.equal(completed.frontMatter.title, "Asynchronous ticket drafting");
+  assert.equal(completed.frontMatter.runStatus, "draft_complete");
+  assert.equal(completed.frontMatter.lastRunId, "run_async_draft");
+  assert.match(completed.markdown, /## Requirements/);
+  assert.equal(completedBoard.tickets.length, 1);
+  assert.equal(completedBoard.tickets[0].id, pending.frontMatter.id);
+  assert.equal(events.at(-1)?.type, "run.completed");
+});
+
+test("async ticket draft keeps the pending ticket visible when Codex drafting fails", async () => {
+  const projectPath = await createProject();
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_async_failed_draft",
+    createRequestId: () => "tdr_async_failed_draft",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient(async () => {
+        throw new Error("model unavailable");
+      })
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Preserve failed draft ideas" }, dependencies);
+
+  await waitFor(async () => (await readTicket(projectPath, started.ticket.frontMatter.id)).frontMatter.runStatus === "draft_failed", "draft failure");
+  const failed = await readTicket(projectPath, started.ticket.frontMatter.id);
+  const board = await readBoard(projectPath);
+
+  assert.equal(failed.frontMatter.status, "todo");
+  assert.equal(failed.frontMatter.runStatus, "draft_failed");
+  assert.match(failed.markdown, /Recoverable Error/);
+  assert.match(failed.markdown, /model unavailable/);
+  assert.match(failed.markdown, /Preserve failed draft ideas/);
+  assert.equal(board.tickets.length, 1);
+  assert.equal(board.tickets[0].id, started.ticket.frontMatter.id);
+  assert.equal(events.at(-1)?.type, "run.failed");
+});
+
+test("async ticket drafts can run concurrently and update only their own placeholder tickets", async () => {
+  const projectPath = await createProject();
+  const { runEventSink } = createFakeRunEventSink();
+  const resolvers: Array<(value: Pick<TicketDraftRunResult, "finalResponse">) => void> = [];
+  let runCounter = 0;
+  let requestCounter = 0;
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => `run_async_${++runCounter}`,
+    createRequestId: () => `tdr_async_${++requestCounter}`,
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient(
+        () =>
+          new Promise((resolve) => {
+            resolvers.push(resolve);
+          })
+      )
+  };
+
+  const first = await startTicketDraftRun({ projectPath, idea: "Draft the first ticket" }, dependencies);
+  const second = await startTicketDraftRun({ projectPath, idea: "Draft the second ticket" }, dependencies);
+  const pendingBoard = await readBoard(projectPath);
+
+  assert.equal(pendingBoard.tickets.length, 2);
+  assert.deepEqual(
+    pendingBoard.tickets.map((ticket) => ticket.runStatus),
+    ["drafting", "drafting"]
+  );
+  assert.notEqual(first.ticket.frontMatter.id, second.ticket.frontMatter.id);
+
+  await waitFor(() => resolvers.length === 2, "both Codex draft requests to start");
+  resolvers[1]({ finalResponse: validDraftJson("Second async draft") });
+
+  await waitFor(async () => (await readTicket(projectPath, second.ticket.frontMatter.id)).frontMatter.runStatus === "draft_complete", "second draft completion");
+  assert.equal((await readTicket(projectPath, first.ticket.frontMatter.id)).frontMatter.runStatus, "drafting");
+  assert.equal((await readTicket(projectPath, second.ticket.frontMatter.id)).frontMatter.title, "Second async draft");
+
+  resolvers[0]({ finalResponse: validDraftJson("First async draft") });
+
+  await waitFor(async () => (await readTicket(projectPath, first.ticket.frontMatter.id)).frontMatter.runStatus === "draft_complete", "first draft completion");
+  const finalBoard = await readBoard(projectPath);
+  assert.equal(finalBoard.tickets.length, 2);
+  assert.deepEqual(
+    finalBoard.tickets.map((ticket) => ticket.title).sort(),
+    ["First async draft", "Second async draft"]
+  );
 });
 
 test("ticket draft prompt preserves markdown ticket references from the idea", async () => {

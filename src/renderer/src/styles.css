@@ -256,7 +256,7 @@ kbd {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 252px minmax(0, 1fr);
+  grid-template-columns: 282px minmax(0, 1fr);
   height: 100dvh;
   min-width: 0;
   overflow: hidden;
@@ -294,61 +294,44 @@ kbd {
   min-height: 0;
   border-right: 0;
   background:
-    linear-gradient(180deg, rgb(255 255 255 / 3%) 0%, transparent 36%),
-    linear-gradient(180deg, color-mix(in srgb, var(--relay-sidebar) 92%, white) 0%, var(--relay-sidebar) 100%);
-  padding: 18px 14px 16px;
+    linear-gradient(180deg, rgb(255 255 255 / 3%) 0%, transparent 34%),
+    linear-gradient(155deg, color-mix(in srgb, var(--relay-sidebar) 86%, white) 0%, var(--relay-sidebar) 52%, #111111 100%);
+  padding: 24px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   box-shadow:
     inset -1px 0 0 rgb(255 255 255 / 4%),
     var(--relay-inset-highlight);
 }
 
-.brand {
+.sidebar-heading {
   display: flex;
   align-items: center;
-  gap: 11px;
-  min-width: 0;
-  padding: 2px 2px 4px;
-}
-
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: var(--relay-radius-md);
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 10%), transparent),
-    var(--relay-surface-3);
-  color: var(--relay-primary-text);
-  display: grid;
-  place-items: center;
-  font-weight: 680;
-  font-size: var(--relay-text-lg);
-  box-shadow:
-    var(--relay-inset-highlight),
-    0 10px 24px rgb(0 0 0 / 22%);
-}
-
-.brand h1,
-.brand p,
-.topbar h1,
-.topbar p {
-  margin: 0;
-}
-
-.brand h1 {
-  font-size: var(--relay-text-lg);
-  font-weight: 620;
-  line-height: 1.15;
-  letter-spacing: 0;
-}
-
-.brand p {
-  margin-top: 2px;
+  justify-content: space-between;
+  gap: var(--relay-space-3);
+  min-height: 32px;
+  padding: 0 4px 4px;
   color: var(--relay-text-subtle);
-  font-size: var(--relay-text-sm);
+  font-size: 16px;
+  font-weight: 520;
+  line-height: 1.2;
+}
+
+.sidebar-icon-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border-radius: var(--relay-radius-sm);
+  color: var(--relay-text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-icon-button:hover {
+  background: rgb(255 255 255 / 6%);
+  color: var(--relay-text);
 }
 
 .primary-button {
@@ -387,171 +370,102 @@ kbd {
 .sidebar-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: 0 1px 2px 0;
 }
 
 .project-group {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
-.project-row-shell {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  align-items: stretch;
-  border-radius: var(--relay-radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  transition:
-    background-color 160ms var(--relay-ease),
-    border-color 160ms var(--relay-ease),
-    box-shadow 180ms var(--relay-ease),
-    color 160ms var(--relay-ease);
-}
-
-.project-row-shell:hover {
-  background: rgb(255 255 255 / 4.5%);
-  box-shadow: var(--relay-inset-highlight);
-}
-
-.project-row-shell.selected {
-  border-color: transparent;
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 6%), transparent),
-    color-mix(in srgb, var(--relay-primary-muted) 74%, transparent);
-  color: var(--relay-text);
-  box-shadow:
-    var(--relay-inset-highlight),
-    inset 0 0 0 1px color-mix(in srgb, var(--relay-primary) 16%, transparent),
-    0 10px 24px rgb(0 0 0 / 14%);
-}
-
-.project-disclosure {
-  width: 30px;
-  min-height: 50px;
-  border: 0;
-  border-radius: var(--relay-radius-md) 0 0 var(--relay-radius-md);
-  background: transparent;
-  color: var(--relay-text-subtle);
-  padding: 0;
-  box-shadow: none;
-}
-
-.project-disclosure:hover {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-
-.project-disclosure:active {
-  transform: none;
-}
-
-.project-disclosure-icon {
-  transition: transform 180ms var(--relay-spring);
-}
-
-.project-disclosure-icon.expanded {
-  transform: rotate(90deg);
-}
-
-.project-row {
+.project-folder-row {
   width: 100%;
   min-width: 0;
-  min-height: 50px;
-  justify-content: space-between;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
   text-align: left;
-  padding: 9px 9px 9px 0;
+  padding: 5px 8px;
   border: 0;
-  border-radius: 0 var(--relay-radius-md) var(--relay-radius-md) 0;
+  border-radius: var(--relay-radius-md);
   background: transparent;
+  color: var(--relay-text-muted);
   box-shadow: none;
+  font-size: 15px;
+  line-height: 1.2;
+  transition:
+    background-color 140ms var(--relay-ease),
+    color 140ms var(--relay-ease);
 }
 
-.project-row:hover {
-  border-color: transparent;
-  background: transparent;
-}
-
-.project-row.selected {
-  border-color: transparent;
-  background: transparent;
+.project-folder-row:hover,
+.project-folder-row:focus-visible {
+  background: rgb(255 255 255 / 5%);
   color: var(--relay-text);
 }
 
-.project-main {
+.project-folder-row.selected {
+  color: var(--relay-text);
+}
+
+.project-folder-row.selected:not(.expanded) {
+  background: rgb(255 255 255 / 7%);
+}
+
+.project-folder-icon {
+  color: rgb(255 255 255 / 70%);
+}
+
+.project-folder-name {
   min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.project-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 560;
-  color: rgb(255 255 255 / 82%);
+  font-weight: 520;
 }
 
-.project-path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--relay-text-subtle);
-  font-size: var(--relay-text-sm);
-}
-
-.project-badges {
-  color: var(--relay-warning);
+.project-folder-status {
   display: flex;
   align-items: center;
-  gap: var(--relay-space-1);
+  gap: 6px;
   flex-shrink: 0;
+  color: var(--relay-warning-text);
 }
 
-.project-main .git-metadata {
-  justify-self: start;
-  max-width: 100%;
-  max-height: 0;
-  opacity: 0;
-  transform: translateY(-2px);
-  transition:
-    max-height 180ms var(--relay-ease),
-    opacity 180ms var(--relay-ease),
-    transform 180ms var(--relay-spring);
-}
-
-.project-row-shell:hover .project-main .git-metadata,
-.project-row-shell:focus-within .project-main .git-metadata,
-.project-row-shell.selected .project-main .git-metadata {
-  max-height: 24px;
-  opacity: 1;
-  transform: translateY(0);
+.project-folder-active {
+  display: inline-flex;
+  color: var(--relay-warning-text);
 }
 
 .project-swimlane-list {
   display: grid;
-  gap: 3px;
-  margin: 2px 0 var(--relay-space-2) 30px;
-  padding-left: var(--relay-space-3);
-  box-shadow: inset 1px 0 0 rgb(255 255 255 / 4%);
+  gap: 1px;
+  margin: 1px 0 var(--relay-space-2) 31px;
+  padding: 0;
 }
 
 .project-swimlane-row {
-  min-height: 30px;
+  min-height: 32px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--relay-space-2);
-  border-radius: var(--relay-radius-sm);
+  gap: 10px;
+  border-radius: var(--relay-radius-md);
   color: var(--relay-text-muted);
-  font-size: var(--relay-text-sm);
-  padding: 5px 8px;
+  font-size: 14px;
+  padding: 5px 8px 5px 10px;
+}
+
+.project-swimlane-row.active {
+  background: rgb(255 255 255 / 7.5%);
+  color: var(--relay-text);
 }
 
 .project-swimlane-name {
@@ -561,16 +475,29 @@ kbd {
   white-space: nowrap;
 }
 
+.project-swimlane-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 34px;
+}
+
+.project-swimlane-active {
+  display: inline-flex;
+  color: var(--relay-warning-text);
+}
+
 .project-swimlane-count {
-  min-width: 24px;
-  border: 0;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 5%);
-  color: var(--relay-text);
+  min-width: 20px;
+  color: var(--relay-text-subtle);
   font-variant-numeric: tabular-nums;
-  line-height: 1.35;
-  padding: 1px 6px;
-  text-align: center;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.project-swimlane-row.active .project-swimlane-count {
+  color: var(--relay-text-muted);
 }
 
 .project-swimlane-empty {
@@ -584,7 +511,23 @@ kbd {
   margin-top: auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--relay-space-2);
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(255 255 255 / 5%);
+}
+
+.sidebar-actions button {
+  min-height: 32px;
+  padding: 6px 9px;
+  border-radius: var(--relay-radius-sm);
+  background: transparent;
+  color: var(--relay-text-muted);
+  box-shadow: none;
+}
+
+.sidebar-actions button:hover {
+  background: rgb(255 255 255 / 5%);
+  color: var(--relay-text);
 }
 
 .workspace {
@@ -609,6 +552,7 @@ kbd {
 }
 
 .topbar h1 {
+  margin: 0;
   max-width: min(56vw, 720px);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -620,8 +564,8 @@ kbd {
 }
 
 .topbar p {
+  margin: 4px 0 0;
   max-width: min(58vw, 760px);
-  margin-top: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -953,6 +897,14 @@ kbd {
   line-height: 1.2;
 }
 
+.run-pill {
+  gap: 5px;
+}
+
+.run-pill-icon {
+  flex: 0 0 auto;
+}
+
 .git-metadata {
   min-width: 0;
   max-width: min(100%, 360px);
@@ -1052,13 +1004,15 @@ kbd {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--relay-warning) 18%, transparent);
 }
 
-.run-pill.completed {
+.run-pill.completed,
+.run-pill.draft_complete {
   background: var(--relay-success-muted);
   color: var(--relay-success-text);
 }
 
 .run-pill.failed,
-.run-pill.cancelled {
+.run-pill.cancelled,
+.run-pill.draft_failed {
   background: var(--relay-danger-muted);
   color: var(--relay-danger-text);
 }
@@ -2145,6 +2099,36 @@ kbd {
   color: #fbbf24;
 }
 
+.draft-loading-panel {
+  margin-top: var(--relay-space-4);
+  min-height: 240px;
+  border-radius: var(--relay-radius-md);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 5%), transparent),
+    var(--relay-surface);
+  color: var(--relay-text);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--relay-space-3);
+  padding: var(--relay-space-4);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 5%);
+}
+
+.draft-loading-panel h3 {
+  margin: 0 0 4px;
+  font-size: var(--relay-text-lg);
+  font-weight: 580;
+}
+
+.draft-loading-panel p {
+  margin: 0;
+  color: var(--relay-text-muted);
+  line-height: 1.45;
+}
+
 .detail-markdown {
   min-height: 360px;
 }
@@ -2684,7 +2668,7 @@ kbd {
     flex: 0 0 214px;
   }
 
-  .project-row {
+  .project-folder-row {
     min-width: 0;
   }
 

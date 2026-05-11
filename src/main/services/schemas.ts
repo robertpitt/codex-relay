@@ -51,6 +51,8 @@ export const ticketTypeSchema = z.enum(["task", "epic"]) satisfies z.ZodType<Tic
 export const runStatusSchema = z.enum([
   "idle",
   "drafting",
+  "draft_failed",
+  "draft_complete",
   "running",
   "blocked",
   "failed",

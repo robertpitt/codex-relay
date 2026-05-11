@@ -147,6 +147,10 @@ const statusCopy = (
   switch (status) {
     case "drafting":
       return { statusLabel: "Drafting", statusDetail: "Codex is preparing a ticket draft.", statusTone: "active" };
+    case "draft_failed":
+      return { statusLabel: "Draft failed", statusDetail: "The ticket draft run ended with an error.", statusTone: "danger" };
+    case "draft_complete":
+      return { statusLabel: "Draft ready", statusDetail: "The generated ticket draft is ready.", statusTone: "success" };
     case "running":
       return { statusLabel: "Active", statusDetail: "Codex is working on this ticket.", statusTone: "active" };
     case "blocked":

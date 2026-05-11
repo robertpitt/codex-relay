@@ -4,10 +4,12 @@ import {
   DEFAULT_COLUMNS,
   RELAY_REVIEW_STATUS,
   RELAY_SCHEMA_VERSION,
+  RELAY_TODO_STATUS,
   type BoardSnapshot,
   type ClarificationQuestion,
   type ClarificationQuestionStore,
   type ClarificationQuestionCreateInput,
+  type CreateDraftInput,
   type InvalidTicket,
   type ProjectConfig,
   type ProjectSettings,
@@ -79,6 +81,9 @@ const defaultSettings = (): ProjectSettings => ({
 });
 
 const nowIso = (): string => new Date().toISOString();
+
+const isSidebarActiveRunStatus = (status: TicketSummary["runStatus"]): boolean =>
+  status === "drafting" || status === "running" || status === "blocked";
 
 const normalizeProjectColumns = (columns: RelayColumn[]): RelayColumn[] => {
   const normalized = columns.map((column) => ({ ...column }));
@@ -208,19 +213,24 @@ export const summarizeProject = async (projectPath: string, lastOpenedAt?: strin
     try {
       config = await readProjectConfig(resolved);
       const tickets = await readTickets(resolved, config.columns);
-      const ticketCountsByStatus = tickets.tickets.reduce((counts, ticket) => {
-        counts.set(ticket.status, (counts.get(ticket.status) ?? 0) + 1);
-        return counts;
-      }, new Map<string, number>());
+      const ticketCountsByStatus = new Map<string, number>();
+      const activeRunCountsByStatus = new Map<string, number>();
+      for (const ticket of tickets.tickets) {
+        ticketCountsByStatus.set(ticket.status, (ticketCountsByStatus.get(ticket.status) ?? 0) + 1);
+        if (isSidebarActiveRunStatus(ticket.runStatus)) {
+          activeRunCountsByStatus.set(ticket.status, (activeRunCountsByStatus.get(ticket.status) ?? 0) + 1);
+        }
+      }
       swimlanes = [...config.columns]
         .sort((a, b) => a.position - b.position)
         .map((column) => ({
           id: column.id,
           name: column.name,
           position: column.position,
-          ticketCount: ticketCountsByStatus.get(column.id) ?? 0
+          ticketCount: ticketCountsByStatus.get(column.id) ?? 0,
+          activeRunCount: activeRunCountsByStatus.get(column.id) ?? 0
         }));
-      activeRunCount = tickets.tickets.filter((ticket) => ticket.runStatus === "running" || ticket.runStatus === "blocked").length;
+      activeRunCount = tickets.tickets.filter((ticket) => isSidebarActiveRunStatus(ticket.runStatus)).length;
       if (tickets.invalidTickets.length > 0) {
         healthMessages.push(`${tickets.invalidTickets.length} ticket file(s) need attention.`);
       }
@@ -589,6 +599,53 @@ ${markdownList(draft.implementationNotes)}
 No Codex run has been started.
 `;
 
+const normalizeDraftIdea = (idea: string): string => idea.replace(/\s+/g, " ").trim();
+
+const truncateTitle = (value: string, maxLength = 80): string => {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
+};
+
+const pendingTicketDraftTitle = (idea: string, ticketType?: TicketType): string => {
+  const normalized = normalizeDraftIdea(idea).replace(/^#+\s*/, "");
+  const fallback = ticketType === "epic" ? "Untitled epic draft" : "Untitled ticket draft";
+  return `Draft: ${truncateTitle(normalized || fallback)}`;
+};
+
+const ticketMarkdownFromPendingDraft = (title: string, idea: string): string => `# ${title}
+
+## Drafting State
+
+Codex is drafting this ticket. The generated plan will replace this placeholder when the draft run completes.
+
+## Original Idea
+
+${idea.trim() || "No idea was provided."}
+
+## Codex Handoff
+
+Ticket draft generation is in progress.
+`;
+
+const ticketMarkdownFromDraftFailure = (title: string, idea: string, message: string): string => `# ${title}
+
+## Drafting State
+
+Codex ticket drafting failed. The original idea is preserved so this ticket can be edited manually or retried later.
+
+## Recoverable Error
+
+${message.trim() || "Ticket drafting failed."}
+
+## Original Idea
+
+${idea.trim() || "No idea was provided."}
+
+## Codex Handoff
+
+Ticket draft generation failed before a generated plan could be applied.
+`;
+
 const createSingleTicket = async (projectPath: string, input: TicketCreateInput): Promise<TicketRecord> => {
   const config = await readProjectConfig(projectPath);
   const status = input.status ?? "todo";
@@ -630,6 +687,37 @@ const createSingleTicket = async (projectPath: string, input: TicketCreateInput)
   return writeTicket(projectPath, ticket);
 };
 
+export const createPendingTicketDraft = async (
+  projectPath: string,
+  input: CreateDraftInput,
+  runId: string
+): Promise<TicketRecord> => {
+  const idea = input.idea.trim();
+  if (!idea) {
+    throw new Error("Describe the ticket idea before drafting with Codex.");
+  }
+
+  const ticketType = input.preferredTicketType ?? "task";
+  const title = pendingTicketDraftTitle(idea, ticketType);
+  const placeholder = await createSingleTicket(projectPath, {
+    title,
+    priority: "medium",
+    labels: [],
+    markdown: ticketMarkdownFromPendingDraft(title, idea),
+    status: RELAY_TODO_STATUS,
+    ticketType
+  });
+
+  return writeTicket(projectPath, {
+    ...placeholder,
+    frontMatter: {
+      ...placeholder.frontMatter,
+      runStatus: "drafting",
+      lastRunId: runId
+    }
+  });
+};
+
 const createSubticketRecord = async (
   projectPath: string,
   epicId: string,
@@ -668,6 +756,62 @@ export const createTicket = async (projectPath: string, input: TicketCreateInput
   }
 
   return readTicket(projectPath, ticket.frontMatter.id);
+};
+
+export const applyTicketDraftToTicket = async (
+  projectPath: string,
+  ticketId: string,
+  draft: TicketDraft,
+  runId: string
+): Promise<TicketRecord> => {
+  const existing = await readTicket(projectPath, ticketId);
+  const updated = await writeTicket(projectPath, {
+    ...existing,
+    markdown: ticketMarkdownFromDraft(draft),
+    frontMatter: {
+      ...existing.frontMatter,
+      title: draft.title.trim(),
+      ticketType: draft.ticketType,
+      priority: draft.priority,
+      labels: draft.labels.map((label) => label.trim()).filter(Boolean),
+      parentEpicId: null,
+      subticketIds: [],
+      runStatus: "draft_complete",
+      lastRunId: runId
+    }
+  });
+
+  if (draft.ticketType === "epic") {
+    for (const subticket of draft.subtickets) {
+      await createSubticketRecord(projectPath, updated.frontMatter.id, {
+        title: subticket.title,
+        priority: subticket.priority,
+        labels: subticket.labels,
+        markdown: ticketMarkdownFromSubticketDraft(subticket, draft.title)
+      });
+    }
+  }
+
+  return readTicket(projectPath, updated.frontMatter.id);
+};
+
+export const failPendingTicketDraft = async (
+  projectPath: string,
+  ticketId: string,
+  idea: string,
+  runId: string,
+  message: string
+): Promise<TicketRecord> => {
+  const existing = await readTicket(projectPath, ticketId);
+  return writeTicket(projectPath, {
+    ...existing,
+    markdown: ticketMarkdownFromDraftFailure(existing.frontMatter.title, idea, message),
+    frontMatter: {
+      ...existing.frontMatter,
+      runStatus: "draft_failed",
+      lastRunId: runId
+    }
+  });
 };
 
 export const createSubticket = async ({ projectPath, epicId, ticket }: EpicSubticketCreateInput): Promise<TicketRecord> =>

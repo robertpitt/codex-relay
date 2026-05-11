@@ -1,8 +1,8 @@
 # Relay
 
-Relay is a local-first desktop app for managing software work as kanban cards and running Codex against those cards. It is built with Electron, React, TypeScript, and `@openai/codex-sdk`.
+Relay is a local-first Electron desktop app for managing software work as kanban cards and running Codex from those cards. It is built with React, TypeScript, and `@openai/codex-sdk`.
 
-Relay is designed for one developer working across local project folders. Each project keeps its board state in a `.relay/` directory inside that project, so tickets and run history remain portable with the codebase.
+Relay is designed for one developer working across local project folders. Each project stores its board state in a project-local `.relay/` directory, keeping tickets and run history portable with the codebase.
 
 ## Contents
 
@@ -19,13 +19,13 @@ Relay is designed for one developer working across local project folders. Each p
 
 ## Project Overview
 
-Relay has three main runtime pieces:
+Relay has three runtime pieces:
 
 - Electron main process in `src/main/`: owns IPC handlers, filesystem access, project initialization, app registry storage, logging, run events, and Codex SDK lifecycle.
 - Preload bridge in `src/preload/`: exposes a typed `window.relay` API to the renderer through Electron IPC.
 - React renderer in `src/renderer/`: renders the project sidebar, board, ticket editor, draft flow, run console, and user-facing errors.
 
-Project state is file-based:
+Relay stores project state as files:
 
 - `.relay/project.json` stores project metadata, columns, and settings.
 - `.relay/tickets/<ticket-id>.md` stores tickets as Markdown with YAML front matter.
@@ -33,39 +33,39 @@ Project state is file-based:
 - `.relay/runs/<ticket-id>/<run-id>.jsonl` stores streamed Codex run events.
 - `.relay/audit.jsonl` records status changes and clarification events.
 
-There is no database server, container stack, or hosted issue tracker requirement for local development.
+Local development does not require a database server, container stack, or hosted issue tracker.
 
 ## Prerequisites
 
-- Node.js 18 or newer. The Codex SDK integration requires Node 18+.
+- Node.js 18 or newer, required by the Codex SDK integration.
 - npm. The current lockfile is `package-lock.json`.
 - Git, strongly recommended. Relay can manage boards for non-Git folders, but Codex execution is disabled by default for non-Git projects.
-- Codex CLI and Codex authentication for agent-backed ticket drafting or execution.
+- Codex CLI and Codex authentication, only for agent-backed ticket drafting or execution.
 
-Manual board and ticket management works without Codex. Codex-backed features require `codex` to be available on `PATH` and an authenticated Codex session or API key.
+Manual board and ticket management does not require Codex. Codex-backed drafting and execution require `codex` to be available on `PATH` and an authenticated Codex session or API key.
 
 ## Local Setup
 
-From a clean checkout:
+Install dependencies from a clean checkout:
 
 ```sh
 npm install
 ```
 
-If you want to use Codex-backed drafting or execution, verify Codex before starting the app:
+Optional: verify Codex before starting the app if you plan to use Codex-backed drafting or execution:
 
 ```sh
 codex --version
 codex login
 ```
 
-Then start the Electron development app:
+Start the Electron development app:
 
 ```sh
 npm run dev
 ```
 
-In the app:
+To initialize a project in the app:
 
 1. Click `Add Project`.
 2. Choose a local project folder.
@@ -86,7 +86,7 @@ Relay keeps `Tab` for normal accessibility focus traversal. Ticket browsing uses
 
 ## Environment Variables and Secrets
 
-Relay does not require a `.env` file for basic local development, and no example env file currently exists in the repo.
+Basic local development does not require a `.env` file, and no example env file currently exists in the repo.
 
 Codex authentication is discovered from one of these sources:
 
@@ -94,17 +94,17 @@ Codex authentication is discovered from one of these sources:
 - `OPENAI_API_KEY`
 - `CODEX_API_KEY`
 
-The app inherits environment variables from the shell that launched it. If you use an API key, export it in your terminal before running `npm run dev`.
+Relay inherits environment variables from the shell that launched it. If you use an API key, export it in your terminal before running `npm run dev`.
 
-Do not store API keys, Codex auth tokens, bearer tokens, or other secrets in `.relay/`, ticket Markdown, run logs, or committed files.
+Do not commit or store API keys, Codex auth tokens, bearer tokens, or other secrets in `.relay/`, ticket Markdown, run logs, or committed files.
 
 `ELECTRON_RENDERER_URL` is used internally by `electron-vite` during development. You should not need to set it manually for normal local work.
 
 ## Local Data and Services
 
-Relay is local-first and uses the filesystem instead of a database.
+Relay uses filesystem storage instead of a database.
 
-Relay uses this project-local structure; some files and directories are created on demand:
+Each project can contain this `.relay/` structure. Some entries are created on demand:
 
 ```text
 <project>/
@@ -123,13 +123,13 @@ Relay uses this project-local structure; some files and directories are created 
     trash/
 ```
 
-The Electron app also stores an app-level registry and log under Electron `userData`. On macOS with the current package name, the log script tails:
+Relay also stores an app-level registry and log under Electron `userData`. On macOS, with the current package name, the log script tails:
 
 ```text
 ~/Library/Application Support/relay/relay.log
 ```
 
-The registry is a cache of known project folders. Removing a project from the sidebar should not delete that project folder or its `.relay/` data.
+The registry only caches known project folders. Removing a project from the sidebar should not delete that project folder or its `.relay/` data.
 
 ## Development Commands
 
@@ -145,7 +145,7 @@ The registry is a cache of known project folders. Removing a project from the si
 | `npm run build` | Run TypeScript checks and build Electron main, preload, and renderer output. |
 | `npm run preview` | Preview the built Electron app with `electron-vite preview`. |
 
-There are currently no `lint` or `format` scripts in `package.json`. Use `npm test`, `npm run typecheck`, and `npm run build` as the available verification commands until those workflows are added.
+`package.json` does not currently define `lint` or `format` scripts. Use `npm test`, `npm run typecheck`, and `npm run build` as the available verification commands until those workflows are added.
 
 ## Repository Structure
 
@@ -180,13 +180,13 @@ There are currently no `lint` or `format` scripts in `package.json`. Use `npm te
     shared/                  Shared runtime types and IPC contract.
 ```
 
-Generated or local-only directories such as `node_modules/`, `out/`, and project `.relay/runs/` logs should not be edited as source.
+Treat generated or local-only directories such as `node_modules/`, `out/`, and project `.relay/runs/` logs as output, not source.
 
 ### Backend Map
 
-- Project management starts in `src/main/ipc/methods/projects.ts`, which calls `readRegistry`, `upsertProjectPath`, and `removeProjectPath` from `src/main/services/registry/`, plus `initializeProject` and `summarizeProject` from `src/main/services/storage/`.
-- Board and ticket management are exposed through `src/main/ipc/methods/board.ts` and `src/main/ipc/methods/tickets.ts`. Ticket storage lives in `src/main/services/storage/index.ts` and covers Markdown parsing, ticket creation, epic/subticket relationships, moves, saves, deletes to `.relay/trash/`, duplicates, clarification records, and audit events.
-- Codex-backed draft, ticket update, and execution flows live in `src/main/services/codex/`. `index.ts` owns `createTicketDraft`, `draftToCreateInput`, `startTicketUpdateRun`, `startCodexRun`, `resumeCodexRun`, cancellation, and run-state transitions. `research.ts` does bounded URL and repository research for ticket drafts, and `status.ts` checks CLI/auth availability.
+- `src/main/ipc/methods/projects.ts` is the project-management entry point. It calls `readRegistry`, `upsertProjectPath`, and `removeProjectPath` from `src/main/services/registry/`, plus `initializeProject` and `summarizeProject` from `src/main/services/storage/`.
+- Board and ticket management are exposed through `src/main/ipc/methods/board.ts` and `src/main/ipc/methods/tickets.ts`. Ticket storage lives in `src/main/services/storage/index.ts` and handles Markdown parsing, ticket creation, epic/subticket relationships, moves, saves, deletes to `.relay/trash/`, duplicates, clarification records, and audit events.
+- Codex-backed draft, ticket update, and execution flows live in `src/main/services/codex/`. `index.ts` owns `createTicketDraft`, `draftToCreateInput`, `startTicketUpdateRun`, `startCodexRun`, `resumeCodexRun`, cancellation, and run-state transitions. `research.ts` handles bounded URL and repository research for ticket drafts, and `status.ts` checks CLI/auth availability.
 - Run event persistence and renderer fan-out are in `src/main/services/run-events/`; events are written to `.relay/runs/<ticket-id>/<run-id>.jsonl` and emitted to the renderer as `RendererRunEvent`.
 - Shared data shapes live in `src/shared/types.ts`. The channel contract lives in `src/shared/ipc.ts`, with runtime IPC payload/result validation in `src/main/ipc/schema.ts` and handler registration in `src/main/ipc/RelayIpc.ts`.
 
@@ -219,7 +219,7 @@ For coding agents working from Relay tickets:
 - Do not mark tickets completed yourself unless explicitly asked.
 - End with a handoff that includes changes made, files changed, commands run, tests run, and remaining risks.
 
-Before handing off a code change, run at least:
+For code changes, run at least:
 
 ```sh
 npm run typecheck
@@ -259,13 +259,13 @@ Check `.relay/tickets/*.md`. Ticket front matter must include the fields defined
 
 ### Runtime errors or blank app window
 
-Start the app with log capture:
+Start the app with log capture in one terminal:
 
 ```sh
 npm run dev:logs
 ```
 
-Then inspect the development log:
+Inspect the development log from another terminal:
 
 ```sh
 npm run logs:dev

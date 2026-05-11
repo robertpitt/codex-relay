@@ -17,18 +17,21 @@ const project = (patch: Partial<ProjectSummary> = {}): ProjectSummary => ({
   healthMessages: [],
   activeRunCount: 0,
   swimlanes: [
-    { id: "todo", name: "Todo", position: 1000, ticketCount: 2 },
-    { id: "review", name: "Review", position: 2000, ticketCount: 0 }
+    { id: "todo", name: "Todo", position: 1000, ticketCount: 2, activeRunCount: 0 },
+    { id: "review", name: "Review", position: 2000, ticketCount: 0, activeRunCount: 0 }
   ],
   ...patch
 });
 
-const renderSidebar = (projects: ProjectSummary[], defaultExpandedProjectPaths: string[] = []): string =>
+const renderSidebar = (
+  projects: ProjectSummary[],
+  defaultExpandedProjectPaths: string[] = [],
+  selectedPath: string | null = projectPath
+): string =>
   renderToStaticMarkup(
     <ProjectSidebar
       projects={projects}
-      selectedPath={projectPath}
-      gitMetadataByPath={{}}
+      selectedPath={selectedPath}
       loading={false}
       onAdd={() => undefined}
       onSelect={() => undefined}
@@ -39,7 +42,7 @@ const renderSidebar = (projects: ProjectSummary[], defaultExpandedProjectPaths: 
   );
 
 test("project sidebar renders projects collapsed with an accessible disclosure control", () => {
-  const markup = renderSidebar([project()]);
+  const markup = renderSidebar([project()], [], null);
 
   assert.match(markup, /aria-expanded="false"/);
   assert.match(markup, /aria-label="Expand Sidebar Project swimlanes"/);
@@ -53,6 +56,24 @@ test("expanded project sidebar shows all swimlanes including zero-count lanes", 
   assert.match(markup, /aria-label="Collapse Sidebar Project swimlanes"/);
   assert.match(markup, /Todo/);
   assert.match(markup, /Review/);
-  assert.match(markup, /aria-label="Todo: 2 tickets"/);
-  assert.match(markup, /aria-label="Review: 0 tickets"/);
+  assert.match(markup, /aria-label="Todo: 2 tasks"/);
+  assert.match(markup, /aria-label="Review: 0 tasks"/);
+});
+
+test("expanded project sidebar marks swimlanes with active task runs", () => {
+  const markup = renderSidebar(
+    [
+      project({
+        activeRunCount: 1,
+        swimlanes: [
+          { id: "todo", name: "Todo", position: 1000, ticketCount: 1, activeRunCount: 0 },
+          { id: "in_progress", name: "In Progress", position: 2000, ticketCount: 2, activeRunCount: 1 }
+        ]
+      })
+    ],
+    [projectPath]
+  );
+
+  assert.match(markup, /aria-label="In Progress: 2 tasks, 1 active task"/);
+  assert.match(markup, /project-swimlane-row active/);
 });

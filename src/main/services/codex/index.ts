@@ -24,7 +24,8 @@ import {
   type TicketDraftSubticket,
   type TicketDraftResearchLimits,
   type TicketDraftErrorCode,
-  type TicketDraftErrorPayload
+  type TicketDraftErrorPayload,
+  type TicketRecord
 } from "../../../shared/types";
 import { resolvedBlockerLabel, resolveTicketBlockers } from "../../../shared/blockers";
 import { extractClarificationRequest } from "../clarificationParser";
@@ -42,7 +43,10 @@ import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft 
 import { getCodexStatus } from "./status";
 import {
   appendCodexHandoff,
+  applyTicketDraftToTicket,
   createClarificationQuestions,
+  createPendingTicketDraft,
+  failPendingTicketDraft,
   isTicketNotFoundError,
   isGitRepository,
   newId,
@@ -233,6 +237,16 @@ export type TicketDraftDependencies = {
   setTimeoutFn?: (callback: () => void, ms: number) => DraftTimeoutHandle;
   clearTimeoutFn?: (handle: DraftTimeoutHandle) => void;
   unrefTimeout?: boolean;
+};
+
+export type TicketDraftStartDependencies = TicketDraftDependencies & {
+  createRunId?: () => string;
+  runEventSink?: RendererRunEventSink;
+};
+
+export type TicketDraftStart = {
+  ticket: TicketRecord;
+  runId: string;
 };
 
 const TicketDraftDependencyService = Context.Service<TicketDraftDependencies>("relay/TicketDraftDependencies");
@@ -563,6 +577,93 @@ const emitRunEventForDependencies = (
   runEventSink
     ? emitRunEventToRendererSink(runEventSink, projectPath, ticketId, runId, threadId, event)
     : emitRunEvent(projectPath, ticketId, runId, threadId, event);
+
+const draftRunThreadId = (runId: string): string => `draft_${runId}`;
+
+export const startTicketDraftRun = async (
+  input: CreateDraftInput,
+  dependencies: TicketDraftStartDependencies = {}
+): Promise<TicketDraftStart> => {
+  const projectPath = pathResolve(input.projectPath);
+  const idea = input.idea.trim();
+  const runId = dependencies.createRunId?.() ?? newId("run");
+  const threadId = draftRunThreadId(runId);
+
+  const ticket = await createPendingTicketDraft(projectPath, { ...input, projectPath, idea }, runId);
+  const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
+    try {
+      await emitRunEventForDependencies(dependencies.runEventSink, projectPath, ticket.frontMatter.id, runId, threadId, event);
+    } catch (error) {
+      await logWarn("codex:draft", "failed to emit ticket draft event", {
+        projectPath,
+        ticketId: ticket.frontMatter.id,
+        runId,
+        eventType: event.type,
+        error: errorMessage(error, "Event emission failed.")
+      });
+    }
+  };
+
+  await emitDraftEvent({
+    type: "run.started",
+    runId,
+    threadId,
+    timestamp: nowIso()
+  });
+
+  void (async () => {
+    try {
+      const draft = await createTicketDraft({ projectPath, idea, preferredTicketType: input.preferredTicketType }, dependencies);
+      await applyTicketDraftToTicket(projectPath, ticket.frontMatter.id, draft, runId);
+      await emitDraftEvent({
+        type: "run.completed",
+        finalResponse: `Ticket draft completed and applied to ${ticket.frontMatter.id}: ${draft.title}`,
+        timestamp: nowIso()
+      });
+      await logInfo("codex:draft", "async ticket draft applied", {
+        projectPath,
+        ticketId: ticket.frontMatter.id,
+        runId,
+        title: draft.title
+      });
+    } catch (error) {
+      const payload = ticketDraftErrorToPayload(error);
+      try {
+        await failPendingTicketDraft(projectPath, ticket.frontMatter.id, idea, runId, payload.message);
+      } catch (persistError) {
+        await logError("codex:draft", "async ticket draft failure state could not be persisted", persistError, {
+          projectPath,
+          ticketId: ticket.frontMatter.id,
+          runId,
+          draftError: payload
+        });
+      }
+      await emitDraftEvent({
+        type: "run.failed",
+        message: payload.message,
+        details: payload,
+        timestamp: nowIso()
+      });
+      if (payload.code === "timeout" || payload.code === "cancelled") {
+        await logWarn("codex:draft", "async ticket draft did not complete", {
+          projectPath,
+          ticketId: ticket.frontMatter.id,
+          runId,
+          ...payload
+        });
+      } else {
+        await logError("codex:draft", "async ticket draft failed", error, {
+          projectPath,
+          ticketId: ticket.frontMatter.id,
+          runId,
+          ...payload
+        });
+      }
+    }
+  })();
+
+  return { ticket, runId };
+};
 
 const finalTextFromItem = (item: ThreadItem): string | null => {
   if (item.type === "agent_message") return item.text;
@@ -1056,6 +1157,8 @@ export const preflightCodexRun = async (input: StartRunInput): Promise<CodexRunP
     const activeRunId = activeRunIdForTicket(projectPath, ticketId);
     if (activeRunId) {
       errors.push(`Ticket already has an active Codex run: ${activeRunId}.`);
+    } else if (ticket.frontMatter.runStatus === "drafting") {
+      errors.push("Codex is still drafting this ticket. Wait for the draft to finish before starting a run.");
     } else if (ticket.frontMatter.runStatus === "running") {
       errors.push("Ticket is already marked as running. Stop or reconcile the current run before starting Codex again.");
     }
