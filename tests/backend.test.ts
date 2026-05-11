@@ -4,7 +4,18 @@ import { Effect } from "effect";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { cancelCodexRun, preflightCodexRun, readCodexRunEvents, startCodexRun, type CodexRunDependencies } from "../src/main/services/codex";
+import type { CodexOptions } from "@openai/codex-sdk";
+import {
+  cancelCodexRun,
+  createCodex,
+  getCodexStatus,
+  preflightCodexRun,
+  readCodexRunEvents,
+  startCodexRun,
+  type CodexRunDependencies,
+  type CreateCodexDependencies
+} from "../src/main/services/codex";
+import { resolveAvailableCodexCli, type CodexCliCandidate } from "../src/main/services/codex/cli";
 import { BackendClock, runBackendEffect } from "../src/main/services/runtime";
 import {
   answerClarificationQuestion,
@@ -85,6 +96,102 @@ test("backend Effect runtime provides shared services", async () => {
   );
 
   assert.match(timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("codex status uses the bundled CLI candidate without requiring PATH codex", async () => {
+  const attempted: string[] = [];
+  const status = await getCodexStatus({
+    resolveCodexCli: () =>
+      resolveAvailableCodexCli({
+        resolveCandidates: () => [
+          { source: "bundled", command: "/sdk/codex" },
+          { source: "path", command: "codex" }
+        ],
+        runVersion: async (candidate) => {
+          attempted.push(candidate.command);
+          if (candidate.source === "path") throw new Error("PATH codex should not be required.");
+          return "codex-cli 0.130.0\n";
+        }
+      })
+  });
+
+  assert.equal(status.cliAvailable, true);
+  assert.equal(status.cliVersion, "codex-cli 0.130.0");
+  assert.deepEqual(attempted, ["/sdk/codex"]);
+});
+
+test("codex status falls back to PATH when the bundled candidate fails", async () => {
+  const attempted: string[] = [];
+  const status = await getCodexStatus({
+    resolveCodexCli: () =>
+      resolveAvailableCodexCli({
+        resolveCandidates: () => [
+          { source: "bundled", command: "/sdk/codex" },
+          { source: "path", command: "codex" }
+        ],
+        runVersion: async (candidate) => {
+          attempted.push(candidate.command);
+          if (candidate.source === "bundled") throw new Error("Bundled Codex failed.");
+          return "codex-cli 0.130.0\n";
+        }
+      })
+  });
+
+  assert.equal(status.cliAvailable, true);
+  assert.equal(status.cliVersion, "codex-cli 0.130.0");
+  assert.deepEqual(attempted, ["/sdk/codex", "codex"]);
+});
+
+test("codex status reports unavailable when no CLI candidate works", async () => {
+  const attempted: string[] = [];
+  const status = await getCodexStatus({
+    resolveCodexCli: () =>
+      resolveAvailableCodexCli({
+        resolveCandidates: () => [
+          { source: "bundled", command: "/sdk/codex" },
+          { source: "path", command: "codex" }
+        ],
+        runVersion: async (candidate) => {
+          attempted.push(candidate.command);
+          throw new Error(`${candidate.command} unavailable`);
+        }
+      })
+  });
+
+  assert.equal(status.cliAvailable, false);
+  assert.equal(status.cliVersion, null);
+  assert.match(status.message, /SDK bundle or on PATH/);
+  assert.deepEqual(attempted, ["/sdk/codex", "codex"]);
+});
+
+test("createCodex passes the resolved CLI candidate as codexPathOverride", async () => {
+  const candidates: CodexCliCandidate[] = [
+    { source: "bundled", command: "/sdk/codex" },
+    { source: "path", command: "codex" }
+  ];
+  const capturedOptions: CodexOptions[] = [];
+  const client = {} as ReturnType<NonNullable<CreateCodexDependencies["createClient"]>>;
+
+  await createCodex({
+    resolveCodexCli: () =>
+      resolveAvailableCodexCli({
+        resolveCandidates: () => candidates,
+        runVersion: async (candidate) => {
+          if (candidate.source === "bundled") throw new Error("Bundled Codex failed.");
+          return "codex-cli 0.130.0\n";
+        }
+      }),
+    createEnv: () => ({ PATH: "/test/bin" }),
+    createClient: (options) => {
+      capturedOptions.push(options);
+      return client;
+    }
+  });
+
+  const options = capturedOptions[0];
+  assert.ok(options);
+  assert.equal(options.codexPathOverride, "codex");
+  assert.deepEqual(options.env, { PATH: "/test/bin" });
 });
 
 test("automated ticket status transitions reuse ticket storage and append audit events", async () => {

@@ -1,20 +1,17 @@
 import os from "node:os";
 import type { CodexStatus } from "../../../shared/types";
-import { CommandExecutor, pathJoin, readTextFileEffect } from "../io";
+import { pathJoin, readTextFileEffect } from "../io";
 import { runBackendEffect } from "../runtime";
+import { resolveAvailableCodexCli, type CodexCliResolution } from "./cli";
 
-const getCodexStatusPromise = async (): Promise<CodexStatus> => {
-  let cliAvailable = false;
-  let cliVersion: string | null = null;
-  try {
-    const { stdout } = await runBackendEffect(
-      CommandExecutor.use((executor) => executor.execFile("codex", ["--version"], { timeoutMs: 5_000 }))
-    );
-    cliAvailable = true;
-    cliVersion = stdout.trim();
-  } catch {
-    cliAvailable = false;
-  }
+export type CodexStatusDependencies = {
+  resolveCodexCli?: () => Promise<CodexCliResolution | null>;
+};
+
+const getCodexStatusPromise = async (dependencies: CodexStatusDependencies = {}): Promise<CodexStatus> => {
+  const cliResolution = await (dependencies.resolveCodexCli ?? resolveAvailableCodexCli)();
+  const cliAvailable = Boolean(cliResolution);
+  const cliVersion = cliResolution?.version ?? null;
 
   let authenticated: boolean | null = null;
   const hasApiKey = Boolean(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY);
@@ -34,8 +31,9 @@ const getCodexStatusPromise = async (): Promise<CodexStatus> => {
       ? authenticated === true
         ? "Codex is available."
         : "Codex CLI is available, but no Codex auth file or API key was found."
-      : "Codex CLI was not found on PATH."
+      : "Codex CLI was not found in the SDK bundle or on PATH."
   };
 };
 
-export const getCodexStatus = (): Promise<CodexStatus> => getCodexStatusPromise();
+export const getCodexStatus = (dependencies: CodexStatusDependencies = {}): Promise<CodexStatus> =>
+  getCodexStatusPromise(dependencies);

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { Codex, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
+import { Codex, type CodexOptions, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
 import {
   type AgentTicketUpdate,
   type AgentTicketUpdateInput,
@@ -42,6 +42,7 @@ import { agentTicketUpdateSchema, isRelaySchemaError, parseSchema, ticketDraftSc
 import { logError, logInfo, logWarn } from "../logger";
 import { pathResolve } from "../io";
 import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft } from "./research";
+import { resolveAvailableCodexCli, type CodexCliResolution } from "./cli";
 import { getCodexStatus } from "./status";
 import {
   appendCodexHandoff,
@@ -93,7 +94,24 @@ const codexEnv = (): Record<string, string> => {
   return env;
 };
 
-const createCodex = (): Codex => new Codex({ env: codexEnv() });
+export type CreateCodexDependencies = {
+  resolveCodexCli?: () => Promise<CodexCliResolution | null>;
+  createClient?: (options: CodexOptions) => Codex;
+  createEnv?: () => Record<string, string>;
+};
+
+export const createCodex = async (dependencies: CreateCodexDependencies = {}): Promise<Codex> => {
+  const cliResolution = await (dependencies.resolveCodexCli ?? resolveAvailableCodexCli)();
+  if (!cliResolution) {
+    throw new Error("Codex CLI was not found in the SDK bundle or on PATH.");
+  }
+
+  const options: CodexOptions = {
+    codexPathOverride: cliResolution.candidate.command,
+    env: (dependencies.createEnv ?? codexEnv)()
+  };
+  return (dependencies.createClient ?? ((codexOptions) => new Codex(codexOptions)))(options);
+};
 
 export type CodexRunThread = Pick<Thread, "id" | "runStreamed">;
 
@@ -509,7 +527,7 @@ const createTicketDraftPromise = async (
         "codex_unavailable",
         requestId,
         durationMs(),
-        "Codex CLI was not found on PATH. Install or expose Codex before drafting tickets.",
+        "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before drafting tickets.",
         "codex_cli_unavailable"
       );
     }
@@ -545,7 +563,7 @@ const createTicketDraftPromise = async (
       limitationCount: research.metadata.limitations.length,
       limits: research.metadata.limits
     });
-    const codex = dependencies.createCodexClient?.() ?? createCodex();
+    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
     const thread = codex.startThread(await threadOptionsForProject(projectPath));
     const ticketTypeGuidance =
       preferredTicketType === "epic"
@@ -1203,7 +1221,7 @@ const startTicketUpdateRunPromise = async (
   const ticket = await readTicket(projectPath, ticketId);
   const clarifications = await readClarificationQuestions(projectPath, ticketId);
   const runId = dependencies.createRunId?.() ?? newId("run");
-  const codex = dependencies.createCodexClient?.() ?? createCodex();
+  const codex = dependencies.createCodexClient?.() ?? (await createCodex());
   const thread = codex.startThread(await ticketUpdateThreadOptionsForProject(projectPath));
   const abortController = new AbortController();
   let currentThreadId = thread.id ?? `pending_${runId}`;
@@ -1589,7 +1607,7 @@ const beginRunPromise = async (
     throw error;
   }
   const clarifications = await readClarificationQuestions(projectPath, ticketId);
-  const codex = dependencies.createCodexClient?.() ?? createCodex();
+  const codex = dependencies.createCodexClient?.() ?? (await createCodex());
   const options = await threadOptionsForProject(projectPath);
   const runId = dependencies.createRunId?.() ?? newId("run");
   const existingThreadId = resume && !freshThread ? ticket.frontMatter.codexThreadId : null;

@@ -13,7 +13,7 @@ blockedByIds: []
 createdAt: '2026-05-11T22:03:47.389Z'
 updatedAt: '2026-05-11T22:03:47.390Z'
 codexThreadId: null
-runStatus: drafting
+runStatus: failed
 lastRunId: run_01krch2nrwq2q3zc8yp6evkesk
 ---
 # Draft: lets migrate all schemas from zod to the built in effect Schema
