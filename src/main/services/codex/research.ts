@@ -69,6 +69,7 @@ const mergeResearchLimits = (overrides?: Partial<TicketDraftResearchLimits>): Ti
 });
 
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+const slashPath = (value: string): string => value.replace(/\\/g, "/");
 
 const truncateText = (value: string, maxLength: number): string => {
   const normalized = normalizeWhitespace(value);
@@ -353,7 +354,7 @@ const collectResearchFiles = async (
     try {
       entries = await runBackendEffect(readDirectoryEffect(directory));
     } catch (error) {
-      limitations.push(`Could not read directory ${pathRelative(projectPath, directory) || "."}: ${errorMessage(error, "unknown error")}`);
+      limitations.push(`Could not read directory ${slashPath(pathRelative(projectPath, directory)) || "."}: ${errorMessage(error, "unknown error")}`);
       return;
     }
 
@@ -378,7 +379,7 @@ const collectResearchFiles = async (
       if (!info.isFile || !isResearchTextFile(absolutePath)) continue;
       files.push({
         absolutePath,
-        relativePath: pathRelative(projectPath, absolutePath),
+        relativePath: slashPath(pathRelative(projectPath, absolutePath)),
         size: info.size
       });
     }

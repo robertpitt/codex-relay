@@ -1,95 +1,96 @@
 ---
 schemaVersion: 1
 id: tkt_01krc98rc4489qj5aqra4tt4te
-title: Add distribution scripts and GitHub release workflow for application binary
+title: >-
+  Fix ticket draft research to inspect matching project files before prompting
+  Codex
 ticketType: task
 status: completed
 position: 38000
-priority: medium
+priority: high
 labels:
-  - ci
-  - release
-  - packaging
-  - github-actions
+  - bug
+  - tests
+  - ticket-draft
+  - research
 parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T19:47:18.020Z'
-updatedAt: '2026-05-11T20:15:39.831Z'
+updatedAt: '2026-05-11T20:34:06.091Z'
 codexThreadId: 019e18a3-15c3-74c2-bd20-0741fd766065
 runStatus: completed
-lastRunId: run_01krca64wk2erc30vra5t393mn
+lastRunId: run_01krcb70h3sj4gvckydvy6wxqc
 ---
-# Add distribution scripts and GitHub release workflow for application binary
+# Fix ticket draft research to inspect matching project files before prompting Codex
 
 ## Context
 
-Add the missing local package distribution steps and GitHub Actions automation needed to build the application's distributable binary and publish it to GitHub Releases. The request specifically calls out updates to the app-level package.json and .github CI workflows for build and release.
+A test failure shows that ticket draft codebase research can complete without inspecting an expected matching project file before prompting Codex. In the failing case, the draft completed successfully, but `draft.research.inspectedFiles` did not include `src/main/services/codex.ts`.
 
-The .effect directory is explicitly out of scope for implementation. It is only a developer reference area and must not be treated as the app package surface, release source, or workflow target.
+This ticket supersedes the earlier release-packaging task content. Keep the existing Codex handoff below as historical context only; do not treat the release workflow implementation as the active scope for this ticket.
 
-## Research Findings
+## Failure Evidence
 
-- Bounded code search found package manifests under .effect/packages/*, for example .effect/packages/ai/openai/package.json and .effect/packages/ai/anthropic/package.json, but these are developer reference files and are not the app-level package.json to edit.
-- The searched .effect package manifests reference Effect-TS package metadata and GitHub URLs, for example .effect/packages/ai/openai/package.json has repository.directory set to packages/ai/openai. These references should not drive the release implementation.
-- No URLs were provided in the idea, so no external release/build documentation was reviewed.
-- Research did not confirm the root package manager, existing package.json scripts, existing .github workflows, binary entrypoint, or current build system. Code search stopped after scanning 160 candidate files.
+```text
+# Subtest: ticket draft codebase research inspects matching project files before prompting Codex
+not ok 61 - ticket draft codebase research inspects matching project files before prompting Codex
+  ---
+  duration_ms: 65.2319
+  type: 'test'
+  location: 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\relay-tests-3468\\ticket-draft.test.js:17389:30'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      ok(draft.research.inspectedFiles.some((file) => file.path === "src/main/services/codex.ts"))
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+```
+
+Observed draft completion log:
+
+```text
+2026-05-11T20:17:29.084Z INFO [codex:draft] ticket draft completed {"requestId":"tdr_code_research","projectPath":"C:\\\\Users\\\\RUNNER~1\\\\AppData\\\\Local\\\\Temp\\\\relay-draft-alkc2Q","ideaLength":70,"timeoutMs":90000,"durationMs":11,"title":"Inspect draft code","reason":"success"}
+```
 
 ## Requirements
 
-- Exclude .effect from implementation scope. Do not edit files under .effect and do not use .effect package manifests as the package.json source for this ticket.
-- Identify the correct app-level package.json outside .effect and add distribution scripts for building the production app and generating the release binary artifact.
-- Add or update GitHub Actions workflow files under .github/workflows to build the binary in CI.
-- Add a release workflow that publishes built binary artifacts to GitHub Releases, preferably triggered by version tags such as v* unless the repo uses a different release convention.
-- Generated artifacts must include clear names with app name, version or tag, operating system, and architecture where applicable.
-- Workflow permissions must be scoped appropriately, including contents: write only for the release publishing job.
-- The implementation must use the repository's existing package manager, build tooling, lockfile, and conventions where possible.
-- Document the local commands for building and packaging the binary in package.json scripts or repository documentation if no existing release docs exist.
+- Fix the ticket draft codebase research path so matching project files are inspected before Codex is prompted.
+- Ensure `draft.research.inspectedFiles` records inspected matching files using repository-relative paths.
+- Preserve or restore the expected inspection of `src/main/services/codex.ts` for the failing test scenario.
+- Do not mask the assertion by changing the test expectation unless the implementation contract is intentionally changed and documented.
+- Keep the research completion behavior deterministic across platforms, including Windows temp project paths.
+- Do not modify run history or Codex execution metadata as part of the ticket content update.
 
 ## Implementation Plan
 
-- Inspect the repository root, excluding .effect, for package.json, lockfiles, existing .github/workflows files, and any current CLI or binary build entrypoint.
-- Determine the existing runtime/build stack and choose the packaging approach that best fits the project, such as an existing bundler/compiler configuration or the repository's current binary packaging tool if one already exists.
-- Add package.json scripts for the full distribution path, for example build, dist, clean:dist, and any package/binary command names that match the repo's naming conventions.
-- Ensure the dist script emits release-ready artifacts into a predictable directory such as dist/ or release/ and does not require local-only environment variables.
-- Create or update a CI workflow that installs dependencies with the correct package manager, runs tests or type checks if already present, and executes the distribution build.
-- Create or update a release workflow that runs on the agreed trigger, builds artifacts for the supported target platforms, uploads workflow artifacts, and attaches final binaries to a GitHub Release.
-- Add artifact naming and checksum generation if compatible with existing release practices.
-- Run the new package scripts locally where possible, then validate the GitHub workflow YAML syntax and job dependency graph.
+- Inspect the failing `ticket-draft.test.js` case around the reported subtest to understand the fixture setup, query terms, and expected research contract.
+- Trace the draft research implementation that selects candidate files, reads matching files, and records `inspectedFiles`.
+- Identify why `src/main/services/codex.ts` is skipped or omitted from `inspectedFiles` despite matching the research scenario.
+- Fix the selection, path normalization, filtering, or result-recording logic while keeping bounded research limits intact.
+- Add or adjust focused coverage only if needed to lock the intended behavior without weakening the existing failing test.
+- Run the relevant ticket draft test file and any nearby draft research tests.
 
 ## Acceptance Criteria
 
-- No files under .effect are modified, and .effect package manifests are not used as the release/package implementation target.
-- package.json outside .effect contains working distribution-related scripts for building the production binary artifact.
-- A GitHub Actions workflow exists under .github/workflows that builds the binary successfully from a clean checkout.
-- A GitHub Actions release workflow can publish generated binary artifacts to GitHub Releases on the configured trigger.
-- Release artifacts are named clearly and are not committed to the repository unless that is already an established convention.
-- CI uses the repository's detected package manager and lockfile consistently.
-- The implementation includes verification notes showing the local dist command and any workflow validation command that was run.
-
-## Clarification Questions
-
-- What is the intended binary name and executable entrypoint?
-- Which platforms should be released: Linux, macOS, Windows, and which CPU architectures?
-- Should releases be triggered from version tags, GitHub release creation, manual workflow dispatch, or another existing release process?
+- The subtest `ticket draft codebase research inspects matching project files before prompting Codex` passes.
+- `draft.research.inspectedFiles` includes an entry whose `path` is exactly `src/main/services/codex.ts` for the failing scenario.
+- The fix works on Windows-style temp paths and does not depend on absolute path formatting.
+- Research still respects bounded scanning limits and does not inspect unrelated files unnecessarily.
+- No release packaging behavior is changed unless tests reveal a direct dependency.
 
 ## Implementation Notes
 
-- Start by inspecting root package.json and .github/workflows because bounded research did not reach or confirm those files.
-- Treat .effect/packages/* package.json files as developer reference metadata only. They are explicitly excluded from implementation scope.
-- If the project does not currently have a binary packaging tool, choose the smallest compatible option and document why it fits the runtime and deployment target.
+- Start with the failing test at `ticket-draft.test.js:17389` and the assertion near `ticket-draft.test.js:17417`.
+- Pay close attention to path normalization. The failing run used Windows paths under `C:\\Users\\RUNNER~1\\AppData\\Local\\Temp` while the expected inspected file path is repository-relative with forward slashes.
+- The prior release-workflow work below is historical handoff content from the earlier ticket scope and should not guide this implementation.
 
-## Research Metadata
-
-- File inspected: .effect/packages/ai/anthropic/package.json - Matched terms: dist, package, json, github; characters read: 1584
-- File inspected: .effect/packages/ai/openai-compat/package.json - Matched terms: dist, package, json, github; characters read: 1602
-- File inspected: .effect/packages/ai/openai/package.json - Matched terms: dist, package, json, github; characters read: 1569
-- File inspected: .effect/packages/ai/openrouter/package.json - Matched terms: dist, package, json, github; characters read: 1589
-- File inspected: .effect/packages/atom/react/package.json - Matched terms: dist, package, json, github; characters read: 1947
-- File inspected: .effect/packages/ai/openai/src/Generated.ts - Matched terms: add, package, json, binary, orm; characters read: 12000; symbols: AddUploadPartRequest, AdminApiKey, AssignedRoleDetails, the, AssistantSupportedModels, AssistantToolsCode
-- Limitation: Code search stopped after scanning 160 candidate files.
-
-## Codex Handoff
+## Historical Codex Handoff
 
 ### 5/11/2026, 9:12:52 PM
 
@@ -127,5 +128,31 @@ Note: the worktree also contains unrelated `.relay`, `assets`, README showcase, 
 - Only macOS arm64 was built locally. Linux and Windows builds are covered by the workflow matrix.
 - The generated app is a portable Electron archive, not a signed/notarized installer.
 
+## Codex Handoff
 
-No Codex run has been started.
+### 5/11/2026, 9:22:56 PM
+
+**Summary of Changes**
+Fixed ticket draft research path recording by normalizing repository-relative paths to forward slashes before storing them in `inspectedFiles` or research limitations. This preserves the expected `src/main/services/codex.ts` path on Windows and keeps scoring/prompt rendering platform-stable.
+
+No release packaging behavior was changed.
+
+**Files Changed**
+- [src/main/services/codex/research.ts](/Users/robertpitt/Projects/relay/src/main/services/codex/research.ts:69)
+
+**Commands Run**
+- `git status --short --untracked-files=all`
+- `grep`/`sed` inspection of the failing test and research implementation
+- `node --check src/main/services/codex/research.ts`
+- `npm run typecheck`
+- `npm test`
+- `git diff -- src/main/services/codex/research.ts`
+
+**Tests Run and Results**
+- `npm run typecheck`: passed
+- `npm test`: passed, 72/72 tests
+- The subtest `ticket draft codebase research inspects matching project files before prompting Codex` passed.
+
+**Remaining Risks or Follow-Up**
+- I could not run the suite on Windows locally, but the fix targets the Windows-specific backslash path behavior shown in the failure.
+- `.relay` run/ticket metadata changes are present in the worktree from Relay activity; I did not edit them as part of the implementation.
