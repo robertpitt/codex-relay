@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krb0hkb6gk5518gqwh594rdw",
+  "questions": [
+    {
+      "id": "clar_01krb0jn3zapmwqggjss745y8h",
+      "ticketId": "tkt_01krb0hkb6gk5518gqwh594rdw",
+      "question": "What exact primary color should be used, or should I propose 2-3 dark-theme-compatible options for approval?",
+      "answerType": "text",
+      "answer": "Should follow openai dark theme style where possible, I just dont like the blue",
+      "createdAt": "2026-05-11T07:56:10.751Z",
+      "updatedAt": "2026-05-11T07:57:00.770Z",
+      "answeredAt": "2026-05-11T07:57:00.770Z",
+      "createdBy": "codex",
+      "source": "agent_execution",
+      "runId": "run_01krb0j4he9wh8rmppkhq2wdk5",
+      "codexThreadId": "019e1609-128b-7201-8625-e03a027b5f60"
+    },
+    {
+      "id": "clar_01krb0jn3zy9b4661gshzv18k9",
+      "ticketId": "tkt_01krb0hkb6gk5518gqwh594rdw",
+      "question": "Should this update apply only to dark mode, or also update the default/light theme primary color if one exists?",
+      "answerType": "text",
+      "answer": "dark/light",
+      "createdAt": "2026-05-11T07:56:10.751Z",
+      "updatedAt": "2026-05-11T07:57:08.768Z",
+      "answeredAt": "2026-05-11T07:57:08.768Z",
+      "createdBy": "codex",
+      "source": "agent_execution",
+      "runId": "run_01krb0j4he9wh8rmppkhq2wdk5",
+      "codexThreadId": "019e1609-128b-7201-8625-e03a027b5f60"
+    },
+    {
+      "id": "clar_01krb0jn3z94xezpz614r6f8pe",
+      "ticketId": "tkt_01krb0hkb6gk5518gqwh594rdw",
+      "question": "Are there brand guidelines or an existing palette this new primary color must follow?",
+      "answerType": "text",
+      "answer": "Nope, Just less prominent primary colur",
+      "createdAt": "2026-05-11T07:56:10.751Z",
+      "updatedAt": "2026-05-11T07:59:01.579Z",
+      "answeredAt": "2026-05-11T07:59:01.579Z",
+      "createdBy": "codex",
+      "source": "agent_execution",
+      "runId": "run_01krb0j4he9wh8rmppkhq2wdk5",
+      "codexThreadId": "019e1609-128b-7201-8625-e03a027b5f60"
+    }
+  ]
+}

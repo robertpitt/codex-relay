@@ -1,0 +1,41 @@
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "description": "Local-first Codex-driven kanban desktop app.",
+  "main": "./out/main/index.js",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:logs": "electron-vite dev 2>&1 | tee /tmp/relay-dev.log",
+    "build": "tsc --noEmit && electron-vite build",
+    "logs": "mkdir -p \"$HOME/Library/Application Support/relay\" && touch \"$HOME/Library/Application Support/relay/relay.log\" && tail -n 200 -f \"$HOME/Library/Application Support/relay/relay.log\"",
+    "logs:dev": "touch /tmp/relay-dev.log && tail -n 200 -f /tmp/relay-dev.log",
+    "preview": "electron-vite preview",
+    "test": "node tests/run-tests.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@openai/codex-sdk": "^0.130.0",
+    "clsx": "^2.1.1",
+    "gray-matter": "^4.0.3",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ulid": "^2.3.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

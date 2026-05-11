@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "projectId": "prj_01kra319cjc75r48c64ahjc805",
+  "name": "relay",
+  "createdAt": "2026-05-10T23:19:52.978Z",
+  "updatedAt": "2026-05-10T23:19:52.978Z",
+  "columns": [
+    {
+      "id": "todo",
+      "name": "Todo",
+      "position": 1000,
+      "terminal": false
+    },
+    {
+      "id": "in_progress",
+      "name": "In Progress",
+      "position": 2000,
+      "terminal": false
+    },
+    {
+      "id": "needs_clarification",
+      "name": "Needs Clarification",
+      "position": 3000,
+      "terminal": false
+    },
+    {
+      "id": "not_doing",
+      "name": "Not Doing",
+      "position": 4000,
+      "terminal": true
+    },
+    {
+      "id": "completed",
+      "name": "Completed",
+      "position": 5000,
+      "terminal": true
+    }
+  ],
+  "settings": {
+    "defaultModel": null,
+    "defaultApprovalPolicy": "on-request",
+    "defaultSandboxMode": "workspace-write",
+    "allowNonGitCodexRuns": false,
+    "ticketDraftingEnabled": true,
+    "codexExecutionEnabled": true
+  }
+}
