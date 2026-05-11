@@ -5,7 +5,7 @@ import { pathResolve } from "../../services/io";
 import { readCachedGitMetadata } from "../../services/git";
 import { readRegistry, removeProjectPath, upsertProjectPath } from "../../services/registry";
 import { fromPromise } from "../../services/runtime";
-import { gitMetadataOptionsSchema } from "../../services/schemas";
+import { gitMetadataOptionsSchema, parseSchema } from "../../services/schemas";
 import { initializeProject, summarizeProject } from "../../services/storage";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
@@ -89,7 +89,7 @@ export const projectIpcMethods = [
     payload: ipcArgs([ipcString, ipcOptionalUnknown]),
     result: ipcResult(),
     handler: (_event, projectPath, options) =>
-      fromPromise(() => readCachedGitMetadata(projectPath, gitMetadataOptionsSchema.parse(options ?? {})))
+      fromPromise(() => readCachedGitMetadata(projectPath, parseSchema(gitMetadataOptionsSchema, options ?? {})))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.projectsRevealInFinder,

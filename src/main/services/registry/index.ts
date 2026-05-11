@@ -3,7 +3,7 @@ import type { AppRegistry } from "../../../shared/types";
 import { getElectronPath } from "../../electron";
 import { fromPromise, runBackendEffect } from "../runtime";
 import { makeDirectoryEffect, pathDirname, pathJoin, pathResolve, readTextFileEffect, renamePathEffect, writeTextFileEffect } from "../io";
-import { appRegistrySchema } from "../schemas";
+import { appRegistrySchema, parseSchema } from "../schemas";
 
 const defaultRegistry = (): AppRegistry => ({
   schemaVersion: 1,
@@ -19,7 +19,7 @@ const registryPath = (): string => pathJoin(getElectronPath("userData"), "regist
 const readRegistryPromise = async (): Promise<AppRegistry> => {
   try {
     const raw = await runBackendEffect(readTextFileEffect(registryPath()));
-    return appRegistrySchema.parse(JSON.parse(raw));
+    return parseSchema(appRegistrySchema, JSON.parse(raw));
   } catch {
     return defaultRegistry();
   }

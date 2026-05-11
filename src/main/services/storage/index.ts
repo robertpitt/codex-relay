@@ -50,7 +50,7 @@ import {
   renamePathEffect,
   statPathEffect
 } from "../io";
-import { clarificationStoreSchema, projectConfigSchema, ticketFrontMatterSchema } from "../schemas";
+import { clarificationStoreSchema, parseSchema, projectConfigSchema, ticketFrontMatterSchema } from "../schemas";
 import { TicketNotFoundError, isTicketNotFoundError } from "./errors";
 import { atomicWriteJson, atomicWriteText, fileExists } from "./files";
 import { newId } from "./ids";
@@ -172,7 +172,7 @@ export const initializeProject = async (projectPath: string): Promise<ProjectCon
 
 export const readProjectConfig = async (projectPath: string): Promise<ProjectConfig> => {
   const raw = await runBackendEffect(readTextFileEffect(projectConfigPath(projectPath)));
-  return normalizeProjectConfig(projectConfigSchema.parse(JSON.parse(raw)));
+  return normalizeProjectConfig(parseSchema(projectConfigSchema, JSON.parse(raw)));
 };
 
 export const writeProjectConfig = async (projectPath: string, config: ProjectConfig): Promise<ProjectConfig> => {
@@ -276,7 +276,7 @@ const extractExcerpt = (markdown: string): string => {
 const readTicketFile = async (filePath: string): Promise<TicketRecord> => {
   const raw = await runBackendEffect(readTextFileEffect(filePath));
   const parsed = matter(raw);
-  const frontMatter = ticketFrontMatterSchema.parse(parsed.data);
+  const frontMatter = parseSchema(ticketFrontMatterSchema, parsed.data);
   return {
     frontMatter,
     markdown: parsed.content.trimStart(),
@@ -1069,7 +1069,7 @@ export const readClarificationQuestions = async (projectPath: string, ticketId: 
   const target = clarificationStorePath(projectPath, ticketId);
   if (!(await fileExists(target))) return [];
   const raw = await runBackendEffect(readTextFileEffect(target));
-  const parsed = clarificationStoreSchema.parse(JSON.parse(raw));
+  const parsed = parseSchema(clarificationStoreSchema, JSON.parse(raw));
   return parsed.questions;
 };
 

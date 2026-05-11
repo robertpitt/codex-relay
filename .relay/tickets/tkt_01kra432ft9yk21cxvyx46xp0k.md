@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01kra432ft9yk21cxvyx46xp0k
 title: Persist Run Usage and Duration Metrics
 ticketType: task
-status: review
-position: 1000
+status: completed
+position: 39000
 priority: medium
 labels:
   - developer-experience
@@ -14,7 +14,7 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-10T23:38:20.023Z'
-updatedAt: '2026-05-11T21:33:54.625Z'
+updatedAt: '2026-05-11T22:32:48.524Z'
 codexThreadId: 019e18ec-539c-7d83-8e2e-0232e605cce7
 runStatus: completed
 lastRunId: run_01krcerm4yp8ks39b9bx0bf915

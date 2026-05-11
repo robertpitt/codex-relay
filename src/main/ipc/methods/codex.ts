@@ -9,7 +9,7 @@ import {
   startCodexRun
 } from "../../services/codex";
 import { fromPromise } from "../../services/runtime";
-import { relayApprovalDecisionSchema, startRunInputSchema } from "../../services/schemas";
+import { parseSchema, relayApprovalDecisionSchema, startRunInputSchema } from "../../services/schemas";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
 import { emptyArgs, ipcArgs, ipcObject, ipcResult, ipcString, ipcVoid } from "../schema";
@@ -25,19 +25,19 @@ export const codexIpcMethods = [
     channel: relayIpcChannels.codexPreflightRun,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => preflightCodexRun(startRunInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => preflightCodexRun(parseSchema(startRunInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexStartRun,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => startCodexRun(startRunInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => startCodexRun(parseSchema(startRunInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexResumeRun,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => resumeCodexRun(startRunInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => resumeCodexRun(parseSchema(startRunInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexCancelRun,
@@ -50,7 +50,7 @@ export const codexIpcMethods = [
     payload: ipcArgs([ipcString, ipcString]),
     result: ipcVoid,
     handler: (_event, approvalId, decision) =>
-      fromPromise(() => approveCodexAction(approvalId, relayApprovalDecisionSchema.parse(decision)))
+      fromPromise(() => approveCodexAction(approvalId, parseSchema(relayApprovalDecisionSchema, decision)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexReadRunEvents,

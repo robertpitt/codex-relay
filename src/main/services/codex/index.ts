@@ -1,6 +1,5 @@
 import { Context, Effect, Layer } from "effect";
 import { Codex, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
-import { ZodError } from "zod";
 import {
   type AgentTicketUpdate,
   type AgentTicketUpdateInput,
@@ -39,7 +38,7 @@ import {
   readRunSummary,
   type RendererRunEventSink
 } from "../run-events";
-import { agentTicketUpdateSchema, ticketDraftSchema } from "../schemas";
+import { agentTicketUpdateSchema, isRelaySchemaError, parseSchema, ticketDraftSchema } from "../schemas";
 import { logError, logInfo, logWarn } from "../logger";
 import { pathResolve } from "../io";
 import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft } from "./research";
@@ -366,7 +365,7 @@ const normalizeTicketDraftError = (
       { cause: error }
     );
   }
-  if (error instanceof ZodError || error instanceof SyntaxError || errorMessage(error, "").includes("valid JSON")) {
+  if (isRelaySchemaError(error) || error instanceof SyntaxError || errorMessage(error, "").includes("valid JSON")) {
     return ticketDraftError(
       "invalid_response",
       context.requestId,
@@ -619,7 +618,7 @@ ${idea}`;
     await reportTicketDraftProgress(dependencies, "Codex returned a draft; validating the structured ticket.");
     let parsed: TicketDraftOutcome;
     try {
-      const parsedDraft = ticketDraftSchema.parse(parseJsonResponse(turn.finalResponse));
+      const parsedDraft = parseSchema(ticketDraftSchema, parseJsonResponse(turn.finalResponse));
       parsed = normalizeTicketDraftOutcome(parsedDraft, research);
     } catch (error) {
       throw ticketDraftError(
@@ -1133,7 +1132,7 @@ function formatClarificationsForPrompt(clarifications: ClarificationQuestion[]):
 const ticketUpdateRunKey = (projectPath: string, ticketId: string): string => `${pathResolve(projectPath)}:${ticketId}`;
 
 const parseAgentTicketUpdate = (value: string): AgentTicketUpdate => {
-  const parsed = agentTicketUpdateSchema.parse(parseJsonResponse(value));
+  const parsed = parseSchema(agentTicketUpdateSchema, parseJsonResponse(value));
   const title = normalizeWhitespace(parsed.title);
   const markdown = parsed.markdown.trimStart();
   if (!title) throw new Error("Agent ticket update must include a title.");

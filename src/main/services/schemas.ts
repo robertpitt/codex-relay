@@ -1,4 +1,6 @@
-import { z } from "zod";
+import { Effect, Option, Schema, SchemaGetter } from "effect";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaParser from "effect/SchemaParser";
 import type {
   AgentTicketUpdate,
   AgentTicketUpdateInput,
@@ -27,6 +29,7 @@ import type {
   TicketDraftResearchFile,
   TicketDraftResearchLimits,
   TicketDraftResearchUrl,
+  TicketDraftSubticket,
   TicketFrontMatter,
   TicketMoveInput,
   TicketPriority,
@@ -35,20 +38,101 @@ import type {
   TicketType
 } from "../../shared/types";
 
-const isoString: z.ZodType<string, z.ZodTypeDef, unknown> = z.preprocess((value) => {
-  if (value instanceof Date) return value.toISOString();
-  return value;
-}, z.string().min(1));
+type RelaySchema<T> = Schema.Schema<T>;
 
-export const ticketPrioritySchema = z.enum(["low", "medium", "high", "urgent"]) satisfies z.ZodType<
-  TicketPriority,
-  z.ZodTypeDef,
-  unknown
->;
+const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
+const numberSchema = Schema.Number.check(
+  Schema.makeFilter((value) => (Number.isNaN(value) ? "Expected number, got NaN" : undefined))
+);
+const unknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown) as RelaySchema<Record<string, unknown>>;
 
-export const ticketTypeSchema = z.enum(["task", "epic"]) satisfies z.ZodType<TicketType, z.ZodTypeDef, unknown>;
+const mutableArray = <S extends Schema.Top>(schema: S) => Schema.mutable(Schema.Array(schema));
+const withDefault = <S extends Schema.Top>(schema: S, getDefault: () => S["Encoded"]) =>
+  schema.pipe(Schema.withDecodingDefault(Effect.sync(getDefault)));
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
-export const runStatusSchema = z.enum([
+const unexpectedKeyIssue = (key: string, value: unknown): SchemaIssue.Issue =>
+  new SchemaIssue.Pointer(
+    [key],
+    new SchemaIssue.InvalidValue(Option.some(value), { message: `Unexpected key with value ${String(value)}` })
+  );
+
+const passthroughStruct = <const Fields extends Schema.Struct.Fields>(fields: Fields) => {
+  const struct = Schema.Struct(fields);
+  const fieldNames = new Set(Object.keys(fields));
+  return Schema.declareConstructor<Schema.Struct.Type<Fields> & Record<string, unknown>, unknown>()(
+    [struct],
+    ([structCodec]) =>
+      (input, _self, options) =>
+        SchemaParser.decodeUnknownEffect(structCodec)(input, options).pipe(
+          Effect.map((decoded) => {
+            if (!isRecord(input)) return decoded as Schema.Struct.Type<Fields> & Record<string, unknown>;
+            const extras = Object.fromEntries(Object.entries(input).filter(([key]) => !fieldNames.has(key)));
+            return { ...extras, ...decoded };
+          })
+        )
+  );
+};
+
+const strictStruct = <const Fields extends Schema.Struct.Fields>(fields: Fields) => {
+  const struct = Schema.Struct(fields);
+  const fieldNames = new Set(Object.keys(fields));
+  return Schema.declareConstructor<Schema.Struct.Type<Fields>, unknown>()(
+    [struct],
+    ([structCodec]) =>
+      (input, _self, options) =>
+        SchemaParser.decodeUnknownEffect(structCodec)(input, options).pipe(
+          Effect.flatMap((decoded) => {
+            if (isRecord(input)) {
+              const unexpectedKey = Object.keys(input).find((key) => !fieldNames.has(key));
+              if (unexpectedKey) return Effect.fail(unexpectedKeyIssue(unexpectedKey, input[unexpectedKey]));
+            }
+            return Effect.succeed(decoded);
+          })
+        )
+  );
+};
+
+const dateToIsoString = Schema.Date.pipe(
+  Schema.decodeTo(nonEmptyString, {
+    decode: SchemaGetter.transform((value: Date) => value.toISOString()),
+    encode: SchemaGetter.transform((value: string) => new Date(value))
+  })
+);
+
+const isoString = Schema.Union([nonEmptyString, dateToIsoString]) satisfies RelaySchema<string>;
+
+const defaultStringArray = () => [] as string[];
+const nullableStringWithDefault = () => withDefault(Schema.NullOr(Schema.String), () => null);
+const stringArrayWithDefault = () => withDefault(mutableArray(Schema.String), defaultStringArray);
+
+const isSchemaIssue = (value: unknown): boolean =>
+  typeof value === "object" && value !== null && "~effect/SchemaIssue/Issue" in value;
+
+const normalizeSchemaError = (error: unknown): unknown => {
+  if (Schema.isSchemaError(error)) return error;
+  if (error instanceof Error && isSchemaIssue(error.cause)) {
+    return new Schema.SchemaError(error.cause as ConstructorParameters<typeof Schema.SchemaError>[0]);
+  }
+  return error;
+};
+
+export const parseSchema = <A>(schema: RelaySchema<A>, input: unknown): A => {
+  try {
+    return Schema.decodeUnknownSync(schema as Schema.Decoder<A>)(input);
+  } catch (error) {
+    throw normalizeSchemaError(error);
+  }
+};
+
+export const isRelaySchemaError = (error: unknown): error is Schema.SchemaError => Schema.isSchemaError(error);
+
+export const ticketPrioritySchema: RelaySchema<TicketPriority> = Schema.Literals(["low", "medium", "high", "urgent"]);
+
+export const ticketTypeSchema: RelaySchema<TicketType> = Schema.Literals(["task", "epic"]);
+
+export const runStatusSchema: RelaySchema<RunStatus> = Schema.Literals([
   "idle",
   "drafting",
   "draft_failed",
@@ -58,319 +142,283 @@ export const runStatusSchema = z.enum([
   "failed",
   "completed",
   "cancelled"
-]) satisfies z.ZodType<RunStatus, z.ZodTypeDef, unknown>;
+]);
 
-export const relayActorSchema = z.enum(["user", "codex", "system"]) satisfies z.ZodType<RelayActor, z.ZodTypeDef, unknown>;
+export const relayActorSchema: RelaySchema<RelayActor> = Schema.Literals(["user", "codex", "system"]);
 
-export const relayEventSourceSchema = z.enum([
+export const relayEventSourceSchema: RelaySchema<RelayEventSource> = Schema.Literals([
   "manual_board",
   "manual_ticket_edit",
   "draft_generation",
   "agent_execution",
   "clarification_ui",
   "system_reconciliation"
-]) satisfies z.ZodType<RelayEventSource, z.ZodTypeDef, unknown>;
+]);
 
-export const relayColumnSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  position: z.number(),
-  terminal: z.boolean()
-}) satisfies z.ZodType<RelayColumn, z.ZodTypeDef, unknown>;
+export const relayColumnSchema: RelaySchema<RelayColumn> = Schema.Struct({
+  id: nonEmptyString,
+  name: nonEmptyString,
+  position: numberSchema,
+  terminal: Schema.Boolean
+});
 
-export const projectSettingsSchema = z.object({
-  defaultModel: z.string().nullable(),
-  defaultApprovalPolicy: z.enum(["untrusted", "on-request", "never"]),
-  defaultSandboxMode: z.enum(["read-only", "workspace-write", "danger-full-access"]),
-  allowNonGitCodexRuns: z.boolean(),
-  ticketDraftingEnabled: z.boolean(),
-  codexExecutionEnabled: z.boolean()
-}) satisfies z.ZodType<ProjectSettings, z.ZodTypeDef, unknown>;
+export const projectSettingsSchema: RelaySchema<ProjectSettings> = Schema.Struct({
+  defaultModel: Schema.NullOr(Schema.String),
+  defaultApprovalPolicy: Schema.Literals(["untrusted", "on-request", "never"]),
+  defaultSandboxMode: Schema.Literals(["read-only", "workspace-write", "danger-full-access"]),
+  allowNonGitCodexRuns: Schema.Boolean,
+  ticketDraftingEnabled: Schema.Boolean,
+  codexExecutionEnabled: Schema.Boolean
+});
 
-export const projectConfigSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    projectId: z.string().min(1),
-    name: z.string().min(1),
-    createdAt: isoString,
-    updatedAt: isoString,
-    columns: z.array(relayColumnSchema).min(1),
-    settings: projectSettingsSchema
-  })
-  .passthrough() satisfies z.ZodType<ProjectConfig, z.ZodTypeDef, unknown>;
+export const projectConfigSchema: RelaySchema<ProjectConfig> = passthroughStruct({
+  schemaVersion: Schema.Literal(1),
+  projectId: nonEmptyString,
+  name: nonEmptyString,
+  createdAt: isoString,
+  updatedAt: isoString,
+  columns: mutableArray(relayColumnSchema).check(Schema.isMinLength(1)),
+  settings: projectSettingsSchema
+});
 
-export const ticketFrontMatterSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    id: z.string().min(1),
-    title: z.string().min(1),
-    ticketType: ticketTypeSchema.default("task"),
-    status: z.string().min(1),
-    position: z.number(),
-    priority: ticketPrioritySchema,
-    labels: z.array(z.string()).default([]),
-    parentEpicId: z.string().nullable().default(null),
-    subticketIds: z.array(z.string()).default([]),
-    blockedByIds: z.array(z.string()).default([]),
-    createdAt: isoString,
-    updatedAt: isoString,
-    codexThreadId: z.string().nullable().default(null),
-    runStatus: runStatusSchema,
-    lastRunId: z.string().nullable().default(null)
-  })
-  .passthrough() satisfies z.ZodType<TicketFrontMatter, z.ZodTypeDef, unknown>;
+export const ticketFrontMatterSchema: RelaySchema<TicketFrontMatter> = passthroughStruct({
+  schemaVersion: Schema.Literal(1),
+  id: nonEmptyString,
+  title: nonEmptyString,
+  ticketType: withDefault(ticketTypeSchema, () => "task" as const),
+  status: nonEmptyString,
+  position: numberSchema,
+  priority: ticketPrioritySchema,
+  labels: stringArrayWithDefault(),
+  parentEpicId: nullableStringWithDefault(),
+  subticketIds: stringArrayWithDefault(),
+  blockedByIds: stringArrayWithDefault(),
+  createdAt: isoString,
+  updatedAt: isoString,
+  codexThreadId: nullableStringWithDefault(),
+  runStatus: runStatusSchema,
+  lastRunId: nullableStringWithDefault()
+});
 
-export const ticketRecordSchema = z.object({
+export const ticketRecordSchema: RelaySchema<TicketRecord> = Schema.Struct({
   frontMatter: ticketFrontMatterSchema,
-  markdown: z.string(),
-  filePath: z.string()
-}) satisfies z.ZodType<TicketRecord, z.ZodTypeDef, unknown>;
+  markdown: Schema.String,
+  filePath: Schema.String
+});
 
-export const appRegistrySchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    projects: z.array(
-      z.object({
-        path: z.string().min(1),
-        pinned: z.boolean(),
-        lastOpenedAt: isoString,
-        sidebarPosition: z.number()
-      })
-    ),
-    ui: z.object({
-      lastProjectPath: z.string().nullable(),
-      theme: z.enum(["system", "light", "dark"])
+export const appRegistrySchema: RelaySchema<AppRegistry> = passthroughStruct({
+  schemaVersion: Schema.Literal(1),
+  projects: mutableArray(
+    Schema.Struct({
+      path: nonEmptyString,
+      pinned: Schema.Boolean,
+      lastOpenedAt: isoString,
+      sidebarPosition: numberSchema
     })
+  ),
+  ui: Schema.Struct({
+    lastProjectPath: Schema.NullOr(Schema.String),
+    theme: Schema.Literals(["system", "light", "dark"])
   })
-  .passthrough() satisfies z.ZodType<AppRegistry, z.ZodTypeDef, unknown>;
+});
 
-const ticketDraftResearchLimitsSchema = z.object({
-  maxResearchMs: z.number(),
-  maxUrls: z.number(),
-  maxUrlFetchMs: z.number(),
-  maxUrlContentChars: z.number(),
-  maxFilesToScan: z.number(),
-  maxFilesToRead: z.number(),
-  maxFileReadChars: z.number(),
-  maxMatchesPerFile: z.number()
-}) satisfies z.ZodType<TicketDraftResearchLimits, z.ZodTypeDef, unknown>;
+const defaultTicketDraftResearchLimits = (): TicketDraftResearchLimits => ({
+  maxResearchMs: 0,
+  maxUrls: 0,
+  maxUrlFetchMs: 0,
+  maxUrlContentChars: 0,
+  maxFilesToScan: 0,
+  maxFilesToRead: 0,
+  maxFileReadChars: 0,
+  maxMatchesPerFile: 0
+});
 
-const ticketDraftResearchUrlSchema = z.object({
-  url: z.string(),
-  status: z.enum(["fetched", "failed", "skipped"]),
-  title: z.string().nullable().default(null),
-  reason: z.string().nullable().default(null),
-  charactersRead: z.number().default(0)
-}) satisfies z.ZodType<TicketDraftResearchUrl, z.ZodTypeDef, unknown>;
+const defaultTicketDraftResearch = (): TicketDraftResearch => ({
+  generatedAt: "",
+  checkedUrls: [],
+  inspectedFiles: [],
+  limitations: [],
+  limits: defaultTicketDraftResearchLimits()
+});
 
-const ticketDraftResearchFileSchema = z.object({
-  path: z.string(),
-  reason: z.string(),
-  symbols: z.array(z.string()).default([]),
-  matches: z.array(z.string()).default([]),
-  charactersRead: z.number().default(0)
-}) satisfies z.ZodType<TicketDraftResearchFile, z.ZodTypeDef, unknown>;
+const ticketDraftResearchLimitsSchema: RelaySchema<TicketDraftResearchLimits> = Schema.Struct({
+  maxResearchMs: numberSchema,
+  maxUrls: numberSchema,
+  maxUrlFetchMs: numberSchema,
+  maxUrlContentChars: numberSchema,
+  maxFilesToScan: numberSchema,
+  maxFilesToRead: numberSchema,
+  maxFileReadChars: numberSchema,
+  maxMatchesPerFile: numberSchema
+});
 
-const ticketDraftResearchSchema = z.object({
-  generatedAt: z.string().default(""),
-  checkedUrls: z.array(ticketDraftResearchUrlSchema).default([]),
-  inspectedFiles: z.array(ticketDraftResearchFileSchema).default([]),
-  limitations: z.array(z.string()).default([]),
-  limits: ticketDraftResearchLimitsSchema.default({
-    maxResearchMs: 0,
-    maxUrls: 0,
-    maxUrlFetchMs: 0,
-    maxUrlContentChars: 0,
-    maxFilesToScan: 0,
-    maxFilesToRead: 0,
-    maxFileReadChars: 0,
-    maxMatchesPerFile: 0
-  })
-}) satisfies z.ZodType<TicketDraftResearch, z.ZodTypeDef, unknown>;
+const ticketDraftResearchUrlSchema: RelaySchema<TicketDraftResearchUrl> = Schema.Struct({
+  url: Schema.String,
+  status: Schema.Literals(["fetched", "failed", "skipped"]),
+  title: nullableStringWithDefault(),
+  reason: nullableStringWithDefault(),
+  charactersRead: withDefault(numberSchema, () => 0)
+});
 
-const ticketDraftBaseSchema = z
-  .object({
-    title: z.string().min(1),
-    priority: ticketPrioritySchema,
-    labels: z.array(z.string()).default([]),
-    context: z.string().default(""),
-    researchFindings: z.array(z.string()).default([]),
-    requirements: z.array(z.string()).default([]),
-    implementationPlan: z.array(z.string()).default([]),
-    testPlan: z.array(z.string()).default([]),
-    acceptanceCriteria: z.array(z.string()).default([]),
-    clarificationQuestions: z.array(z.string()).default([]),
-    assumptions: z.array(z.string()).default([]),
-    implementationNotes: z.array(z.string()).default([])
-  })
-  .strict();
+const ticketDraftResearchFileSchema: RelaySchema<TicketDraftResearchFile> = Schema.Struct({
+  path: Schema.String,
+  reason: Schema.String,
+  symbols: stringArrayWithDefault(),
+  matches: stringArrayWithDefault(),
+  charactersRead: withDefault(numberSchema, () => 0)
+});
 
-export const ticketDraftSchema = ticketDraftBaseSchema.extend({
-  draftState: z.enum(["ready", "needs_clarification"]).default("ready"),
-  blockingClarificationQuestions: z.array(z.string()).default([]),
-  ticketType: ticketTypeSchema.default("task"),
-  subtickets: z.array(ticketDraftBaseSchema).default([]),
-  research: ticketDraftResearchSchema.default({
-    generatedAt: "",
-    checkedUrls: [],
-    inspectedFiles: [],
-    limitations: [],
-    limits: {
-      maxResearchMs: 0,
-      maxUrls: 0,
-      maxUrlFetchMs: 0,
-      maxUrlContentChars: 0,
-      maxFilesToScan: 0,
-      maxFilesToRead: 0,
-      maxFileReadChars: 0,
-      maxMatchesPerFile: 0
-    }
-  })
-}).superRefine((draft, context) => {
-  if (draft.ticketType === "task" && draft.subtickets.length > 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["subtickets"],
-      message: "Only epic ticket drafts can contain subtickets."
-    });
-  }
-}) satisfies z.ZodType<TicketDraft, z.ZodTypeDef, unknown>;
+const ticketDraftResearchSchema: RelaySchema<TicketDraftResearch> = Schema.Struct({
+  generatedAt: withDefault(Schema.String, () => ""),
+  checkedUrls: withDefault(mutableArray(ticketDraftResearchUrlSchema), () => []),
+  inspectedFiles: withDefault(mutableArray(ticketDraftResearchFileSchema), () => []),
+  limitations: stringArrayWithDefault(),
+  limits: withDefault(ticketDraftResearchLimitsSchema, defaultTicketDraftResearchLimits)
+});
 
-export const agentTicketUpdateSchema = z
-  .object({
-    title: z.string().min(1),
-    priority: ticketPrioritySchema,
-    labels: z.array(z.string()).default([]),
-    markdown: z.string().min(1),
-    clarificationQuestions: z.array(z.string()).default([])
-  })
-  .strict() satisfies z.ZodType<AgentTicketUpdate, z.ZodTypeDef, unknown>;
+const ticketDraftBaseFields = {
+  title: nonEmptyString,
+  priority: ticketPrioritySchema,
+  labels: stringArrayWithDefault(),
+  context: withDefault(Schema.String, () => ""),
+  researchFindings: stringArrayWithDefault(),
+  requirements: stringArrayWithDefault(),
+  implementationPlan: stringArrayWithDefault(),
+  testPlan: stringArrayWithDefault(),
+  acceptanceCriteria: stringArrayWithDefault(),
+  clarificationQuestions: stringArrayWithDefault(),
+  assumptions: stringArrayWithDefault(),
+  implementationNotes: stringArrayWithDefault()
+} as const;
 
-export const clarificationQuestionSchema = z
-  .object({
-    id: z.string().min(1),
-    ticketId: z.string().min(1),
-    question: z.string().min(1),
-    answerType: z.literal("text"),
-    answer: z.string().nullable().default(null),
-    createdAt: isoString,
-    updatedAt: isoString,
-    answeredAt: isoString.nullable().default(null),
-    createdBy: relayActorSchema,
-    source: relayEventSourceSchema,
-    runId: z.string().nullable().default(null),
-    codexThreadId: z.string().nullable().default(null)
-  })
-  .passthrough() satisfies z.ZodType<ClarificationQuestion, z.ZodTypeDef, unknown>;
+const ticketDraftBaseSchema: RelaySchema<TicketDraftSubticket> = strictStruct(ticketDraftBaseFields);
 
-export const clarificationStoreSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    ticketId: z.string().min(1),
-    questions: z.array(clarificationQuestionSchema).default([])
-  })
-  .passthrough() satisfies z.ZodType<ClarificationQuestionStore, z.ZodTypeDef, unknown>;
+export const ticketDraftSchema: RelaySchema<TicketDraft> = strictStruct({
+  ...ticketDraftBaseFields,
+  draftState: withDefault(Schema.Literals(["ready", "needs_clarification"]), () => "ready" as const),
+  blockingClarificationQuestions: stringArrayWithDefault(),
+  ticketType: withDefault(ticketTypeSchema, () => "task" as const),
+  subtickets: withDefault(mutableArray(ticketDraftBaseSchema), () => []),
+  research: withDefault(ticketDraftResearchSchema, defaultTicketDraftResearch)
+}).check(
+  Schema.makeFilter<TicketDraft>((draft) =>
+    draft.ticketType === "task" && draft.subtickets.length > 0
+      ? { path: ["subtickets"], issue: "Only epic ticket drafts can contain subtickets." }
+      : undefined
+  )
+);
 
-export const gitMetadataOptionsSchema = z
-  .object({
-    force: z.boolean().optional()
-  })
-  .passthrough() satisfies z.ZodType<GitMetadataOptions, z.ZodTypeDef, unknown>;
+export const agentTicketUpdateSchema: RelaySchema<AgentTicketUpdate> = strictStruct({
+  title: nonEmptyString,
+  priority: ticketPrioritySchema,
+  labels: stringArrayWithDefault(),
+  markdown: nonEmptyString,
+  clarificationQuestions: stringArrayWithDefault()
+});
 
-export const subticketCreateInputSchema = z
-  .object({
-    title: z.string(),
-    priority: ticketPrioritySchema,
-    labels: z.array(z.string()).default([]),
-    markdown: z.string(),
-    status: z.string().optional(),
-    blockedByIds: z.array(z.string()).optional()
-  })
-  .passthrough() satisfies z.ZodType<SubticketCreateInput, z.ZodTypeDef, unknown>;
+export const clarificationQuestionSchema: RelaySchema<ClarificationQuestion> = passthroughStruct({
+  id: nonEmptyString,
+  ticketId: nonEmptyString,
+  question: nonEmptyString,
+  answerType: Schema.Literal("text"),
+  answer: nullableStringWithDefault(),
+  createdAt: isoString,
+  updatedAt: isoString,
+  answeredAt: withDefault(Schema.NullOr(isoString), () => null),
+  createdBy: relayActorSchema,
+  source: relayEventSourceSchema,
+  runId: nullableStringWithDefault(),
+  codexThreadId: nullableStringWithDefault()
+});
 
-export const ticketCreateInputSchema = subticketCreateInputSchema
-  .extend({
-    ticketType: ticketTypeSchema.optional(),
-    parentEpicId: z.string().nullable().optional(),
-    subticketIds: z.array(z.string()).optional(),
-    subtickets: z.array(subticketCreateInputSchema).optional()
-  })
-  .passthrough() satisfies z.ZodType<TicketCreateInput, z.ZodTypeDef, unknown>;
+export const clarificationStoreSchema: RelaySchema<ClarificationQuestionStore> = passthroughStruct({
+  schemaVersion: Schema.Literal(1),
+  ticketId: nonEmptyString,
+  questions: withDefault(mutableArray(clarificationQuestionSchema), () => [])
+});
 
-export const epicSubticketCreateInputSchema = z
-  .object({
-    projectPath: z.string(),
-    epicId: z.string(),
-    ticket: subticketCreateInputSchema
-  })
-  .passthrough() satisfies z.ZodType<EpicSubticketCreateInput, z.ZodTypeDef, unknown>;
+export const gitMetadataOptionsSchema: RelaySchema<GitMetadataOptions> = passthroughStruct({
+  force: Schema.optional(Schema.Boolean)
+});
 
-export const epicSubticketLinkInputSchema = z
-  .object({
-    projectPath: z.string(),
-    epicId: z.string(),
-    ticketId: z.string()
-  })
-  .passthrough() satisfies z.ZodType<EpicSubticketLinkInput, z.ZodTypeDef, unknown>;
+const subticketCreateInputFields = {
+  title: Schema.String,
+  priority: ticketPrioritySchema,
+  labels: stringArrayWithDefault(),
+  markdown: Schema.String,
+  status: Schema.optional(Schema.String),
+  blockedByIds: Schema.optional(mutableArray(Schema.String))
+} as const;
 
-export const ticketSaveInputSchema = z
-  .object({
-    projectPath: z.string(),
-    ticket: ticketRecordSchema
-  })
-  .passthrough() satisfies z.ZodType<TicketSaveInput, z.ZodTypeDef, unknown>;
+export const subticketCreateInputSchema: RelaySchema<SubticketCreateInput> = passthroughStruct(subticketCreateInputFields);
 
-export const ticketMoveInputSchema = z
-  .object({
-    projectPath: z.string(),
-    ticketId: z.string(),
-    targetStatus: z.string(),
-    beforeTicketId: z.string().nullable().optional(),
-    afterTicketId: z.string().nullable().optional()
-  })
-  .passthrough() satisfies z.ZodType<TicketMoveInput, z.ZodTypeDef, unknown>;
+export const ticketCreateInputSchema: RelaySchema<TicketCreateInput> = passthroughStruct({
+  ...subticketCreateInputFields,
+  ticketType: Schema.optional(ticketTypeSchema),
+  parentEpicId: Schema.optional(Schema.NullOr(Schema.String)),
+  subticketIds: Schema.optional(mutableArray(Schema.String)),
+  subtickets: Schema.optional(mutableArray(subticketCreateInputSchema))
+});
 
-export const clarificationAnswerInputSchema = z
-  .object({
-    projectPath: z.string(),
-    ticketId: z.string(),
-    questionId: z.string(),
-    answer: z.string()
-  })
-  .passthrough() satisfies z.ZodType<ClarificationAnswerInput, z.ZodTypeDef, unknown>;
+export const epicSubticketCreateInputSchema: RelaySchema<EpicSubticketCreateInput> = passthroughStruct({
+  projectPath: Schema.String,
+  epicId: Schema.String,
+  ticket: subticketCreateInputSchema
+});
 
-export const createDraftInputSchema = z
-  .object({
-    projectPath: z.string(),
-    idea: z.string(),
-    preferredTicketType: ticketTypeSchema.optional(),
-    ticketId: z.string().optional()
-  })
-  .passthrough() satisfies z.ZodType<CreateDraftInput, z.ZodTypeDef, unknown>;
+export const epicSubticketLinkInputSchema: RelaySchema<EpicSubticketLinkInput> = passthroughStruct({
+  projectPath: Schema.String,
+  epicId: Schema.String,
+  ticketId: Schema.String
+});
 
-export const startRunInputSchema = z
-  .object({
-    projectPath: z.string(),
-    ticketId: z.string(),
-    freshThread: z.boolean().optional()
-  })
-  .passthrough() satisfies z.ZodType<StartRunInput, z.ZodTypeDef, unknown>;
+export const ticketSaveInputSchema: RelaySchema<TicketSaveInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticket: ticketRecordSchema
+});
 
-export const agentTicketUpdateInputSchema = z
-  .object({
-    projectPath: z.string(),
-    ticketId: z.string(),
-    request: z.string()
-  })
-  .passthrough() satisfies z.ZodType<AgentTicketUpdateInput, z.ZodTypeDef, unknown>;
+export const ticketMoveInputSchema: RelaySchema<TicketMoveInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticketId: Schema.String,
+  targetStatus: Schema.String,
+  beforeTicketId: Schema.optional(Schema.NullOr(Schema.String)),
+  afterTicketId: Schema.optional(Schema.NullOr(Schema.String))
+});
 
-export const relayApprovalDecisionSchema = z.enum(["accept", "acceptForSession", "decline", "cancel"]) satisfies z.ZodType<
-  RelayApprovalDecision,
-  z.ZodTypeDef,
-  unknown
->;
+export const clarificationAnswerInputSchema: RelaySchema<ClarificationAnswerInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticketId: Schema.String,
+  questionId: Schema.String,
+  answer: Schema.String
+});
 
-const relayCodexEventTypeSchema = z.enum([
+export const createDraftInputSchema: RelaySchema<CreateDraftInput> = passthroughStruct({
+  projectPath: Schema.String,
+  idea: Schema.String,
+  preferredTicketType: Schema.optional(ticketTypeSchema),
+  ticketId: Schema.optional(Schema.String)
+});
+
+export const startRunInputSchema: RelaySchema<StartRunInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticketId: Schema.String,
+  freshThread: Schema.optional(Schema.Boolean)
+});
+
+export const agentTicketUpdateInputSchema: RelaySchema<AgentTicketUpdateInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticketId: Schema.String,
+  request: Schema.String
+});
+
+export const relayApprovalDecisionSchema: RelaySchema<RelayApprovalDecision> = Schema.Literals([
+  "accept",
+  "acceptForSession",
+  "decline",
+  "cancel"
+]);
+
+const relayCodexEventTypeSchema: RelaySchema<RelayCodexEvent["type"]> = Schema.Literals([
   "run.started",
   "agent.message.delta",
   "agent.message.completed",
@@ -385,56 +433,69 @@ const relayCodexEventTypeSchema = z.enum([
   "clarification.requested",
   "run.completed",
   "run.failed"
-]) satisfies z.ZodType<RelayCodexEvent["type"], z.ZodTypeDef, unknown>;
+]);
 
-export const relayCodexEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("run.started"), runId: z.string(), threadId: z.string(), timestamp: isoString }),
-  z.object({ type: z.literal("agent.message.delta"), text: z.string(), timestamp: isoString }),
-  z.object({ type: z.literal("agent.message.completed"), text: z.string(), timestamp: isoString }),
-  z.object({ type: z.literal("command.started"), command: z.string(), cwd: z.string().optional(), timestamp: isoString }),
-  z.object({ type: z.literal("command.output"), stream: z.enum(["stdout", "stderr"]), text: z.string(), timestamp: isoString }),
-  z.object({ type: z.literal("command.completed"), status: z.enum(["completed", "failed", "declined"]), timestamp: isoString }),
-  z.object({ type: z.literal("file.change"), path: z.string(), summary: z.string().optional(), timestamp: isoString }),
-  z.object({ type: z.literal("web.search"), query: z.string(), timestamp: isoString }),
-  z.object({
-    type: z.literal("approval.requested"),
-    approvalId: z.string(),
-    kind: z.enum(["command", "file-change", "network", "other"]),
-    payload: z.record(z.unknown()),
+export const relayCodexEventSchema: RelaySchema<RelayCodexEvent> = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("run.started"), runId: Schema.String, threadId: Schema.String, timestamp: isoString }),
+  Schema.Struct({ type: Schema.Literal("agent.message.delta"), text: Schema.String, timestamp: isoString }),
+  Schema.Struct({ type: Schema.Literal("agent.message.completed"), text: Schema.String, timestamp: isoString }),
+  Schema.Struct({ type: Schema.Literal("command.started"), command: Schema.String, cwd: Schema.optional(Schema.String), timestamp: isoString }),
+  Schema.Struct({
+    type: Schema.Literal("command.output"),
+    stream: Schema.Literals(["stdout", "stderr"]),
+    text: Schema.String,
     timestamp: isoString
   }),
-  z.object({ type: z.literal("approval.resolved"), approvalId: z.string(), decision: z.string(), timestamp: isoString }),
-  z.object({
-    type: z.literal("ticket.status_changed"),
-    fromStatus: z.string(),
-    toStatus: z.string(),
+  Schema.Struct({
+    type: Schema.Literal("command.completed"),
+    status: Schema.Literals(["completed", "failed", "declined"]),
+    timestamp: isoString
+  }),
+  Schema.Struct({ type: Schema.Literal("file.change"), path: Schema.String, summary: Schema.optional(Schema.String), timestamp: isoString }),
+  Schema.Struct({ type: Schema.Literal("web.search"), query: Schema.String, timestamp: isoString }),
+  Schema.Struct({
+    type: Schema.Literal("approval.requested"),
+    approvalId: Schema.String,
+    kind: Schema.Literals(["command", "file-change", "network", "other"]),
+    payload: unknownRecordSchema,
+    timestamp: isoString
+  }),
+  Schema.Struct({ type: Schema.Literal("approval.resolved"), approvalId: Schema.String, decision: Schema.String, timestamp: isoString }),
+  Schema.Struct({
+    type: Schema.Literal("ticket.status_changed"),
+    fromStatus: Schema.String,
+    toStatus: Schema.String,
     actor: relayActorSchema,
     source: relayEventSourceSchema,
     timestamp: isoString
   }),
-  z.object({ type: z.literal("clarification.requested"), questions: z.array(clarificationQuestionSchema), timestamp: isoString }),
-  z.object({
-    type: z.literal("run.completed"),
-    finalResponse: z.string(),
-    usage: z.unknown().optional(),
-    finalStatus: runStatusSchema.optional(),
+  Schema.Struct({
+    type: Schema.Literal("clarification.requested"),
+    questions: mutableArray(clarificationQuestionSchema),
     timestamp: isoString
   }),
-  z.object({
-    type: z.literal("run.failed"),
-    message: z.string(),
-    details: z.unknown().optional(),
-    finalStatus: runStatusSchema.optional(),
+  Schema.Struct({
+    type: Schema.Literal("run.completed"),
+    finalResponse: Schema.String,
+    usage: Schema.optional(Schema.Unknown),
+    finalStatus: Schema.optional(runStatusSchema),
+    timestamp: isoString
+  }),
+  Schema.Struct({
+    type: Schema.Literal("run.failed"),
+    message: Schema.String,
+    details: Schema.optional(Schema.Unknown),
+    finalStatus: Schema.optional(runStatusSchema),
     timestamp: isoString
   })
-]) satisfies z.ZodType<RelayCodexEvent, z.ZodTypeDef, unknown>;
+]);
 
-export const runLogLineSchema = z.object({
-  schemaVersion: z.number(),
+export const runLogLineSchema: RelaySchema<RunLogLine> = Schema.Struct({
+  schemaVersion: numberSchema,
   timestamp: isoString,
-  ticketId: z.string(),
-  runId: z.string(),
-  threadId: z.string(),
+  ticketId: Schema.String,
+  runId: Schema.String,
+  threadId: Schema.String,
   type: relayCodexEventTypeSchema,
-  payload: z.record(z.unknown())
-}) satisfies z.ZodType<RunLogLine, z.ZodTypeDef, unknown>;
+  payload: unknownRecordSchema
+});

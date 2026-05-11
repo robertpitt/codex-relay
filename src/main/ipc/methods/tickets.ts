@@ -15,6 +15,7 @@ import {
   createDraftInputSchema,
   epicSubticketCreateInputSchema,
   epicSubticketLinkInputSchema,
+  parseSchema,
   ticketCreateInputSchema,
   ticketMoveInputSchema,
   ticketSaveInputSchema
@@ -47,7 +48,7 @@ export const ticketIpcMethods = [
     handler: (_event, input) =>
       fromPromise(async (): Promise<TicketDraftStartResult> => {
         try {
-          return { ok: true, ...(await startTicketDraftRun(createDraftInputSchema.parse(input))) };
+          return { ok: true, ...(await startTicketDraftRun(parseSchema(createDraftInputSchema, input))) };
         } catch (error) {
           return { ok: false, error: ticketDraftErrorToPayload(error) };
         }
@@ -57,13 +58,13 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketCreateManual,
     payload: ipcArgs([ipcString, ipcObject]),
     result: ipcResult(),
-    handler: (_event, projectPath, input) => fromPromise(() => createTicket(projectPath, ticketCreateInputSchema.parse(input)))
+    handler: (_event, projectPath, input) => fromPromise(() => createTicket(projectPath, parseSchema(ticketCreateInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketCreateSubticket,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => createSubticket(epicSubticketCreateInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => createSubticket(parseSchema(epicSubticketCreateInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketLinkSubticket,
@@ -71,7 +72,7 @@ export const ticketIpcMethods = [
     result: ipcResult(),
     handler: (_event, input) =>
       fromPromise(() => {
-        const parsed = epicSubticketLinkInputSchema.parse(input);
+        const parsed = parseSchema(epicSubticketLinkInputSchema, input);
         return linkSubticket(parsed.projectPath, parsed.epicId, parsed.ticketId);
       })
   }),
@@ -81,7 +82,7 @@ export const ticketIpcMethods = [
     result: ipcResult(),
     handler: (_event, input) =>
       fromPromise(() => {
-        const parsed = epicSubticketLinkInputSchema.parse(input);
+        const parsed = parseSchema(epicSubticketLinkInputSchema, input);
         return unlinkSubticket(parsed.projectPath, parsed.epicId, parsed.ticketId);
       })
   }),
@@ -89,7 +90,7 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketStartAgentUpdate,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => startTicketUpdateRun(agentTicketUpdateInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => startTicketUpdateRun(parseSchema(agentTicketUpdateInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketCancelAgentUpdate,
@@ -127,13 +128,13 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketSave,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => saveTicket(ticketSaveInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => saveTicket(parseSchema(ticketSaveInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketMove,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => moveTicket(ticketMoveInputSchema.parse(input)))
+    handler: (_event, input) => fromPromise(() => moveTicket(parseSchema(ticketMoveInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketClarifications,
@@ -147,7 +148,7 @@ export const ticketIpcMethods = [
     result: ipcResult(),
     handler: (_event, input) =>
       fromPromise(async () => {
-        const parsed = clarificationAnswerInputSchema.parse(input);
+        const parsed = parseSchema(clarificationAnswerInputSchema, input);
         const answer = await answerClarificationQuestion(parsed.projectPath, parsed.ticketId, parsed.questionId, parsed.answer);
         void maybeResumeTicketDraftAfterClarification(parsed.projectPath, parsed.ticketId).catch((error) =>
           logError("codex:draft", "auto-resume after clarification failed", error, {

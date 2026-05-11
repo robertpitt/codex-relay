@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krch7qa4z9mv2mkag46pny99
 title: Migrate Relay validation schemas from Zod to Effect Schema
 ticketType: task
-status: todo
-position: 11000
+status: completed
+position: 40000
 priority: high
 labels:
   - backend
@@ -15,10 +15,10 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T22:06:32.772Z'
-updatedAt: '2026-05-11T22:12:19.997Z'
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krch7q94g9h1zztnzprak6wk
+updatedAt: '2026-05-11T22:34:17.618Z'
+codexThreadId: 019e191d-9ef3-7c93-b51f-2e65eee77f9d
+runStatus: completed
+lastRunId: run_01krchv7hc34mq6a9584x5z5n8
 ---
 # Migrate Relay validation schemas from Zod to Effect Schema
 
@@ -141,5 +141,53 @@ Relay currently uses Zod for runtime validation in the backend schema module whi
 - Limitation: Code search stopped after scanning 160 candidate files.
 
 ## Codex Handoff
+
+### 5/11/2026, 11:31:45 PM
+
+Implemented the Zod to Effect Schema migration.
+
+Summary of changes made:
+- Replaced `src/main/services/schemas.ts` Zod schemas with Effect Schema equivalents.
+- Added `parseSchema(...)` and `isRelaySchemaError(...)`.
+- Updated all Relay schema validation call sites from `.parse(...)` to `parseSchema(...)`.
+- Replaced `ZodError` classification with Effect schema error classification for Codex invalid structured output.
+- Preserved defaults, mutable arrays, Date-to-ISO decoding, passthrough persisted roots, strict Codex outputs, record payload validation, and task/subticket rejection.
+- Removed direct `zod` dependency from `package.json` and `package-lock.json`.
+- Added focused schema migration tests and included them in `tests/run-tests.mjs`.
+
+Files changed:
+- `package.json`
+- `package-lock.json`
+- `src/main/services/schemas.ts`
+- `src/main/ipc/methods/codex.ts`
+- `src/main/ipc/methods/projects.ts`
+- `src/main/ipc/methods/tickets.ts`
+- `src/main/services/codex/index.ts`
+- `src/main/services/registry/index.ts`
+- `src/main/services/run-events/index.ts`
+- `src/main/services/storage/index.ts`
+- `tests/schemas.test.ts`
+- `tests/run-tests.mjs`
+
+Commands run:
+- `npm run typecheck`
+- `npm test`
+- `grep -RInE "from ['\"]zod['\"]|ZodError|ZodType|\bz\." src tests package.json package-lock.json`
+- `grep -RInE "[A-Za-z0-9_]+Schema\.parse\(" src tests`
+- `grep -n '"zod"\|node_modules/zod' package-lock.json`
+- `node --input-type=module -e '...JSON.parse package-lock...'`
+- `git status --short`, `git diff --stat`
+
+Tests run and results:
+- `npm run typecheck`: passed
+- `npm test`: passed, 87/87 tests
+- Zod/source scans: no matches
+- Lockfile Zod scan: no matches
+- `package-lock.json` JSON parse check: passed
+
+Remaining risks or follow-up:
+- Effect’s built-in excess-property parse options propagate more broadly than Zod object methods, so I implemented local passthrough/strict helpers to preserve only root-level Zod behavior. Tests cover this.
+- The worktree contains unrelated/staged `.relay` ticket metadata and an untracked `.effect/` directory; I left those untouched.
+
 
 No Codex run has been started.

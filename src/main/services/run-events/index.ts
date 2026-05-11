@@ -11,7 +11,7 @@ import {
 import { RelayWindow } from "../../window/RelayWindow";
 import { type BackendServices, fromPromise, runBackendEffect } from "../runtime";
 import { appendTextFileEffect, isFileNotFoundError, makeDirectoryEffect, pathDirname, pathJoin, readTextFileEffect } from "../io";
-import { relayCodexEventSchema, runLogLineSchema } from "../schemas";
+import { parseSchema, relayCodexEventSchema, runLogLineSchema } from "../schemas";
 import { runsPath } from "../storage";
 
 export type RendererRunEventSink = {
@@ -43,7 +43,7 @@ export const rendererRunEventFromRelayEvent = (
 });
 
 const relayEventFromRunLogLine = (line: RunLogLine): RelayCodexEvent =>
-  relayCodexEventSchema.parse({
+  parseSchema(relayCodexEventSchema, {
     ...line.payload,
     type: line.type,
     timestamp: line.timestamp
@@ -53,7 +53,7 @@ const parseRunLogLines = (raw: string): RunLogLine[] =>
   raw
     .split("\n")
     .filter(Boolean)
-    .map((line) => runLogLineSchema.parse(JSON.parse(line)));
+    .map((line) => parseSchema(runLogLineSchema, JSON.parse(line)));
 
 const timestampMs = (timestamp: string | null): number | null => {
   if (!timestamp) return null;
