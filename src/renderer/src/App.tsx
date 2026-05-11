@@ -1427,12 +1427,15 @@ function TicketDetail({
   const [ticketUpdateCancelling, setTicketUpdateCancelling] = useState(false);
   const [ticketUpdateLogViewerOpen, setTicketUpdateLogViewerOpen] = useState(false);
   const [addTicketsOpen, setAddTicketsOpen] = useState(false);
+  const [blockerPanelOpen, setBlockerPanelOpen] = useState(false);
   const [newSubticketTitle, setNewSubticketTitle] = useState("");
   const [newSubticketPriority, setNewSubticketPriority] = useState<TicketPriority>("medium");
   const [newSubticketLabels, setNewSubticketLabels] = useState("");
   const [linkSubticketId, setLinkSubticketId] = useState("");
   const [subticketBusy, setSubticketBusy] = useState(false);
   const ticketUpdateInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const labelsInputRef = useRef<HTMLInputElement | null>(null);
+  const subticketsPanelRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     setDetailError(null);
@@ -1479,6 +1482,7 @@ function TicketDetail({
     setTicketUpdateLogViewerOpen(false);
     setRunPreflight(null);
     setAddTicketsOpen(false);
+    setBlockerPanelOpen(false);
     setNewSubticketTitle("");
     setNewSubticketPriority("medium");
     setNewSubticketLabels("");
@@ -1582,6 +1586,8 @@ function TicketDetail({
       .filter((item) => item.id !== ticket.frontMatter.id)
       .sort((a, b) => ticketBlockerOptionLabel(a, board.tickets, board.columns).localeCompare(ticketBlockerOptionLabel(b, board.tickets, board.columns)));
   }, [board.columns, board.tickets, ticket]);
+  const blockerCount = blockedByIds.length;
+  const labelCount = useMemo(() => labelsFromInput(labels).length, [labels]);
   const linkableTickets = useMemo(() => {
     if (!ticket || ticket.frontMatter.ticketType !== "epic") return [];
     const linkedIds = new Set(linkedSubtickets.map((item) => item.id));
@@ -1810,6 +1816,19 @@ function TicketDetail({
     });
   };
 
+  const focusLabelsInput = (): void => {
+    labelsInputRef.current?.scrollIntoView({ block: "center" });
+    window.requestAnimationFrame(() => labelsInputRef.current?.focus());
+  };
+
+  const toggleSubticketPanel = (): void => {
+    const nextOpen = !addTicketsOpen;
+    setAddTicketsOpen(nextOpen);
+    if (nextOpen) {
+      window.requestAnimationFrame(() => subticketsPanelRef.current?.scrollIntoView({ block: "nearest" }));
+    }
+  };
+
   const toggleBlocker = (blockerId: string): void => {
     setBlockedByIds((current) =>
       current.includes(blockerId) ? current.filter((candidate) => candidate !== blockerId) : [...current, blockerId]
@@ -2023,6 +2042,48 @@ function TicketDetail({
           </button>
         </div>
 
+        <div className="ticket-detail-actions-row" role="group" aria-label="Ticket detail actions">
+          <button
+            className={clsx("compact-action-button", blockerPanelOpen && "active")}
+            onClick={() => setBlockerPanelOpen((open) => !open)}
+            disabled={draftInProgress}
+            aria-expanded={blockerPanelOpen}
+            aria-controls="ticket-blocker-manager"
+            aria-label={blockerCount === 0 ? "Add blocker" : `Manage ${blockerCount} blocker${blockerCount === 1 ? "" : "s"}`}
+            title={blockerCount === 0 ? "Add blocker" : "Manage blockers"}
+          >
+            <Plus size={14} />
+            <span>Blocker</span>
+            {blockerCount > 0 && <span className="compact-action-count">{blockerCount}</span>}
+          </button>
+          {ticket.frontMatter.ticketType === "epic" && (
+            <button
+              className={clsx("compact-action-button", addTicketsOpen && "active")}
+              onClick={toggleSubticketPanel}
+              disabled={subticketBusy || draftInProgress}
+              aria-expanded={addTicketsOpen}
+              aria-controls="ticket-subtask-manager"
+              aria-label={linkedSubtickets.length === 0 ? "Add subtask" : `Manage ${linkedSubtickets.length} subtask${linkedSubtickets.length === 1 ? "" : "s"}`}
+              title="Add or link subtasks"
+            >
+              {subticketBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+              <span>Subtask</span>
+              {linkedSubtickets.length > 0 && <span className="compact-action-count">{linkedSubtickets.length}</span>}
+            </button>
+          )}
+          <button
+            className="compact-action-button"
+            onClick={focusLabelsInput}
+            disabled={draftInProgress}
+            aria-label={labelCount === 0 ? "Add tags" : `Edit ${labelCount} tag${labelCount === 1 ? "" : "s"}`}
+            title="Edit tags"
+          >
+            <Plus size={14} />
+            <span>Tags</span>
+            {labelCount > 0 && <span className="compact-action-count">{labelCount}</span>}
+          </button>
+        </div>
+
         {draftInProgress && (
           <div className="ticket-update-error warning" role="status">
             <Loader2 className="spin" size={16} />
@@ -2072,76 +2133,83 @@ function TicketDetail({
           </div>
         )}
 
-        <section className="epic-link-panel blocker-panel">
-          <header>
-            <h3>Blockers</h3>
-            {blockerResolution?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
-          </header>
-          <div className="blocker-summary-list">
-            {blockedByIds.length === 0 ? (
-              <p>No blockers selected.</p>
-            ) : (
-              <>
-                {blockerResolution?.resolvedBlockers.map((blocker) => (
-                  <div className={clsx("blocker-row", blocker.active && "active")} key={blocker.id}>
-                    <button className="blocker-main" onClick={() => onOpenTicket(blocker.id)}>
-                      <strong>{blocker.title}</strong>
-                      <span>{blocker.contextLabel}</span>
-                      <em>{blocker.columnName}</em>
-                    </button>
-                    <button className="icon-button" onClick={() => removeBlocker(blocker.id)} aria-label={`Remove ${blocker.title} blocker`}>
-                      <X size={15} />
-                    </button>
-                  </div>
-                ))}
-                {blockerResolution?.missingBlockerIds.map((blockerId) => (
-                  <div className="blocker-row warning" key={blockerId}>
-                    <div className="blocker-main static">
-                      <strong>{blockerId}</strong>
-                      <span>Missing blocker reference</span>
-                      <em>Warning</em>
+        {blockerPanelOpen && (
+          <section className="epic-link-panel blocker-panel" id="ticket-blocker-manager">
+            <header>
+              <div className="blocker-panel-title">
+                <h3>Blockers</h3>
+                {blockerResolution?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+              </div>
+              <button className="icon-button" onClick={() => setBlockerPanelOpen(false)} aria-label="Close blocker manager">
+                <X size={15} />
+              </button>
+            </header>
+            <div className="blocker-summary-list">
+              {blockedByIds.length === 0 ? (
+                <p>No blockers selected.</p>
+              ) : (
+                <>
+                  {blockerResolution?.resolvedBlockers.map((blocker) => (
+                    <div className={clsx("blocker-row", blocker.active && "active")} key={blocker.id}>
+                      <button className="blocker-main" onClick={() => onOpenTicket(blocker.id)}>
+                        <strong>{blocker.title}</strong>
+                        <span>{blocker.contextLabel}</span>
+                        <em>{blocker.columnName}</em>
+                      </button>
+                      <button className="icon-button" onClick={() => removeBlocker(blocker.id)} aria-label={`Remove ${blocker.title} blocker`}>
+                        <X size={15} />
+                      </button>
                     </div>
-                    <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label={`Remove missing blocker ${blockerId}`}>
-                      <X size={15} />
-                    </button>
-                  </div>
-                ))}
-                {blockerResolution?.selfBlockerIds.map((blockerId) => (
-                  <div className="blocker-row warning" key={blockerId}>
-                    <div className="blocker-main static">
-                      <strong>{blockerId}</strong>
-                      <span>Self blocker reference</span>
-                      <em>Invalid</em>
+                  ))}
+                  {blockerResolution?.missingBlockerIds.map((blockerId) => (
+                    <div className="blocker-row warning" key={blockerId}>
+                      <div className="blocker-main static">
+                        <strong>{blockerId}</strong>
+                        <span>Missing blocker reference</span>
+                        <em>Warning</em>
+                      </div>
+                      <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label={`Remove missing blocker ${blockerId}`}>
+                        <X size={15} />
+                      </button>
                     </div>
-                    <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label="Remove self blocker">
-                      <X size={15} />
-                    </button>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-          <div className="blocker-picker" role="group" aria-label="Ticket blockers">
-            {blockerCandidates.length === 0 ? (
-              <p>No other tickets available.</p>
-            ) : (
-              blockerCandidates.map((candidate) => (
-                <label className={clsx("blocker-option", blockedByIds.includes(candidate.id) && "selected")} key={candidate.id}>
-                  <input
-                    type="checkbox"
-                    checked={blockedByIds.includes(candidate.id)}
-                    onChange={() => toggleBlocker(candidate.id)}
-                  />
-                  <span>
-                    <strong>{candidate.title}</strong>
-                    <small>{ticketContextLabel(candidate, board.tickets)}</small>
-                  </span>
-                  <em>{statusName(board.columns, candidate.status)}</em>
-                </label>
-              ))
-            )}
-          </div>
-        </section>
+                  ))}
+                  {blockerResolution?.selfBlockerIds.map((blockerId) => (
+                    <div className="blocker-row warning" key={blockerId}>
+                      <div className="blocker-main static">
+                        <strong>{blockerId}</strong>
+                        <span>Self blocker reference</span>
+                        <em>Invalid</em>
+                      </div>
+                      <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label="Remove self blocker">
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+            <div className="blocker-picker" role="group" aria-label="Ticket blockers">
+              {blockerCandidates.length === 0 ? (
+                <p>No other tickets available.</p>
+              ) : (
+                blockerCandidates.map((candidate) => (
+                  <label className={clsx("blocker-option", blockedByIds.includes(candidate.id) && "selected")} key={candidate.id}>
+                    <input
+                      type="checkbox"
+                      checked={blockedByIds.includes(candidate.id)}
+                      onChange={() => toggleBlocker(candidate.id)}
+                    />
+                    <span>
+                      <strong>{candidate.title}</strong>
+                      <small>{ticketContextLabel(candidate, board.tickets)}</small>
+                    </span>
+                    <em>{statusName(board.columns, candidate.status)}</em>
+                  </label>
+                ))
+              )}
+            </div>
+          </section>
+        )}
 
         {parentEpic && (
           <section className="epic-link-panel">
@@ -2159,10 +2227,10 @@ function TicketDetail({
         )}
 
         {ticket.frontMatter.ticketType === "epic" && (
-          <section className="epic-link-panel">
+          <section className="epic-link-panel" id="ticket-subtask-manager" ref={subticketsPanelRef}>
             <header>
               <h3>Subtickets</h3>
-              <button onClick={() => setAddTicketsOpen((open) => !open)} disabled={subticketBusy}>
+              <button onClick={toggleSubticketPanel} disabled={subticketBusy}>
                 {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
                 Add Tickets
               </button>
@@ -2336,7 +2404,7 @@ function TicketDetail({
           </div>
           <label className="field">
             <span>Labels</span>
-            <input value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
+            <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
           </label>
           <label className="field">
             <span>Markdown</span>

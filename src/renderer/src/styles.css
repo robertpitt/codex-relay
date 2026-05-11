@@ -1699,6 +1699,47 @@ kbd {
   margin-top: var(--relay-space-3);
 }
 
+.ticket-detail-actions-row {
+  margin-top: var(--relay-space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--relay-space-2);
+  flex-wrap: wrap;
+}
+
+.compact-action-button {
+  min-height: 28px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 4.5%);
+  padding: 0 9px;
+  color: var(--relay-text-muted);
+  font-size: var(--relay-text-sm);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+
+.compact-action-button:hover,
+.compact-action-button.active {
+  background: rgb(255 255 255 / 8%);
+  color: var(--relay-text);
+  transform: none;
+}
+
+.compact-action-count {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--relay-text);
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--relay-text-xs);
+  line-height: 1;
+}
+
 .epic-link-panel {
   margin-top: var(--relay-space-4);
   overflow: hidden;
@@ -1802,6 +1843,14 @@ kbd {
 
 .blocker-panel header .ticket-blocker-pill {
   flex-shrink: 0;
+}
+
+.blocker-panel-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--relay-space-2);
+  flex-wrap: wrap;
 }
 
 .blocker-summary-list,
@@ -2758,6 +2807,15 @@ kbd {
   .ticket-update-actions button,
   .agent-panel-actions button,
   .danger-row button {
+    width: 100%;
+  }
+
+  .ticket-detail-actions-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  }
+
+  .compact-action-button {
     width: 100%;
   }
 

@@ -7,12 +7,14 @@ Relay is designed for one developer working across local project folders. Each p
 ## Contents
 
 - [Project Overview](#project-overview)
+- [Showcase](#showcase)
 - [Prerequisites](#prerequisites)
 - [Local Setup](#local-setup)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Environment Variables and Secrets](#environment-variables-and-secrets)
 - [Local Data and Services](#local-data-and-services)
 - [Development Commands](#development-commands)
+- [Distribution](#distribution)
 - [Repository Structure](#repository-structure)
 - [Development Workflow](#development-workflow)
 - [Troubleshooting](#troubleshooting)
@@ -34,6 +36,14 @@ Relay stores project state as files:
 - `.relay/audit.jsonl` records status changes and clarification events.
 
 Local development does not require a database server, container stack, or hosted issue tracker.
+
+## Showcase
+
+![Relay main board view](assets/front.png)
+
+![Relay board workflow view](assets/front-2.png)
+
+![Relay ticket detail view](assets/ticket.png)
 
 ## Prerequisites
 
@@ -143,9 +153,35 @@ The registry only caches known project folders. Removing a project from the side
 | `npm test` | Run the Node test suite in `tests/`. |
 | `npm run typecheck` | Run TypeScript with `tsc --noEmit`. |
 | `npm run build` | Run TypeScript checks and build Electron main, preload, and renderer output. |
+| `npm run clean:dist` | Remove generated distributable binary output from `dist/`. |
+| `npm run package:binary` | Package the already-built Electron output into a distributable binary archive for the current OS and CPU architecture. |
+| `npm run dist` | Clean `dist/`, run the production build, package the current-platform binary, and write a checksum. |
 | `npm run preview` | Preview the built Electron app with `electron-vite preview`. |
 
 `package.json` does not currently define `lint` or `format` scripts. Use `npm test`, `npm run typecheck`, and `npm run build` as the available verification commands until those workflows are added.
+
+## Distribution
+
+Build a local release archive for the current operating system and CPU architecture:
+
+```sh
+npm run dist
+```
+
+The distribution command writes a portable Electron app archive and matching SHA-256 checksum under `dist/`. Artifact names use this pattern:
+
+```text
+relay-<version-or-tag>-<platform>-<arch>.tar.gz
+relay-<version-or-tag>-<platform>-<arch>.tar.gz.sha256
+```
+
+Windows builds use `.zip` instead of `.tar.gz`. By default, the version label is `v<package.json version>`. Set `RELAY_RELEASE_VERSION` when building a tagged release locally:
+
+```sh
+RELAY_RELEASE_VERSION=v0.1.0 npm run dist
+```
+
+GitHub Actions builds the binary on Linux, macOS, and Windows in `.github/workflows/build-binary.yml`. Pushing a `v*` tag runs `.github/workflows/release-binary.yml`, builds platform artifacts, and publishes them to the matching GitHub Release with `contents: write` scoped only to the publish job.
 
 ## Repository Structure
 

@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krc98rc4489qj5aqra4tt4te
 title: Add distribution scripts and GitHub release workflow for application binary
 ticketType: task
-status: todo
-position: 10000
+status: completed
+position: 38000
 priority: medium
 labels:
   - ci
@@ -15,10 +15,10 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T19:47:18.020Z'
-updatedAt: '2026-05-11T19:49:57.219Z'
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krc98rb84gjvsx8cjhtafbnd
+updatedAt: '2026-05-11T20:15:39.831Z'
+codexThreadId: 019e18a3-15c3-74c2-bd20-0741fd766065
+runStatus: completed
+lastRunId: run_01krca64wk2erc30vra5t393mn
 ---
 # Add distribution scripts and GitHub release workflow for application binary
 
@@ -90,5 +90,42 @@ The .effect directory is explicitly out of scope for implementation. It is only 
 - Limitation: Code search stopped after scanning 160 candidate files.
 
 ## Codex Handoff
+
+### 5/11/2026, 9:12:52 PM
+
+**Summary**
+Added local binary distribution support for the root app package, without touching `.effect`. The new `npm run dist` path builds the Electron app, packages the current OS/arch runtime, names artifacts as `relay-<version/tag>-<platform>-<arch>`, and writes a `.sha256` checksum.
+
+Added GitHub Actions workflows for CI binary builds and tag-based GitHub Releases. The release workflow triggers on `v*` tags, builds Linux/macOS/Windows artifacts, and scopes `contents: write` only to the publish job.
+
+**Files Changed**
+- [package.json](/Users/robertpitt/Projects/relay/package.json)
+- [scripts/package-electron.mjs](/Users/robertpitt/Projects/relay/scripts/package-electron.mjs)
+- [.github/workflows/build-binary.yml](/Users/robertpitt/Projects/relay/.github/workflows/build-binary.yml)
+- [.github/workflows/release-binary.yml](/Users/robertpitt/Projects/relay/.github/workflows/release-binary.yml)
+- [README.md](/Users/robertpitt/Projects/relay/README.md)
+
+Note: the worktree also contains unrelated `.relay`, `assets`, README showcase, and `src/renderer/src/App.tsx` changes. I left those intact.
+
+**Commands Run**
+- Repo inspection via `find`, `sed`, `git status`, `git diff`
+- `node --check scripts/package-electron.mjs`
+- YAML parse validation for both workflow files with `node -e ... YAML.parse(...)`
+- `npm test`
+- `npm run dist`
+- `cd dist && shasum -a 256 -c relay-v0.1.0-darwin-arm64.tar.gz.sha256`
+- `plutil` checks on the generated macOS bundle metadata
+
+**Tests Run**
+- `npm test`: passed, 72/72 tests.
+- `npm run dist`: passed, produced `dist/relay-v0.1.0-darwin-arm64.tar.gz` and checksum.
+- Checksum verification from `dist/`: passed.
+- Workflow YAML parse validation: passed.
+
+**Remaining Risks**
+- GitHub release publishing was not executed locally; it will need validation on the first `v*` tag run.
+- Only macOS arm64 was built locally. Linux and Windows builds are covered by the workflow matrix.
+- The generated app is a portable Electron archive, not a signed/notarized installer.
+
 
 No Codex run has been started.
