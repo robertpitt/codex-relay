@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krcka112x6zmxsz6416d6hrj
 title: Codex SDK integration improvement epic
 ticketType: epic
-status: todo
-position: 10000
+status: completed
+position: 45000
 priority: medium
 labels:
   - codex
@@ -19,10 +19,11 @@ subticketIds:
   - tkt_01krckmjcs31xft90t939px4c4
 blockedByIds: []
 createdAt: '2026-05-11T22:42:45.410Z'
-updatedAt: '2026-05-11T22:48:30.874Z'
+updatedAt: '2026-05-12T00:25:41.035Z'
 codexThreadId: null
 runStatus: draft_complete
 lastRunId: run_01krcka104g0w56tja0j2e0zje
+lastRunStartedAt: null
 ---
 # Codex SDK integration improvement epic
 

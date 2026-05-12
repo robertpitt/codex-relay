@@ -21,6 +21,7 @@ import {
   Save,
   Search,
   Send,
+  Sparkles,
   Trash2,
   X
 } from "lucide-react";
@@ -34,6 +35,7 @@ import type {
   CodexStatus,
   GitMetadata,
   ProjectSummary,
+  RelayApi,
   RelayColumn,
   RendererRunEvent,
   RunSummary,
@@ -45,6 +47,7 @@ import type {
   TicketPriority,
   TicketReferenceCandidate,
   TicketRecord,
+  TicketSuggestion,
   TicketSummary,
   TicketType
 } from "@shared/types";
@@ -86,9 +89,13 @@ import {
 
 type Toast = { kind: "info" | "error" | "success"; message: string } | null;
 type LocalAgentProgress = { status: RunStatus; startedAt: string; endedAt?: string | null };
+type TicketSuggestionCreateState = "idle" | "creating" | "created";
+type TicketSuggestionLoadState = "loading" | "error" | "ready";
 type ActiveTicketReferenceMention = {
   token: TicketMentionToken;
 };
+
+const ticketSuggestionRequests = new Map<string, ReturnType<RelayApi["ticket"]["generateSuggestions"]>>();
 
 type DraftArrayField =
   | "labels"
@@ -327,6 +334,21 @@ const copyToast = (kind: "markdown" | "code"): Toast => ({
   kind: "success",
   message: kind === "code" ? "Code copied." : "Markdown source copied."
 });
+
+const generateTicketSuggestionsOnce = (projectPath: string): ReturnType<RelayApi["ticket"]["generateSuggestions"]> => {
+  const existing = ticketSuggestionRequests.get(projectPath);
+  if (existing) return existing;
+
+  const request = getRelayApi()
+    .ticket.generateSuggestions(projectPath)
+    .finally(() => {
+      if (ticketSuggestionRequests.get(projectPath) === request) {
+        ticketSuggestionRequests.delete(projectPath);
+      }
+    });
+  ticketSuggestionRequests.set(projectPath, request);
+  return request;
+};
 
 export function ProjectSidebar({
   projects,
@@ -624,6 +646,7 @@ function BoardView({
   ticketNavigationEnabled,
   onQuery,
   onCreate,
+  onGenerateTickets,
   onOpenTicket,
   onMove,
   gitMetadata
@@ -633,6 +656,7 @@ function BoardView({
   ticketNavigationEnabled: boolean;
   onQuery: (query: string) => void;
   onCreate: () => void;
+  onGenerateTickets: () => void;
   onOpenTicket: (ticketId: string) => void;
   onMove: (event: DragEndEvent) => void;
   gitMetadata: GitMetadata | undefined;
@@ -750,6 +774,13 @@ function BoardView({
             />
           </label>
           <button
+            onClick={onGenerateTickets}
+            title="Generate ticket suggestions"
+          >
+            <Sparkles size={16} />
+            Generate Tickets
+          </button>
+          <button
             className="primary-button"
             onClick={onCreate}
             aria-keyshortcuts="Meta+Space Control+Space"
@@ -805,6 +836,232 @@ function BoardView({
         </div>
       </DndContext>
     </main>
+  );
+}
+
+export function TicketSuggestionsModalContent({
+  state,
+  suggestions,
+  errorMessage,
+  createStates,
+  createErrors,
+  onCreate,
+  onRetry
+}: {
+  state: TicketSuggestionLoadState;
+  suggestions: TicketSuggestion[];
+  errorMessage: string | null;
+  createStates: Record<number, TicketSuggestionCreateState>;
+  createErrors: Record<number, string | undefined>;
+  onCreate: (index: number) => void;
+  onRetry?: () => void;
+}): ReactElement {
+  if (state === "loading") {
+    return (
+      <div className="draft-message ticket-suggestions-status" role="status">
+        <Loader2 className="spin" size={15} />
+        <span>Codex is reviewing the local project and current board.</span>
+      </div>
+    );
+  }
+
+  if (state === "error") {
+    return (
+      <div className="draft-message error ticket-suggestions-status" role="alert">
+        <AlertTriangle size={15} />
+        <span>{errorMessage ?? "Unable to generate ticket suggestions."}</span>
+        {onRetry && (
+          <button type="button" onClick={onRetry}>
+            <RefreshCw size={14} />
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (suggestions.length === 0) {
+    return (
+      <div className="ticket-suggestions-empty" role="status">
+        <strong>No suggestions returned</strong>
+        <span>Codex did not find a task-sized ticket that was distinct from the current board.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ticket-suggestions-list" aria-label="Generated ticket suggestions">
+      {suggestions.map((suggestion, index) => {
+        const createState = createStates[index] ?? "idle";
+        const createError = createErrors[index];
+        const created = createState === "created";
+        const creating = createState === "creating";
+        return (
+          <article className={clsx("ticket-suggestion-row", created && "created")} key={`${suggestion.title}-${index}`}>
+            <div className="ticket-suggestion-main">
+              <div className="ticket-suggestion-heading">
+                <h3>{suggestion.title}</h3>
+                <span className={clsx("priority", suggestion.priority)}>{suggestion.priority}</span>
+              </div>
+              {suggestion.labels.length > 0 && (
+                <div className="labels ticket-suggestion-labels">
+                  {suggestion.labels.map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </div>
+              )}
+              <p>{suggestion.rationale}</p>
+              <div className="ticket-suggestion-request">
+                <span>Request</span>
+                <strong>{suggestion.request}</strong>
+              </div>
+              {createError && (
+                <div className="draft-message error ticket-suggestion-create-error" role="alert">
+                  <AlertTriangle size={14} />
+                  <span>{createError}</span>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="primary-button ticket-suggestion-create"
+              onClick={() => onCreate(index)}
+              disabled={creating || created}
+              aria-label={`${created ? "Created" : "Create draft for"} ${suggestion.title}`}
+            >
+              {creating ? <Loader2 className="spin" size={16} /> : created ? <Check size={16} /> : <Plus size={16} />}
+              {creating ? "Creating..." : created ? "Created" : "Create"}
+            </button>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function TicketSuggestionsModal({
+  projectPath,
+  onClose,
+  onCreated,
+  setToast
+}: {
+  projectPath: string;
+  onClose: () => void;
+  onCreated: () => void | Promise<void>;
+  setToast: (toast: Toast) => void;
+}): ReactElement {
+  const [state, setState] = useState<TicketSuggestionLoadState>("loading");
+  const [suggestions, setSuggestions] = useState<TicketSuggestion[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [createStates, setCreateStates] = useState<Record<number, TicketSuggestionCreateState>>({});
+  const [createErrors, setCreateErrors] = useState<Record<number, string | undefined>>({});
+  const requestSequenceRef = useRef(0);
+
+  useShortcutOverlay({
+    id: "ticket-suggestions-modal",
+    priority: 100,
+    onEscape: () => {
+      onClose();
+      return true;
+    }
+  });
+
+  const startGeneration = useCallback((): void => {
+    const requestSequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestSequence;
+    setState("loading");
+    setSuggestions([]);
+    setErrorMessage(null);
+    setCreateStates({});
+    setCreateErrors({});
+
+    void generateTicketSuggestionsOnce(projectPath)
+      .then((result) => {
+        if (requestSequenceRef.current !== requestSequence) return;
+        if (!result.ok) {
+          setState("error");
+          setErrorMessage(result.error.message);
+          setToast({ kind: "error", message: result.error.message });
+          return;
+        }
+        setSuggestions(result.suggestions);
+        setState("ready");
+      })
+      .catch((error) => {
+        if (requestSequenceRef.current !== requestSequence) return;
+        const message = error instanceof Error ? error.message : "Unable to generate ticket suggestions.";
+        setState("error");
+        setErrorMessage(message);
+        setToast({ kind: "error", message });
+      });
+  }, [projectPath, setToast]);
+
+  useEffect(() => {
+    startGeneration();
+  }, [startGeneration]);
+
+  const createSuggestion = async (index: number): Promise<void> => {
+    const suggestion = suggestions[index];
+    if (!suggestion) return;
+
+    setCreateStates((current) => ({ ...current, [index]: "creating" }));
+    setCreateErrors((current) => ({ ...current, [index]: undefined }));
+    try {
+      const result = await getRelayApi().ticket.createDraft({
+        projectPath,
+        idea: suggestion.request,
+        preferredTicketType: "task"
+      });
+      if (!result.ok) {
+        setCreateStates((current) => ({ ...current, [index]: "idle" }));
+        setCreateErrors((current) => ({ ...current, [index]: result.error.message }));
+        setToast({ kind: "error", message: result.error.message });
+        return;
+      }
+
+      setCreateStates((current) => ({ ...current, [index]: "created" }));
+      setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+      try {
+        await onCreated();
+      } catch (error) {
+        setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to create a draft from this suggestion.";
+      setCreateStates((current) => ({ ...current, [index]: "idle" }));
+      setCreateErrors((current) => ({ ...current, [index]: message }));
+      setToast({ kind: "error", message });
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal ticket-suggestions-modal" role="dialog" aria-modal="true" aria-labelledby="ticket-suggestions-title">
+        <header>
+          <div>
+            <h2 id="ticket-suggestions-title">Generate Tickets</h2>
+            <p>Codex suggests task-sized drafts from the local project and current board.</p>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close generated ticket suggestions dialog">
+            <X size={18} />
+          </button>
+        </header>
+
+        <TicketSuggestionsModalContent
+          state={state}
+          suggestions={suggestions}
+          errorMessage={errorMessage}
+          createStates={createStates}
+          createErrors={createErrors}
+          onCreate={(index) => void createSuggestion(index)}
+          onRetry={startGeneration}
+        />
+
+        <div className="modal-footer">
+          <button onClick={onClose}>Close</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2671,6 +2928,7 @@ function RelayApp(): ReactElement {
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState<Toast>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [ticketSuggestionsOpen, setTicketSuggestionsOpen] = useState(false);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const [codexStatus, setCodexStatus] = useState<CodexStatus>(initialCodexStatus);
   const [events, setEvents] = useState<RendererRunEvent[]>([]);
@@ -2763,6 +3021,7 @@ function RelayApp(): ReactElement {
       if (projectPath === selectedPath) return;
       setOpenTicketId(null);
       setCreateOpen(false);
+      setTicketSuggestionsOpen(false);
       setBoard(null);
       setQuery("");
       setSelectedPath(projectPath);
@@ -2794,6 +3053,7 @@ function RelayApp(): ReactElement {
   useEffect(() => {
     setOpenTicketId(null);
     setCreateOpen(false);
+    setTicketSuggestionsOpen(false);
   }, [selectedPath]);
 
   useEffect(() => {
@@ -2854,7 +3114,7 @@ function RelayApp(): ReactElement {
     () => events.filter((event) => event.projectPath === selectedPath && event.ticketId === openTicketId),
     [events, openTicketId, selectedPath]
   );
-  const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !openTicketId);
+  const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !ticketSuggestionsOpen && !openTicketId);
 
   useKeyboardShortcut({
     id: "create-ticket",
@@ -2868,7 +3128,7 @@ function RelayApp(): ReactElement {
   });
 
   return (
-    <div className={clsx("app-shell", openTicketId && "detail-open", createOpen && "modal-open")}>
+    <div className={clsx("app-shell", openTicketId && "detail-open", (createOpen || ticketSuggestionsOpen) && "modal-open")}>
       <ProjectSidebar
         projects={projects}
         selectedPath={selectedPath}
@@ -2888,9 +3148,10 @@ function RelayApp(): ReactElement {
         <BoardView
           board={board}
           query={query}
-          ticketNavigationEnabled={!createOpen && !openTicketId}
+          ticketNavigationEnabled={!createOpen && !ticketSuggestionsOpen && !openTicketId}
           onQuery={setQuery}
           onCreate={() => setCreateOpen(true)}
+          onGenerateTickets={() => setTicketSuggestionsOpen(true)}
           onOpenTicket={setOpenTicketId}
           onMove={(event) => void moveTicket(event)}
           gitMetadata={gitMetadataByPath[board.project.path]}
@@ -2921,6 +3182,15 @@ function RelayApp(): ReactElement {
 
       {board && selectedPath && createOpen && (
         <CreateTicketModal projectPath={selectedPath} onClose={() => setCreateOpen(false)} onCreated={refreshAll} setToast={setToast} />
+      )}
+
+      {board && selectedPath && ticketSuggestionsOpen && (
+        <TicketSuggestionsModal
+          projectPath={selectedPath}
+          onClose={() => setTicketSuggestionsOpen(false)}
+          onCreated={refreshAll}
+          setToast={setToast}
+        />
       )}
 
       {board && selectedPath && openTicketId && (

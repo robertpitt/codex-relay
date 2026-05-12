@@ -702,18 +702,25 @@ You are working inside the local project folder for this Relay ticket.
 
 Follow the ticket exactly. Ask for clarification if the ticket is missing a required product or implementation decision.
 
+Subagent guidance:
+- Use subagents only when available and useful for this ticket; skip them for small or tightly coupled work where delegation adds overhead.
+- Plan locally first, keep urgent blocking critical-path work local, and delegate only independent sidecar tasks that can run in parallel.
+- Give each subagent a concrete bounded responsibility; for code-editing workers, assign disjoint file or module ownership and avoid duplicate delegation.
+- Integrate subagent results before finalizing, and wait only when their result is needed.
+
 Do not mark the ticket completed yourself. At the end, provide:
 - Summary of changes made
 - Files changed
 - Commands run
 - Tests run and their results
+- Subagent usage: which subagents were launched, what they owned, what files they changed, how results were integrated, or "none used"
 - Any remaining risks or follow-up work
 
 Ticket:
 <full ticket markdown>
 ```
 
-Relay MAY prepend project-specific instructions in a future version, such as `.relay/WORKFLOW.md` or repository `AGENTS.md` content, but v1 MUST rely on Codex's normal project instruction discovery and the ticket prompt.
+Relay MUST provide this as prompt-level guidance only; Relay does not directly spawn, limit, or orchestrate subagents. Relay MAY prepend project-specific instructions in a future version, such as `.relay/WORKFLOW.md` or repository `AGENTS.md` content, but v1 MUST rely on Codex's normal project instruction discovery and the ticket prompt.
 
 ### 8.4 Thread Persistence
 
@@ -1235,4 +1242,3 @@ This specification is informed by:
 - OpenAI Codex approvals and security documentation: https://developers.openai.com/codex/agent-approvals-security
 - OpenAI Codex configuration reference: https://developers.openai.com/codex/config-reference
 - Symphony service specification: https://raw.githubusercontent.com/openai/symphony/refs/heads/main/SPEC.md
-

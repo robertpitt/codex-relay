@@ -1,6 +1,7 @@
-import type { TicketDraftStartResult } from "../../../shared/types";
+import type { TicketDraftStartResult, TicketSuggestionsGenerateResult } from "../../../shared/types";
 import {
   cancelTicketUpdateRun,
+  generateTicketSuggestions,
   maybeResumeTicketDraftAfterClarification,
   reconcileTicketQueueState,
   startTicketDraftRun,
@@ -53,6 +54,19 @@ export const ticketIpcMethods = [
       fromPromise(async (): Promise<TicketDraftStartResult> => {
         try {
           return { ok: true, ...(await startTicketDraftRun(parseSchema(createDraftInputSchema, input))) };
+        } catch (error) {
+          return { ok: false, error: ticketDraftErrorToPayload(error) };
+        }
+      })
+  }),
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.ticketGenerateSuggestions,
+    payload: ipcArgs([ipcString]),
+    result: ipcResult(),
+    handler: (_event, projectPath: string) =>
+      fromPromise(async (): Promise<TicketSuggestionsGenerateResult> => {
+        try {
+          return { ok: true, suggestions: await generateTicketSuggestions(projectPath) };
         } catch (error) {
           return { ok: false, error: ticketDraftErrorToPayload(error) };
         }

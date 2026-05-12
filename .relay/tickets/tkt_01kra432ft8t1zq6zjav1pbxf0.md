@@ -2,18 +2,23 @@
 schemaVersion: 1
 id: tkt_01kra432ft8t1zq6zjav1pbxf0
 title: Add Project Run Concurrency Limits
-status: todo
-position: 3000
+ticketType: task
+status: completed
+position: 46000
 priority: medium
 labels:
   - workflow
   - agent-readiness
   - relay
+parentEpicId: null
+subticketIds: []
+blockedByIds: []
 createdAt: '2026-05-10T23:38:20.023Z'
-updatedAt: '2026-05-10T23:38:20.023Z'
+updatedAt: '2026-05-12T00:29:32.697Z'
 codexThreadId: null
 runStatus: idle
 lastRunId: null
+lastRunStartedAt: null
 ---
 # Add Project Run Concurrency Limits
 

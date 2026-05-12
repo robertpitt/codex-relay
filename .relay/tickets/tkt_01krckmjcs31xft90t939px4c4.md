@@ -5,8 +5,8 @@ title: >-
   Pass local Markdown image references and drag-and-drop uploads to Codex SDK
   input
 ticketType: task
-status: review
-position: 1000
+status: completed
+position: 48000
 priority: medium
 labels:
   - codex
@@ -18,7 +18,7 @@ parentEpicId: tkt_01krcka112x6zmxsz6416d6hrj
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T22:48:30.873Z'
-updatedAt: '2026-05-12T00:09:59.474Z'
+updatedAt: '2026-05-12T00:30:07.129Z'
 codexThreadId: 019e1970-9b2e-7c73-96c7-5d42b125f148
 runStatus: completed
 lastRunId: run_01krcqq9gb3msw35dvef892pbv

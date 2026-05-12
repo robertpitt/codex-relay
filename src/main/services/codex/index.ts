@@ -27,7 +27,8 @@ import {
   type TicketDraftResearchLimits,
   type TicketDraftErrorCode,
   type TicketDraftErrorPayload,
-  type TicketRecord
+  type TicketRecord,
+  type TicketSuggestion
 } from "../../../shared/types";
 import { resolvedBlockerLabel, resolveTicketBlockers } from "../../../shared/blockers";
 import { extractClarificationRequest } from "../clarificationParser";
@@ -39,7 +40,7 @@ import {
   readRunSummary,
   type RendererRunEventSink
 } from "../run-events";
-import { agentTicketUpdateSchema, isRelaySchemaError, parseSchema, ticketDraftSchema } from "../schemas";
+import { agentTicketUpdateSchema, isRelaySchemaError, parseSchema, ticketDraftSchema, ticketSuggestionsResponseSchema } from "../schemas";
 import { logError, logInfo, logWarn } from "../logger";
 import { pathIsAbsolute, pathRelative, pathResolve } from "../io";
 import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft } from "./research";
@@ -371,6 +372,32 @@ const agentTicketUpdateSchemaJson = {
   }
 } as const;
 
+const ticketSuggestionSchemaJson = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "priority", "labels", "rationale", "request"],
+  properties: {
+    title: { type: "string" },
+    priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+    labels: { type: "array", items: { type: "string" } },
+    rationale: { type: "string" },
+    request: { type: "string" }
+  }
+} as const;
+
+const ticketSuggestionsResponseSchemaJson = {
+  type: "object",
+  additionalProperties: false,
+  required: ["suggestions"],
+  properties: {
+    suggestions: {
+      type: "array",
+      maxItems: 10,
+      items: ticketSuggestionSchemaJson
+    }
+  }
+} as const;
+
 const parseJsonResponse = (value: string): unknown => {
   try {
     return JSON.parse(value);
@@ -413,6 +440,14 @@ export type TicketDraftDependencies = {
   clearTimeoutFn?: (handle: DraftTimeoutHandle) => void;
   /** @deprecated Draft generation no longer starts an internal timeout. */
   unrefTimeout?: boolean;
+};
+
+export type TicketSuggestionDependencies = {
+  getStatus?: () => Promise<CodexStatus>;
+  createCodexClient?: () => TicketDraftCodexClient;
+  createRequestId?: () => string;
+  nowMs?: () => number;
+  abortController?: AbortController;
 };
 
 export type TicketDraftStartDependencies = TicketDraftDependencies & {
@@ -545,6 +580,45 @@ const normalizeTicketDraftError = (
   );
 };
 
+const normalizeTicketSuggestionError = (
+  error: unknown,
+  context: {
+    requestId: string;
+    durationMs: number;
+    signalAborted: boolean;
+  }
+): TicketDraftServiceError => {
+  if (error instanceof TicketDraftServiceError) return error;
+  if (context.signalAborted || isAbortLikeError(error)) {
+    return ticketDraftError(
+      "cancelled",
+      context.requestId,
+      context.durationMs,
+      "Codex ticket suggestion generation was cancelled.",
+      "codex_suggestion_generation_cancelled",
+      { cause: error }
+    );
+  }
+  if (isRelaySchemaError(error) || error instanceof SyntaxError || errorMessage(error, "").includes("valid JSON")) {
+    return ticketDraftError(
+      "invalid_response",
+      context.requestId,
+      context.durationMs,
+      "Codex returned invalid ticket suggestions. Retry generation when ready.",
+      "invalid_codex_suggestion_response",
+      { cause: error }
+    );
+  }
+  return ticketDraftError(
+    "backend_failure",
+    context.requestId,
+    context.durationMs,
+    errorMessage(error, "Ticket suggestion generation failed."),
+    "codex_suggestion_backend_failure",
+    { cause: error }
+  );
+};
+
 export const ticketDraftErrorToPayload = (error: unknown): TicketDraftErrorPayload => {
   if (error instanceof TicketDraftServiceError) return error.toPayload();
   return {
@@ -643,6 +717,152 @@ const reportTicketDraftProgress = async (dependencies: TicketDraftDependencies, 
     await dependencies.onProgress?.(message);
   } catch (error) {
     await logWarn("codex:draft", "ticket draft progress callback failed", { error: errorMessage(error, "Progress callback failed.") });
+  }
+};
+
+const TICKET_SUGGESTION_LIMIT = 10;
+
+const truncatePromptText = (value: string, maxLength: number): string => {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+};
+
+const normalizeSuggestionLabels = (labels: string[]): string[] => {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const label of labels) {
+    const next = normalizeWhitespace(label);
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    normalized.push(next);
+  }
+  return normalized;
+};
+
+const normalizeTicketSuggestion = (suggestion: TicketSuggestion): TicketSuggestion => ({
+  title: normalizeWhitespace(suggestion.title),
+  priority: suggestion.priority,
+  labels: normalizeSuggestionLabels(suggestion.labels),
+  rationale: normalizeWhitespace(suggestion.rationale) || "Suggested after reviewing the local project and current board.",
+  request: normalizeWhitespace(suggestion.request)
+});
+
+const normalizeTicketSuggestions = (suggestions: TicketSuggestion[]): TicketSuggestion[] =>
+  suggestions
+    .map(normalizeTicketSuggestion)
+    .filter((suggestion) => suggestion.title.length > 0 && suggestion.request.length > 0)
+    .slice(0, TICKET_SUGGESTION_LIMIT);
+
+const formatBoardTicketsForSuggestionPrompt = (board: Awaited<ReturnType<typeof readBoard>>): string => {
+  if (board.tickets.length === 0) return "No existing tickets are on the board.";
+
+  const columnNameById = new Map(board.columns.map((column) => [column.id, column.name]));
+  const orderedTickets = [...board.tickets].sort((left, right) => {
+    const leftColumn = board.columns.findIndex((column) => column.id === left.status);
+    const rightColumn = board.columns.findIndex((column) => column.id === right.status);
+    const leftColumnIndex = leftColumn === -1 ? Number.MAX_SAFE_INTEGER : leftColumn;
+    const rightColumnIndex = rightColumn === -1 ? Number.MAX_SAFE_INTEGER : rightColumn;
+    return leftColumnIndex - rightColumnIndex || left.position - right.position || left.title.localeCompare(right.title);
+  });
+
+  return orderedTickets
+    .map((ticket) => {
+      const labels = ticket.labels.length > 0 ? ticket.labels.join(", ") : "none";
+      const excerpt = truncatePromptText(ticket.excerpt, 240) || "No excerpt.";
+      const status = columnNameById.get(ticket.status) ?? ticket.status;
+      return `- ${ticket.id}: "${truncatePromptText(ticket.title, 120)}" | status: ${status} | priority: ${ticket.priority} | type: ${ticket.ticketType} | labels: ${labels} | excerpt: ${excerpt}`;
+    })
+    .join("\n");
+};
+
+export const generateTicketSuggestions = async (
+  projectPath: string,
+  dependencies: TicketSuggestionDependencies = {}
+): Promise<TicketSuggestion[]> => {
+  const requestId = dependencies.createRequestId?.() ?? newId("tsg");
+  const startedAt = dependencies.nowMs?.() ?? Date.now();
+  const nowMs = dependencies.nowMs ?? Date.now;
+  const durationMs = (): number => Math.max(0, nowMs() - startedAt);
+  const abortController = dependencies.abortController ?? new AbortController();
+  const logBase = { requestId, projectPath };
+
+  await logInfo("codex:suggestions", "starting ticket suggestion generation", logBase);
+
+  try {
+    const status = await (dependencies.getStatus ?? getCodexStatus)();
+    if (!status.cliAvailable) {
+      await logWarn("codex:suggestions", "codex cli unavailable", { ...logBase, durationMs: durationMs(), status });
+      throw ticketDraftError(
+        "codex_unavailable",
+        requestId,
+        durationMs(),
+        "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before generating ticket suggestions.",
+        "codex_cli_unavailable"
+      );
+    }
+    if (status.authenticated === false) {
+      await logWarn("codex:suggestions", "codex auth unavailable", { ...logBase, durationMs: durationMs(), status });
+      throw ticketDraftError(
+        "codex_unauthenticated",
+        requestId,
+        durationMs(),
+        "Codex is not authenticated. Run `codex login` in your terminal, then try generating ticket suggestions again.",
+        "codex_auth_unavailable"
+      );
+    }
+
+    const [config, board] = await Promise.all([readProjectConfig(projectPath), readBoard(projectPath)]);
+    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
+    const thread = codex.startThread(await ticketUpdateThreadOptionsForProject(projectPath));
+    const prompt = `You are helping Relay suggest project tickets for a local software project.
+
+Review the local project in read-only mode and propose up to ${TICKET_SUGGESTION_LIMIT} task-sized ticket ideas that a coding agent could turn into implementation-ready drafts.
+
+Rules:
+- Do not create, edit, move, rename, or delete tickets or project files.
+- Do not implement any suggestion.
+- Network access and web search are disabled; rely on local files plus the board context below.
+- Avoid obvious duplicates of existing board tickets.
+- Prefer concrete, scoped tasks over vague cleanup or broad epics.
+- Each suggestion request should be concise because it will be passed directly to Relay's existing createDraft flow with preferredTicketType "task".
+
+Return only data matching the requested schema. Use:
+- title: concise ticket title.
+- priority: one of low, medium, high, urgent.
+- labels: short project-relevant labels.
+- rationale: one short reason this is worth drafting now.
+- request: a short rough idea string suitable for createDraft.
+
+Project path: ${projectPath}
+Project name: ${config.name}
+Current board columns: ${config.columns.map((column) => column.name).join(", ")}
+
+Current board tickets:
+${formatBoardTicketsForSuggestionPrompt(board)}`;
+
+    const turn = await thread.run(prompt, { outputSchema: ticketSuggestionsResponseSchemaJson, signal: abortController.signal });
+    const parsed = parseSchema(ticketSuggestionsResponseSchema, parseJsonResponse(turn.finalResponse));
+    const suggestions = normalizeTicketSuggestions(parsed.suggestions);
+    await logInfo("codex:suggestions", "ticket suggestion generation completed", {
+      ...logBase,
+      durationMs: durationMs(),
+      suggestionCount: suggestions.length
+    });
+    return suggestions;
+  } catch (error) {
+    const suggestionError = normalizeTicketSuggestionError(error, {
+      requestId,
+      durationMs: durationMs(),
+      signalAborted: abortController.signal.aborted
+    });
+    const failureMeta = { ...logBase, ...suggestionError.toPayload() };
+    if (suggestionError.code === "timeout" || suggestionError.code === "cancelled") {
+      await logWarn("codex:suggestions", "ticket suggestion generation did not complete", failureMeta);
+    } else {
+      await logError("codex:suggestions", "ticket suggestion generation failed", suggestionError, failureMeta);
+    }
+    throw suggestionError;
   }
 };
 
@@ -1563,9 +1783,17 @@ export const cancelTicketUpdateRun = async (runId: string): Promise<void> => {
   run.abortController.abort();
 };
 
+const subagentExecutionGuidance = `Subagent guidance:
+- Use subagents only when available and useful for this ticket; skip them for small or tightly coupled work where delegation adds overhead.
+- Plan locally first, keep urgent blocking critical-path work local, and delegate only independent sidecar tasks that can run in parallel.
+- Give each subagent a concrete bounded responsibility; for code-editing workers, assign disjoint file or module ownership and avoid duplicate delegation.
+- Integrate subagent results before finalizing, and wait only when their result is needed.`;
+
 const buildExecutionPrompt = (ticketMarkdown: string, clarifications: ClarificationQuestion[]): string => `You are working inside the local project folder for this Relay ticket.
 
 Follow the ticket exactly. Ask for clarification if the ticket is missing a required product or implementation decision.
+
+${subagentExecutionGuidance}
 
 Clarification records already attached to this ticket:
 ${formatClarificationsForPrompt(clarifications)}
@@ -1581,6 +1809,7 @@ Do not mark the ticket completed yourself. At the end, provide:
 - Files changed
 - Commands run
 - Tests run and their results
+- Subagent usage: which subagents were launched, what they owned, what files they changed, how results were integrated, or "none used"
 - Any remaining risks or follow-up work
 
 Ticket:

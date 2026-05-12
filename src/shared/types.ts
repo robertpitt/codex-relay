@@ -267,6 +267,24 @@ export type TicketDraftStartResult =
       error: TicketDraftErrorPayload;
     };
 
+export type TicketSuggestion = {
+  title: string;
+  priority: TicketPriority;
+  labels: string[];
+  rationale: string;
+  request: string;
+};
+
+export type TicketSuggestionsGenerateResult =
+  | {
+      ok: true;
+      suggestions: TicketSuggestion[];
+    }
+  | {
+      ok: false;
+      error: TicketDraftErrorPayload;
+    };
+
 export type AgentTicketUpdate = {
   title: string;
   priority: TicketPriority;
@@ -523,6 +541,7 @@ export type RelayApi = {
   };
   ticket: {
     createDraft: (input: CreateDraftInput) => Promise<TicketDraftStartResult>;
+    generateSuggestions: (projectPath: string) => Promise<TicketSuggestionsGenerateResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
     createSubticket: (input: EpicSubticketCreateInput) => Promise<TicketRecord>;
     linkSubticket: (input: EpicSubticketLinkInput) => Promise<BoardSnapshot>;

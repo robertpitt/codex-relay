@@ -24,6 +24,7 @@ const entryPoints = [
   path.join(testsDir, "schemas.test.ts"),
   path.join(testsDir, "ticket-references.test.ts"),
   path.join(testsDir, "ticket-draft.test.ts"),
+  path.join(testsDir, "ticket-suggestions.test.ts"),
   path.join(testsDir, "ticket-draft-ui.test.tsx"),
   path.join(testsDir, "ticket-update.test.ts")
 ];

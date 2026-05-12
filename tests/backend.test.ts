@@ -757,6 +757,13 @@ test("codex runs preserve the selected project context after a cross-project swi
   assert.equal(capturedWorkingDirectory, secondProject);
   assert.match(capturedPrompt, /Active second project ticket/);
   assert.doesNotMatch(capturedPrompt, /Stale first project ticket/);
+  assert.match(capturedPrompt, /Subagent guidance:/);
+  assert.match(capturedPrompt, /Use subagents only when available and useful/);
+  assert.match(capturedPrompt, /independent sidecar tasks/);
+  assert.match(capturedPrompt, /blocking critical-path work local/);
+  assert.match(capturedPrompt, /disjoint file or module ownership/);
+  assert.match(capturedPrompt, /Subagent usage: which subagents were launched/);
+  assert.match(capturedPrompt, /none used/);
   assert.equal(events.every((event) => event.projectPath === secondProject && event.ticketId === secondTicket.frontMatter.id), true);
   const completedRunTicket = await readTicket(secondProject, secondTicket.frontMatter.id);
   assert.equal(completedRunTicket.frontMatter.runStatus, "completed");

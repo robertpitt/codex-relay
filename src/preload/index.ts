@@ -37,6 +37,7 @@ const api: RelayApi = {
   },
   ticket: {
     createDraft: (input: CreateDraftInput) => invoke(relayIpcChannels.ticketCreateDraft, input),
+    generateSuggestions: (projectPath: string) => invoke(relayIpcChannels.ticketGenerateSuggestions, projectPath),
     createManual: (projectPath: string, input: TicketCreateInput) => invoke(relayIpcChannels.ticketCreateManual, projectPath, input),
     createSubticket: (input: EpicSubticketCreateInput) => invoke(relayIpcChannels.ticketCreateSubticket, input),
     linkSubticket: (input: EpicSubticketLinkInput) => invoke(relayIpcChannels.ticketLinkSubticket, input),

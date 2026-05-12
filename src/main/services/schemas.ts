@@ -36,6 +36,7 @@ import type {
   TicketPriority,
   TicketRecord,
   TicketSaveInput,
+  TicketSuggestion,
   TicketType
 } from "../../shared/types";
 
@@ -329,6 +330,18 @@ export const ticketDraftSchema: RelaySchema<TicketDraft> = strictStruct({
       : undefined
   )
 );
+
+const ticketSuggestionSchema: RelaySchema<TicketSuggestion> = strictStruct({
+  title: Schema.String,
+  priority: ticketPrioritySchema,
+  labels: stringArrayWithDefault(),
+  rationale: Schema.String,
+  request: Schema.String
+});
+
+export const ticketSuggestionsResponseSchema: RelaySchema<{ suggestions: TicketSuggestion[] }> = strictStruct({
+  suggestions: withDefault(mutableArray(ticketSuggestionSchema), () => [])
+});
 
 export const agentTicketUpdateSchema: RelaySchema<AgentTicketUpdate> = strictStruct({
   title: nonEmptyString,

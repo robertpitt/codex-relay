@@ -252,8 +252,9 @@ For Codex flows, start in `src/main/services/codex/index.ts`. Ticket drafting us
 For coding agents working from Relay tickets:
 
 - Follow the ticket text exactly and ask for clarification when a required product or implementation decision is missing.
+- Use subagents conservatively when available and useful: delegate only independent sidecar work, keep urgent blocking work local, assign bounded and disjoint ownership for code-editing workers, and avoid subagents for small or tightly coupled tickets.
 - Do not mark tickets completed yourself unless explicitly asked.
-- End with a handoff that includes changes made, files changed, commands run, tests run, and remaining risks.
+- End with a handoff that includes changes made, files changed, commands run, tests run, subagent usage or `none used`, and remaining risks.
 
 For code changes, run at least:
 

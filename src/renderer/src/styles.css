@@ -1226,6 +1226,120 @@ kbd {
   color: var(--relay-danger-text);
 }
 
+.ticket-suggestions-status {
+  justify-content: flex-start;
+}
+
+.ticket-suggestions-status button {
+  margin-left: auto;
+}
+
+.ticket-suggestions-empty {
+  margin-top: var(--relay-space-4);
+  border-radius: var(--relay-radius-md);
+  background: rgb(255 255 255 / 3%);
+  padding: var(--relay-space-4);
+  display: grid;
+  gap: 6px;
+  color: var(--relay-text-subtle);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+
+.ticket-suggestions-empty strong {
+  color: var(--relay-text);
+  font-size: var(--relay-text-md);
+}
+
+.ticket-suggestions-list {
+  display: grid;
+  gap: var(--relay-space-3);
+  margin-top: var(--relay-space-4);
+}
+
+.ticket-suggestion-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--relay-space-3);
+  border-radius: var(--relay-radius-md);
+  background: rgb(255 255 255 / 3%);
+  padding: var(--relay-space-3);
+  box-shadow:
+    var(--relay-inset-highlight),
+    inset 0 0 0 1px rgb(255 255 255 / 4%);
+}
+
+.ticket-suggestion-row.created {
+  background: color-mix(in srgb, var(--relay-success-muted) 42%, transparent);
+}
+
+.ticket-suggestion-main {
+  min-width: 0;
+  display: grid;
+  gap: var(--relay-space-2);
+}
+
+.ticket-suggestion-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--relay-space-2);
+  flex-wrap: wrap;
+}
+
+.ticket-suggestion-heading h3 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--relay-text);
+  font-size: var(--relay-text-base);
+  font-weight: 590;
+  line-height: 1.3;
+}
+
+.ticket-suggestion-labels {
+  margin-top: 0;
+}
+
+.ticket-suggestion-row p {
+  margin: 0;
+  color: var(--relay-text-subtle);
+  font-size: var(--relay-text-md);
+  line-height: 1.45;
+}
+
+.ticket-suggestion-request {
+  display: grid;
+  gap: 4px;
+  border-radius: var(--relay-radius-sm);
+  background: rgb(0 0 0 / 14%);
+  padding: 8px 10px;
+}
+
+.ticket-suggestion-request span {
+  color: var(--relay-text-muted);
+  font-size: var(--relay-text-sm);
+  font-weight: 560;
+}
+
+.ticket-suggestion-request strong {
+  overflow-wrap: anywhere;
+  color: var(--relay-text);
+  font-size: var(--relay-text-md);
+  font-weight: 520;
+  line-height: 1.45;
+}
+
+.ticket-suggestion-create {
+  min-width: 112px;
+}
+
+.ticket-suggestion-create-error {
+  margin-top: 0;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -1668,6 +1782,10 @@ kbd {
 }
 
 .create-modal .modal-footer {
+  margin-top: var(--relay-space-4);
+}
+
+.ticket-suggestions-modal .modal-footer {
   margin-top: var(--relay-space-4);
 }
 
@@ -2892,6 +3010,7 @@ kbd {
 
   .topbar-actions button,
   .modal-footer button,
+  .ticket-suggestion-create,
   .detail-actions button,
   .ticket-update-actions button,
   .agent-panel-actions button,
@@ -2916,6 +3035,7 @@ kbd {
   .link-existing-row,
   .subticket-item,
   .subticket-row,
+  .ticket-suggestion-row,
   .blocker-row,
   .blocker-main {
     grid-template-columns: 1fr;

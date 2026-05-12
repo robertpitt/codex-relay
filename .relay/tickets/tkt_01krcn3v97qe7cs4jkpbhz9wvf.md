@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krcn3v97qe7cs4jkpbhz9wvf
 title: Fix missing active agent runtime on In Progress ticket cards
 ticketType: task
-status: review
-position: 2000
+status: completed
+position: 47000
 priority: high
 labels:
   - frontend
@@ -15,7 +15,7 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T23:14:20.071Z'
-updatedAt: '2026-05-12T00:14:05.930Z'
+updatedAt: '2026-05-12T00:29:46.854Z'
 codexThreadId: 019e195e-f7f8-78c2-9e33-472afeb0f464
 runStatus: completed
 lastRunId: run_01krcrb7vkbvfjsm0f723kqkpj

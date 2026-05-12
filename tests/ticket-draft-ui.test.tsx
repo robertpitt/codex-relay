@@ -5,10 +5,11 @@ import {
   activeRunElapsedLabel,
   DraftingTicketDetailLoading,
   TicketCardContent,
+  TicketSuggestionsModalContent,
   TicketRunElapsedPill,
   TicketRunStatusPill
 } from "../src/renderer/src/App";
-import { DEFAULT_COLUMNS, type TicketSummary } from "../src/shared/types";
+import { DEFAULT_COLUMNS, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
 
 const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   schemaVersion: 1,
@@ -88,4 +89,76 @@ test("drafting ticket detail loading state hides placeholder draft content", () 
   assert.doesNotMatch(markup, /Original Idea/);
   assert.doesNotMatch(markup, /Markdown/);
   assert.doesNotMatch(markup, /Preview/);
+});
+
+const suggestion: TicketSuggestion = {
+  title: "Tighten board keyboard focus",
+  priority: "medium",
+  labels: ["frontend", "accessibility"],
+  rationale: "Board navigation has adjacent shortcut behavior that should stay predictable.",
+  request: "Draft a task to tighten board keyboard focus handling."
+};
+
+test("ticket suggestions modal content renders loading, error, and empty states", () => {
+  const noop = (): void => undefined;
+  const loadingMarkup = renderToStaticMarkup(
+    <TicketSuggestionsModalContent
+      state="loading"
+      suggestions={[]}
+      errorMessage={null}
+      createStates={{}}
+      createErrors={{}}
+      onCreate={noop}
+    />
+  );
+  assert.match(loadingMarkup, /Codex is reviewing the local project and current board/);
+  assert.match(loadingMarkup, /spin/);
+
+  const errorMarkup = renderToStaticMarkup(
+    <TicketSuggestionsModalContent
+      state="error"
+      suggestions={[]}
+      errorMessage="Codex is not authenticated."
+      createStates={{}}
+      createErrors={{}}
+      onCreate={noop}
+      onRetry={noop}
+    />
+  );
+  assert.match(errorMarkup, /role="alert"/);
+  assert.match(errorMarkup, /Codex is not authenticated/);
+  assert.match(errorMarkup, /Retry/);
+
+  const emptyMarkup = renderToStaticMarkup(
+    <TicketSuggestionsModalContent
+      state="ready"
+      suggestions={[]}
+      errorMessage={null}
+      createStates={{}}
+      createErrors={{}}
+      onCreate={noop}
+    />
+  );
+  assert.match(emptyMarkup, /No suggestions returned/);
+});
+
+test("ticket suggestions rows render create and created button states", () => {
+  const markup = renderToStaticMarkup(
+    <TicketSuggestionsModalContent
+      state="ready"
+      suggestions={[suggestion, { ...suggestion, title: "Refresh draft status", request: "Draft a task to refresh draft status." }]}
+      errorMessage={null}
+      createStates={{ 1: "created" }}
+      createErrors={{ 0: "Codex draft failed to start." }}
+      onCreate={() => undefined}
+    />
+  );
+
+  assert.match(markup, /ticket-suggestions-list/);
+  assert.match(markup, /Tighten board keyboard focus/);
+  assert.match(markup, /Draft a task to tighten board keyboard focus handling/);
+  assert.match(markup, />Create</);
+  assert.match(markup, />Created</);
+  assert.match(markup, /disabled=""/);
+  assert.match(markup, /Codex draft failed to start/);
 });
