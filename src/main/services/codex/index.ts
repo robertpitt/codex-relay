@@ -95,7 +95,10 @@ type ProjectScheduler = {
   loopStarted: boolean;
 };
 
-const activeRuns = new Map<string, ActiveRun>();
+const IMPLEMENTATION_WORKER_CONCURRENCY = 1;
+
+const activeImplementationRuns = new Map<string, ActiveRun>();
+const activeDraftRuns = new Map<string, ActiveRun>();
 const queuedRunIntents = new Map<string, QueuedRunIntent>();
 const startingRuns = new Map<string, StartingRun>();
 const projectSchedulers = new Map<string, Promise<ProjectScheduler>>();
@@ -104,16 +107,20 @@ const activeTicketUpdateRunsByTicket = new Map<string, string>();
 
 const nowIso = (): string => new Date().toISOString();
 
-const activeRunIdForTicket = (projectPath: string, ticketId: string): string | null => {
-  for (const [runId, run] of activeRuns) {
+const activeRunIdForTicketInMap = (runs: Map<string, ActiveRun>, projectPath: string, ticketId: string): string | null => {
+  for (const [runId, run] of runs) {
     if (run.projectPath === projectPath && run.ticketId === ticketId) return runId;
   }
   return null;
 };
 
+const activeRunIdForTicket = (projectPath: string, ticketId: string): string | null =>
+  activeRunIdForTicketInMap(activeImplementationRuns, projectPath, ticketId) ??
+  activeRunIdForTicketInMap(activeDraftRuns, projectPath, ticketId);
+
 const activeImplementationRunCountForProject = (projectPath: string): number => {
   let count = 0;
-  for (const run of activeRuns.values()) {
+  for (const run of activeImplementationRuns.values()) {
     if (run.projectPath === projectPath) count += 1;
   }
   for (const run of startingRuns.values()) {
@@ -174,13 +181,10 @@ const wakeProjectSchedulerSoon = (projectPath: string): void => {
 };
 
 const drainProjectScheduler = async (projectPath: string): Promise<void> => {
-  const config = await readProjectConfig(projectPath);
-  const concurrency = Math.max(1, config.settings.agentConcurrency);
-
-  while (activeImplementationRunCountForProject(projectPath) < concurrency) {
+  while (activeImplementationRunCountForProject(projectPath) < IMPLEMENTATION_WORKER_CONCURRENCY) {
     const next = (await listQueuedReadyTickets(projectPath)).find((ticket) => {
       const runId = ticket.lastRunId;
-      return Boolean(runId && !activeRuns.has(runId) && !startingRuns.has(runId));
+      return Boolean(runId && !activeImplementationRuns.has(runId) && !startingRuns.has(runId));
     });
     if (!next?.lastRunId) return;
 
@@ -1115,7 +1119,7 @@ export const startTicketDraftRun = async (
     timestamp: nowIso()
   });
 
-  activeRuns.set(runId, {
+  activeDraftRuns.set(runId, {
     abortController,
     ticketId: ticket.frontMatter.id,
     projectPath
@@ -1228,7 +1232,7 @@ export const startTicketDraftRun = async (
         });
       }
     } finally {
-      activeRuns.delete(runId);
+      activeDraftRuns.delete(runId);
     }
   })();
 
@@ -1307,7 +1311,7 @@ export const maybeResumeTicketDraftAfterClarification = async (
     timestamp: nowIso()
   });
 
-  activeRuns.set(runId, {
+  activeDraftRuns.set(runId, {
     abortController,
     ticketId,
     projectPath
@@ -1405,7 +1409,7 @@ export const maybeResumeTicketDraftAfterClarification = async (
         await logError("codex:draft", "resumed ticket draft failed", error, { projectPath, ticketId, runId, ...payload });
       }
     } finally {
-      activeRuns.delete(runId);
+      activeDraftRuns.delete(runId);
     }
   })();
 
@@ -2122,7 +2126,7 @@ const startQueuedRunNow = async (
     return null;
   }
   startingRuns.delete(runId);
-  activeRuns.set(runId, {
+  activeImplementationRuns.set(runId, {
     abortController,
     ticketId,
     projectPath
@@ -2182,7 +2186,7 @@ const startQueuedRunNow = async (
         error: errorMessage(emitError, "Event emission failed.")
       });
     }
-    activeRuns.delete(runId);
+    activeImplementationRuns.delete(runId);
     startingRuns.delete(runId);
     wakeProjectSchedulerSoon(projectPath);
     throw error;
@@ -2340,7 +2344,7 @@ const startQueuedRunNow = async (
         });
         resolveOnce(currentThreadId);
       } finally {
-        activeRuns.delete(runId);
+        activeImplementationRuns.delete(runId);
         startingRuns.delete(runId);
         wakeProjectSchedulerSoon(projectPath);
       }
@@ -2456,7 +2460,7 @@ export const cancelCodexRun = async (runId: string): Promise<void> => {
   if (queued) {
     queuedRunIntents.delete(runId);
     startingRuns.delete(runId);
-    const active = activeRuns.get(runId);
+    const active = activeImplementationRuns.get(runId);
     if (active) {
       active.abortController.abort();
       await updateTicketRunState(active.projectPath, active.ticketId, { runStatus: "cancelled" });
@@ -2471,10 +2475,17 @@ export const cancelCodexRun = async (runId: string): Promise<void> => {
     return;
   }
 
-  const run = activeRuns.get(runId);
-  if (!run) return;
-  run.abortController.abort();
-  await updateTicketRunState(run.projectPath, run.ticketId, { runStatus: "cancelled" });
+  const implementationRun = activeImplementationRuns.get(runId);
+  if (implementationRun) {
+    implementationRun.abortController.abort();
+    await updateTicketRunState(implementationRun.projectPath, implementationRun.ticketId, { runStatus: "cancelled" });
+    return;
+  }
+
+  const draftRun = activeDraftRuns.get(runId);
+  if (!draftRun) return;
+  draftRun.abortController.abort();
+  await updateTicketRunState(draftRun.projectPath, draftRun.ticketId, { runStatus: "cancelled" });
 };
 
 export const approveCodexAction = async (_approvalId?: string, _decision?: string): Promise<void> => {

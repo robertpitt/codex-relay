@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   handleKeyboardShortcutKeyDown,
   isCreateTicketShortcut,
+  isSidebarToggleShortcut,
   isTextEntryTarget,
+  sidebarToggleShortcutLabel,
   ticketNavigationDirection,
   type KeyboardShortcutEvent,
   type ShortcutDirection
@@ -140,6 +142,71 @@ test("Create Ticket shortcut opens from non-typing contexts", () => {
   assert.equal(handled, true);
   assert.equal(openCount, 1);
   assert.equal(isCreateTicketShortcut(keyboardEvent({ key: " ", code: "Space", ctrlKey: true })), true);
+});
+
+test("Sidebar toggle shortcut matches command-or-control B without extra modifiers", () => {
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "b", metaKey: true })), true);
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "B", ctrlKey: true })), true);
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "b", metaKey: true, repeat: true })), false);
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "b", metaKey: true, altKey: true })), false);
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "b", ctrlKey: true, shiftKey: true })), false);
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "b", ctrlKey: true, metaKey: true })), false);
+  assert.equal(isSidebarToggleShortcut(keyboardEvent({ key: "i", metaKey: true })), false);
+});
+
+test("Sidebar toggle shortcut labels follow the platform command key", () => {
+  assert.equal(sidebarToggleShortcutLabel("MacIntel"), "\u2318 B");
+  assert.equal(sidebarToggleShortcutLabel("Win32"), "Ctrl B");
+  assert.equal(sidebarToggleShortcutLabel("Linux x86_64"), "Ctrl B");
+});
+
+test("Sidebar toggle shortcut dispatch ignores text entry targets by default", () => {
+  let toggleCount = 0;
+  const textEvent = keyboardEvent({ key: "b", metaKey: true, target: target({ tagName: "INPUT", type: "text" }) });
+  const handledText = handleKeyboardShortcutKeyDown(
+    textEvent,
+    [
+      {
+        id: "toggle-sidebar",
+        order: 1,
+        priority: 0,
+        matcher: isSidebarToggleShortcut,
+        handler: () => {
+          toggleCount += 1;
+          return true;
+        }
+      }
+    ],
+    []
+  );
+
+  assert.equal(handledText, false);
+  assert.equal(toggleCount, 0);
+  assert.equal(textEvent.prevented, false);
+  assert.equal(textEvent.stopped, false);
+
+  const buttonEvent = keyboardEvent({ key: "b", metaKey: true, target: target({ tagName: "BUTTON" }) });
+  const handledButton = handleKeyboardShortcutKeyDown(
+    buttonEvent,
+    [
+      {
+        id: "toggle-sidebar",
+        order: 1,
+        priority: 0,
+        matcher: isSidebarToggleShortcut,
+        handler: () => {
+          toggleCount += 1;
+          return true;
+        }
+      }
+    ],
+    []
+  );
+
+  assert.equal(handledButton, true);
+  assert.equal(toggleCount, 1);
+  assert.equal(buttonEvent.prevented, true);
+  assert.equal(buttonEvent.stopped, true);
 });
 
 test("Create Ticket shortcut and ticket navigation ignore text entry targets", () => {

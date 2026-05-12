@@ -15,6 +15,8 @@ import {
   FolderOpen,
   FolderPlus,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
@@ -71,7 +73,9 @@ import {
 import {
   createTicketShortcutLabel,
   isCreateTicketShortcut,
+  isSidebarToggleShortcut,
   KeyboardShortcutProvider,
+  sidebarToggleShortcutLabel,
   ticketNavigationDirection,
   ticketNavigationShortcutLabel,
   useKeyboardShortcut,
@@ -412,6 +416,8 @@ export function ProjectSidebar({
   onSelect,
   onRemove,
   onReveal,
+  onToggleVisibility,
+  toggleShortcutLabel,
   defaultExpandedProjectPaths = []
 }: {
   projects: ProjectSummary[];
@@ -421,6 +427,8 @@ export function ProjectSidebar({
   onSelect: (projectPath: string) => void;
   onRemove: (projectPath: string) => void;
   onReveal: (projectPath: string) => void;
+  onToggleVisibility: () => void;
+  toggleShortcutLabel: string;
   defaultExpandedProjectPaths?: string[];
 }): ReactElement {
   const [expandedProjectPaths, setExpandedProjectPaths] = useState<Set<string>>(
@@ -453,13 +461,29 @@ export function ProjectSidebar({
     [onSelect, selectedPath]
   );
 
+  const hideSidebarTitle = `Hide sidebar (${toggleShortcutLabel})`;
+
   return (
-    <aside className="sidebar" aria-label="Projects">
+    <aside id="project-sidebar" className="sidebar" aria-label="Projects">
       <div className="sidebar-heading">
         <span>Projects</span>
-        <button className="sidebar-icon-button" onClick={onAdd} disabled={loading} aria-label="Add project">
-          {loading ? <Loader2 className="spin" size={16} /> : <FolderPlus size={16} />}
-        </button>
+        <div className="sidebar-heading-actions">
+          <button
+            type="button"
+            className="sidebar-icon-button"
+            onClick={onToggleVisibility}
+            aria-label={hideSidebarTitle}
+            title={hideSidebarTitle}
+            aria-controls="project-sidebar"
+            aria-expanded={true}
+            aria-keyshortcuts="Meta+B Control+B"
+          >
+            <PanelLeftClose size={16} />
+          </button>
+          <button type="button" className="sidebar-icon-button" onClick={onAdd} disabled={loading} aria-label="Add project">
+            {loading ? <Loader2 className="spin" size={16} /> : <FolderPlus size={16} />}
+          </button>
+        </div>
       </div>
 
       <div className="sidebar-list" role="list">
@@ -3030,11 +3054,13 @@ function RelayApp(): ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [ticketSuggestionsOpen, setTicketSuggestionsOpen] = useState(false);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [codexStatus, setCodexStatus] = useState<CodexStatus>(initialCodexStatus);
   const [events, setEvents] = useState<RendererRunEvent[]>([]);
   const [gitMetadataByPath, setGitMetadataByPath] = useState<Record<string, GitMetadata | undefined>>({});
   const boardRequestRef = useRef(0);
   const gitMetadataRequestRef = useRef<Record<string, number>>({});
+  const sidebarShortcutLabel = useMemo(() => sidebarToggleShortcutLabel(), []);
 
   const gitMetadataError = useCallback(
     (message: string): GitMetadata => ({
@@ -3129,6 +3155,10 @@ function RelayApp(): ReactElement {
     [selectedPath]
   );
 
+  const toggleSidebar = useCallback((): void => {
+    setSidebarCollapsed((collapsed) => !collapsed);
+  }, []);
+
   useEffect(() => {
     void loadProjects();
     void getRelayApi().codex.status().then(setCodexStatus);
@@ -3217,6 +3247,15 @@ function RelayApp(): ReactElement {
   const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !ticketSuggestionsOpen && !openTicketId);
 
   useKeyboardShortcut({
+    id: "toggle-sidebar",
+    matcher: isSidebarToggleShortcut,
+    handler: () => {
+      toggleSidebar();
+      return true;
+    }
+  });
+
+  useKeyboardShortcut({
     id: "create-ticket",
     enabled: createShortcutEnabled,
     priority: 10,
@@ -3228,7 +3267,14 @@ function RelayApp(): ReactElement {
   });
 
   return (
-    <div className={clsx("app-shell", openTicketId && "detail-open", (createOpen || ticketSuggestionsOpen) && "modal-open")}>
+    <div
+      className={clsx(
+        "app-shell",
+        sidebarCollapsed && "sidebar-collapsed",
+        openTicketId && "detail-open",
+        (createOpen || ticketSuggestionsOpen) && "modal-open"
+      )}
+    >
       <ProjectSidebar
         projects={projects}
         selectedPath={selectedPath}
@@ -3242,7 +3288,24 @@ function RelayApp(): ReactElement {
           if (selectedPath === projectPath) selectProject(nextProjects[0]?.path ?? null);
         }}
         onReveal={(projectPath) => void getRelayApi().projects.revealInFinder(projectPath)}
+        onToggleVisibility={toggleSidebar}
+        toggleShortcutLabel={sidebarShortcutLabel}
       />
+
+      {sidebarCollapsed && (
+        <button
+          type="button"
+          className="sidebar-restore-button"
+          onClick={toggleSidebar}
+          aria-label={`Show sidebar (${sidebarShortcutLabel})`}
+          title={`Show sidebar (${sidebarShortcutLabel})`}
+          aria-controls="project-sidebar"
+          aria-expanded={false}
+          aria-keyshortcuts="Meta+B Control+B"
+        >
+          <PanelLeftOpen size={17} />
+        </button>
+      )}
 
       {board ? (
         <BoardView

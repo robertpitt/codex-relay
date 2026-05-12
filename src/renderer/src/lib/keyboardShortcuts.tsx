@@ -81,11 +81,15 @@ const hasOnlyModifier = (event: KeyboardShortcutEvent, modifier: "commandOrContr
 const isSpaceKey = (event: KeyboardShortcutEvent): boolean =>
   event.code === "Space" || event.key === " " || event.key === "Spacebar";
 
-const isMacPlatform = (platform: string): boolean => /\b(Mac|iPhone|iPad|iPod)\b/i.test(platform);
+const isMacPlatform = (platform: string): boolean => /Mac|iPhone|iPad|iPod/i.test(platform);
 
 export const createTicketShortcutLabel = (
   platform = typeof navigator === "undefined" ? "" : navigator.platform
 ): string => (isMacPlatform(platform) ? "⌘ Space" : "Ctrl Space");
+
+export const sidebarToggleShortcutLabel = (
+  platform = typeof navigator === "undefined" ? "" : navigator.platform
+): string => (isMacPlatform(platform) ? "⌘ B" : "Ctrl B");
 
 export const ticketNavigationShortcutLabel = "Arrow keys or J/K";
 
@@ -114,6 +118,9 @@ export const isTextEntryTarget = (target: EventTarget | null): boolean => {
 
 export const isCreateTicketShortcut = (event: KeyboardShortcutEvent): boolean =>
   !event.repeat && isSpaceKey(event) && hasOnlyModifier(event, "commandOrControl");
+
+export const isSidebarToggleShortcut = (event: KeyboardShortcutEvent): boolean =>
+  !event.repeat && normalizeKey(event.key) === "b" && hasOnlyModifier(event, "commandOrControl");
 
 export const ticketNavigationDirection = (event: KeyboardShortcutEvent): ShortcutDirection | null => {
   if (!hasOnlyModifier(event, "none")) return null;

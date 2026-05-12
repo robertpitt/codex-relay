@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01kre1ccbq3951e6msq1cbzky7
 title: Make Project Sidebar Toggleable with Cmd+B
 ticketType: task
-status: todo
-position: 19000
+status: completed
+position: 54000
 priority: medium
 labels:
   - frontend
@@ -15,11 +15,11 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-12T12:07:57.047Z'
-updatedAt: '2026-05-12T12:14:52.629Z'
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01kre1cca6tcebyknkj37y45nq
-lastRunStartedAt: null
+updatedAt: '2026-05-12T13:00:05.147Z'
+codexThreadId: 019e1c2d-0a09-7be0-929a-ed580b7c08eb
+runStatus: completed
+lastRunId: run_01kre2szbvcfdkb5r4e6tnef78
+lastRunStartedAt: '2026-05-12T12:32:51.664Z'
 ---
 # Make Project Sidebar Toggleable with Cmd+B
 
@@ -149,5 +149,46 @@ Add a local UI toggle for the Relay project sidebar so users can hide/show it fr
 - Limitation: Code search stopped after scanning 160 candidate files.
 
 ## Codex Handoff
+
+### 5/12/2026, 1:43:53 PM
+
+Implemented the sidebar toggle.
+
+**Summary**
+- Added Cmd/Ctrl+B sidebar toggle via existing renderer shortcut infrastructure.
+- Added sidebar hide button and fixed restore button with required labels, titles, `aria-controls`, `aria-expanded`, and `aria-keyshortcuts`.
+- Kept `ProjectSidebar` mounted while collapsed so project expansion state is preserved.
+- Added collapsed desktop/mobile CSS so the workspace fills the shell.
+- Fixed Mac platform detection so `MacIntel` gets command-key labels.
+
+**Files Changed**
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/lib/keyboardShortcuts.tsx`
+- `src/renderer/src/styles.css`
+- `tests/keyboard-shortcuts.test.ts`
+- `tests/project-sidebar.test.tsx`
+
+Existing `.relay` metadata changes are still present in the worktree; I did not treat them as implementation files.
+
+**Commands Run**
+- `git status --short`
+- targeted `sed`/`grep` inspections
+- `git diff`
+- `npm run typecheck`
+- `npm test`
+- `npm run dev`
+- `HOST=127.0.0.1 npm run dev`
+
+**Tests**
+- `npm run typecheck`: passed
+- `npm test`: passed, 124/124 tests
+- `npm run dev`: main/preload builds succeeded, but Electron dev server failed to bind `::1:5173` with `EPERM` in this sandbox, so manual UI keyboard validation was blocked.
+
+**Subagent Usage**
+- none used
+
+**Remaining Risks**
+- Manual Electron interaction checks for Cmd+B/Ctrl+B and narrow viewport behavior still need to be performed outside the sandbox bind restriction.
+
 
 No Codex run has been started.

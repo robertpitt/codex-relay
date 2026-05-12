@@ -26,7 +26,8 @@ const project = (patch: Partial<ProjectSummary> = {}): ProjectSummary => ({
 const renderSidebar = (
   projects: ProjectSummary[],
   defaultExpandedProjectPaths: string[] = [],
-  selectedPath: string | null = projectPath
+  selectedPath: string | null = projectPath,
+  toggleShortcutLabel = "Ctrl B"
 ): string =>
   renderToStaticMarkup(
     <ProjectSidebar
@@ -37,6 +38,8 @@ const renderSidebar = (
       onSelect={() => undefined}
       onRemove={() => undefined}
       onReveal={() => undefined}
+      onToggleVisibility={() => undefined}
+      toggleShortcutLabel={toggleShortcutLabel}
       defaultExpandedProjectPaths={defaultExpandedProjectPaths}
     />
   );
@@ -47,6 +50,19 @@ test("project sidebar renders projects collapsed with an accessible disclosure c
   assert.match(markup, /aria-expanded="false"/);
   assert.match(markup, /aria-label="Expand Sidebar Project swimlanes"/);
   assert.doesNotMatch(markup, /Review/);
+});
+
+test("project sidebar heading exposes hide and add project controls", () => {
+  const markup = renderSidebar([project()], [], null);
+
+  assert.match(markup, /<aside id="project-sidebar" class="sidebar" aria-label="Projects">/);
+  assert.match(markup, /class="sidebar-heading-actions"/);
+  assert.match(markup, /aria-label="Hide sidebar \(Ctrl B\)"/);
+  assert.match(markup, /title="Hide sidebar \(Ctrl B\)"/);
+  assert.match(markup, /aria-controls="project-sidebar"/);
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /aria-keyshortcuts="Meta\+B Control\+B"/);
+  assert.match(markup, /aria-label="Add project"/);
 });
 
 test("expanded project sidebar shows all swimlanes including zero-count lanes", () => {

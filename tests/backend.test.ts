@@ -13,8 +13,10 @@ import {
   readCodexRunEvents,
   reconcileTicketQueueState,
   startCodexRun,
+  startTicketDraftRun,
   type CodexRunDependencies,
-  type CreateCodexDependencies
+  type CreateCodexDependencies,
+  type TicketDraftStartDependencies
 } from "../src/main/services/codex";
 import { resolveAvailableCodexCli, type CodexCliCandidate } from "../src/main/services/codex/cli";
 import { BackendClock, runBackendEffect } from "../src/main/services/runtime";
@@ -105,6 +107,22 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   });
   return { promise, resolve };
 };
+
+const validDraftJson = (title: string): string =>
+  JSON.stringify({
+    title,
+    priority: "medium",
+    labels: ["codex"],
+    context: "Context from Codex.",
+    researchFindings: ["Draft research found no blocking ambiguity."],
+    requirements: ["Build the requested behavior."],
+    implementationPlan: ["Apply the requested behavior using the existing project patterns."],
+    testPlan: ["Run npm test."],
+    acceptanceCriteria: ["The requested behavior is covered."],
+    clarificationQuestions: [],
+    assumptions: [],
+    implementationNotes: ["Keep the change focused."]
+  });
 
 test("backend Effect runtime provides shared services", async () => {
   const timestamp = await runBackendEffect(
@@ -1145,7 +1163,15 @@ test("codex runs persist structured todo and MCP tool-call SDK events", async ()
 
 test("codex scheduler runs Ready queue one implementation at a time in board order", async () => {
   const projectPath = await createProject();
-  await allowNonGitRuns(projectPath);
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    settings: {
+      ...config.settings,
+      allowNonGitCodexRuns: true,
+      agentConcurrency: 2
+    }
+  });
   const firstTicket = await createTicket(projectPath, {
     title: "First queued run",
     priority: "medium",
@@ -1226,6 +1252,111 @@ test("codex scheduler runs Ready queue one implementation at a time in board ord
 
   gates[1].resolve();
   await waitFor(() => events.some((event) => event.runId === "run_scheduler_second" && event.type === "run.completed"), "second run completion");
+});
+
+test("active ticket drafts do not occupy the Ready implementation worker lane", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const firstTicket = await createTicket(projectPath, {
+    title: "First implementation while drafting",
+    priority: "medium",
+    labels: ["codex"],
+    markdown: "# First implementation while drafting\n"
+  });
+  const secondTicket = await createTicket(projectPath, {
+    title: "Second implementation while drafting",
+    priority: "medium",
+    labels: ["codex"],
+    markdown: "# Second implementation while drafting\n"
+  });
+  const draftGate = deferred();
+  let draftStarted = false;
+  const { runEventSink: draftRunEventSink } = createFakeRunEventSink();
+  const draftDependencies: TicketDraftStartDependencies = {
+    getStatus: async () => ({
+      sdkAvailable: true,
+      cliAvailable: true,
+      cliVersion: "codex-test",
+      authenticated: true,
+      message: "Codex is available."
+    }),
+    createRunId: () => "run_scheduler_draft",
+    createRequestId: () => "tdr_scheduler_draft",
+    disableResearch: true,
+    runEventSink: draftRunEventSink,
+    createCodexClient: () => ({
+      startThread: () => ({
+        run: async () => {
+          draftStarted = true;
+          await draftGate.promise;
+          return { items: [], usage: null, finalResponse: validDraftJson("Completed scheduler draft") };
+        }
+      })
+    })
+  };
+  const draft = await startTicketDraftRun({ projectPath, idea: "Draft a ticket while implementations run" }, draftDependencies);
+  await waitFor(() => draftStarted, "draft request to start");
+
+  const { runEventSink, events } = createFakeRunEventSink();
+  const gates = [deferred(), deferred()];
+  const startedThreads: string[] = [];
+  const runIds = ["run_scheduler_draft_lane_first", "run_scheduler_draft_lane_second"];
+  const implementationDependencies: CodexRunDependencies = {
+    runEventSink,
+    createRunId: () => runIds.shift() ?? "run_scheduler_draft_lane_extra",
+    createCodexClient: () =>
+      ({
+        startThread: () => {
+          const index = startedThreads.length;
+          const threadId = index === 0 ? "thread_scheduler_draft_lane_first" : "thread_scheduler_draft_lane_second";
+          startedThreads.push(threadId);
+          return {
+            id: threadId,
+            runStreamed: async () => ({
+              events: (async function*() {
+                yield { type: "thread.started", thread_id: threadId };
+                await gates[index].promise;
+                yield { type: "item.completed", item: { type: "agent_message", text: `Draft lane done ${index + 1}.` } };
+                yield { type: "turn.completed", usage: { total_tokens: index + 1 } };
+              })()
+            })
+          };
+        },
+        resumeThread: () => {
+          throw new Error("resumeThread should not be used for a fresh run.");
+        }
+      }) as CodexRunDependencies["createCodexClient"] extends () => infer Client ? Client : never
+  };
+
+  const firstResult = await startCodexRun({ projectPath, ticketId: firstTicket.frontMatter.id }, implementationDependencies);
+  const secondResult = await startCodexRun({ projectPath, ticketId: secondTicket.frontMatter.id }, implementationDependencies);
+
+  assert.equal(firstResult.state, "queued");
+  assert.equal(secondResult.state, "queued");
+  await waitFor(() => startedThreads.length === 1, "first implementation to start while draft is active");
+  assert.deepEqual(startedThreads, ["thread_scheduler_draft_lane_first"]);
+  const runningDraft = await readTicket(projectPath, draft.ticket.frontMatter.id);
+  assert.equal(runningDraft.frontMatter.runStatus, "drafting");
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(startedThreads, ["thread_scheduler_draft_lane_first"]);
+  const queuedSecond = await readTicket(projectPath, secondTicket.frontMatter.id);
+  assert.equal(queuedSecond.frontMatter.status, "ready");
+  assert.equal(queuedSecond.frontMatter.runStatus, "queued");
+  assert.equal(queuedSecond.frontMatter.lastRunStartedAt, null);
+
+  gates[0].resolve();
+  await waitFor(() => startedThreads.length === 2, "second implementation to start after first completion");
+  gates[1].resolve();
+  await waitFor(
+    () => events.some((event) => event.runId === "run_scheduler_draft_lane_second" && event.type === "run.completed"),
+    "second implementation completion"
+  );
+
+  draftGate.resolve();
+  await waitForAsync(
+    async () => (await readTicket(projectPath, draft.ticket.frontMatter.id)).frontMatter.runStatus === "draft_complete",
+    "draft completion"
+  );
 });
 
 test("queued codex cancellation returns the ticket to Todo without SDK startup", async () => {
