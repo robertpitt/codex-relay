@@ -9,6 +9,7 @@ const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.dirname(testsDir);
 const outdir = path.join(os.tmpdir(), `relay-tests-${process.pid}`);
 const entryPoints = [
+  path.join(testsDir, "attachment-drop.test.ts"),
   path.join(testsDir, "agent-progress.test.tsx"),
   path.join(testsDir, "backend.test.ts"),
   path.join(testsDir, "clarification-panel.test.tsx"),

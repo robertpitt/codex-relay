@@ -22,6 +22,7 @@ import type {
   RunLogLine,
   RunStatus,
   StartRunInput,
+  TicketAttachmentSaveInput,
   SubticketCreateInput,
   TicketCreateInput,
   TicketDraft,
@@ -104,6 +105,8 @@ const dateToIsoString = Schema.Date.pipe(
 const isoString = Schema.Union([nonEmptyString, dateToIsoString]) satisfies RelaySchema<string>;
 
 const defaultStringArray = () => [] as string[];
+const defaultBooleanFalse = () => false;
+const defaultDisabledWebSearchMode = () => "disabled" as const;
 const nullableStringWithDefault = () => withDefault(Schema.NullOr(Schema.String), () => null);
 const stringArrayWithDefault = () => withDefault(mutableArray(Schema.String), defaultStringArray);
 
@@ -134,6 +137,7 @@ export const ticketTypeSchema: RelaySchema<TicketType> = Schema.Literals(["task"
 
 export const runStatusSchema: RelaySchema<RunStatus> = Schema.Literals([
   "idle",
+  "queued",
   "drafting",
   "draft_failed",
   "draft_complete",
@@ -162,13 +166,30 @@ export const relayColumnSchema: RelaySchema<RelayColumn> = Schema.Struct({
   terminal: Schema.Boolean
 });
 
+const agentConcurrencySchema = withDefault(
+  Schema.Number.check(
+    Schema.makeFilter((value) =>
+      Number.isInteger(value) && value >= 1 ? undefined : "Expected an integer greater than or equal to 1"
+    )
+  ),
+  () => 1
+);
+
 export const projectSettingsSchema: RelaySchema<ProjectSettings> = Schema.Struct({
   defaultModel: Schema.NullOr(Schema.String),
-  defaultApprovalPolicy: Schema.Literals(["untrusted", "on-request", "never"]),
+  defaultModelReasoningEffort: withDefault(
+    Schema.NullOr(Schema.Literals(["minimal", "low", "medium", "high", "xhigh"])),
+    () => null
+  ),
+  defaultApprovalPolicy: Schema.Literals(["untrusted", "on-request", "on-failure", "never"]),
   defaultSandboxMode: Schema.Literals(["read-only", "workspace-write", "danger-full-access"]),
   allowNonGitCodexRuns: Schema.Boolean,
   ticketDraftingEnabled: Schema.Boolean,
-  codexExecutionEnabled: Schema.Boolean
+  codexExecutionEnabled: Schema.Boolean,
+  codexNetworkAccessEnabled: withDefault(Schema.Boolean, defaultBooleanFalse),
+  codexWebSearchMode: withDefault(Schema.Literals(["disabled", "cached", "live"]), defaultDisabledWebSearchMode),
+  codexAdditionalDirectories: stringArrayWithDefault(),
+  agentConcurrency: agentConcurrencySchema
 });
 
 export const projectConfigSchema: RelaySchema<ProjectConfig> = passthroughStruct({
@@ -197,7 +218,8 @@ export const ticketFrontMatterSchema: RelaySchema<TicketFrontMatter> = passthrou
   updatedAt: isoString,
   codexThreadId: nullableStringWithDefault(),
   runStatus: runStatusSchema,
-  lastRunId: nullableStringWithDefault()
+  lastRunId: nullableStringWithDefault(),
+  lastRunStartedAt: nullableStringWithDefault()
 });
 
 export const ticketRecordSchema: RelaySchema<TicketRecord> = Schema.Struct({
@@ -377,6 +399,13 @@ export const ticketSaveInputSchema: RelaySchema<TicketSaveInput> = passthroughSt
   ticket: ticketRecordSchema
 });
 
+export const ticketAttachmentSaveInputSchema: RelaySchema<TicketAttachmentSaveInput> = passthroughStruct({
+  projectPath: Schema.String,
+  fileName: Schema.String,
+  mimeType: Schema.optional(Schema.NullOr(Schema.String)),
+  contentBase64: Schema.String
+});
+
 export const ticketMoveInputSchema: RelaySchema<TicketMoveInput> = passthroughStruct({
   projectPath: Schema.String,
   ticketId: Schema.String,
@@ -427,6 +456,8 @@ const relayCodexEventTypeSchema: RelaySchema<RelayCodexEvent["type"]> = Schema.L
   "command.completed",
   "file.change",
   "web.search",
+  "todo.updated",
+  "mcp.tool_call",
   "approval.requested",
   "approval.resolved",
   "ticket.status_changed",
@@ -453,6 +484,19 @@ export const relayCodexEventSchema: RelaySchema<RelayCodexEvent> = Schema.Union(
   }),
   Schema.Struct({ type: Schema.Literal("file.change"), path: Schema.String, summary: Schema.optional(Schema.String), timestamp: isoString }),
   Schema.Struct({ type: Schema.Literal("web.search"), query: Schema.String, timestamp: isoString }),
+  Schema.Struct({
+    type: Schema.Literal("todo.updated"),
+    items: mutableArray(Schema.Struct({ text: Schema.String, completed: Schema.Boolean })),
+    timestamp: isoString
+  }),
+  Schema.Struct({
+    type: Schema.Literal("mcp.tool_call"),
+    server: Schema.String,
+    tool: Schema.String,
+    status: Schema.Literals(["in_progress", "completed", "failed"]),
+    error: Schema.optional(Schema.String),
+    timestamp: isoString
+  }),
   Schema.Struct({
     type: Schema.Literal("approval.requested"),
     approvalId: Schema.String,

@@ -2,7 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "../src/renderer/src/components/AgentActivity";
-import { deriveAgentProgress, formatElapsedDuration } from "../src/renderer/src/lib/agentProgress";
+import {
+  agentEventLabel,
+  agentEventText,
+  agentEventTone,
+  deriveAgentProgress,
+  formatElapsedDuration
+} from "../src/renderer/src/lib/agentProgress";
 import type { RendererRunEvent } from "../src/shared/types";
 
 const baseEvent = {
@@ -173,6 +179,45 @@ test("agent log viewer orders events chronologically and labels event types", ()
   assert.match(markup, /Run/);
   assert.match(markup, /Web Search/);
   assert.match(markup, /Command/);
+});
+
+test("agent progress utilities describe todo and MCP events", () => {
+  const todo = event({
+    type: "todo.updated",
+    items: [
+      { text: "Inspect SDK item stream", completed: true },
+      { text: "Persist structured events", completed: false }
+    ],
+    timestamp: "2026-05-11T10:00:20.000Z"
+  });
+  const mcp = event({
+    type: "mcp.tool_call",
+    server: "github",
+    tool: "search",
+    status: "failed",
+    error: "rate limited",
+    timestamp: "2026-05-11T10:00:25.000Z"
+  });
+
+  assert.equal(agentEventLabel(todo), "Todo");
+  assert.match(agentEventText(todo), /Todo list updated: 1\/2 completed/);
+  assert.match(agentEventText(todo), /\[x\] Inspect SDK item stream/);
+  assert.equal(agentEventTone(todo), "info");
+
+  assert.equal(agentEventLabel(mcp), "MCP Tool");
+  assert.equal(agentEventText(mcp), "MCP tool failed: github.search: rate limited");
+  assert.equal(agentEventTone(mcp), "danger");
+
+  const markup = renderToStaticMarkup(
+    <AgentLogViewer title="Ticket Logs" loading={false} error={null} events={[todo, mcp]} onClose={() => undefined} />
+  );
+
+  assert.match(markup, /Todo/);
+  assert.match(markup, /MCP Tool/);
+  assert.match(markup, /todo.updated/);
+  assert.match(markup, /mcp.tool_call/);
+  assert.match(markup, /Persist structured events/);
+  assert.match(markup, /github.search/);
 });
 
 test("agent log viewer distinguishes loading, failed, and empty states", () => {

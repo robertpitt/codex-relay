@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krckmjb0mma38kecq4689t71
 title: Add project-config support for SDK thread options
 ticketType: task
-status: todo
-position: 12000
+status: completed
+position: 43000
 priority: medium
 labels:
   - codex
@@ -14,10 +14,11 @@ parentEpicId: tkt_01krcka112x6zmxsz6416d6hrj
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T22:48:30.816Z'
-updatedAt: '2026-05-11T22:48:30.816Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T23:55:19.481Z'
+codexThreadId: 019e196b-6daa-71f1-b337-a2c34a5ffeb1
+runStatus: completed
+lastRunId: run_01krcppv481dydjrmx8sfys4z6
+lastRunStartedAt: null
 ---
 # Add project-config support for SDK thread options
 
@@ -81,5 +82,37 @@ The SDK exposes thread options that Relay does not currently model. Add config s
 - Use existing `withDefault` in `src/main/services/schemas.ts:50-51` to avoid making new fields mandatory on disk.
 
 ## Codex Handoff
+
+### 5/12/2026, 12:47:50 AM
+
+**Summary**
+Added SDK thread option config support with conservative defaults. Implementation runs now pass configured reasoning effort, additional directories, network access, and web search mode. Ticket draft and ticket update runs still force offline web/network behavior. `on-failure` is now accepted as a default approval policy.
+
+**Files Changed**
+- `src/shared/types.ts`
+- `src/main/services/schemas.ts`
+- `src/main/services/storage/index.ts`
+- `src/main/services/codex/index.ts`
+- `tests/schemas.test.ts`
+- `tests/backend.test.ts`
+- `tests/ticket-draft.test.ts`
+- `tests/ticket-update.test.ts`
+
+**Commands Run**
+- Read/search commands: `sed`, `grep`, `nl`
+- `npm run typecheck`
+- `npm test`
+- `git status --short`
+- `git diff -- ...`
+
+**Tests Run**
+- `npm run typecheck`: passed
+- `npm test`: passed, 102 tests
+- Test run emitted the existing `import.meta` CJS warning from `src/main/services/codex/cli.ts`, but all tests passed.
+
+**Remaining Risks / Follow-Up**
+- No settings UI was added, per ticket scope.
+- The worktree already contains unrelated modified `.relay`, UI, IPC, and test files; I left those untouched.
+
 
 No Codex run has been started.

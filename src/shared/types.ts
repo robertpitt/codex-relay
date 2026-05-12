@@ -1,5 +1,6 @@
 export const RELAY_SCHEMA_VERSION = 1;
 export const RELAY_TODO_STATUS = "todo";
+export const RELAY_READY_STATUS = "ready";
 export const RELAY_IN_PROGRESS_STATUS = "in_progress";
 export const RELAY_NEEDS_CLARIFICATION_STATUS = "needs_clarification";
 export const RELAY_REVIEW_STATUS = "review";
@@ -8,17 +9,19 @@ export const RELAY_COMPLETED_STATUS = "completed";
 
 export const DEFAULT_COLUMNS: RelayColumn[] = [
   { id: RELAY_TODO_STATUS, name: "Todo", position: 1000, terminal: false },
-  { id: RELAY_IN_PROGRESS_STATUS, name: "In Progress", position: 2000, terminal: false },
-  { id: RELAY_NEEDS_CLARIFICATION_STATUS, name: "Needs Clarification", position: 3000, terminal: false },
-  { id: RELAY_REVIEW_STATUS, name: "Review", position: 4000, terminal: false },
-  { id: RELAY_NOT_DOING_STATUS, name: "Not Doing", position: 5000, terminal: true },
-  { id: RELAY_COMPLETED_STATUS, name: "Completed", position: 6000, terminal: true }
+  { id: RELAY_READY_STATUS, name: "Ready", position: 2000, terminal: false },
+  { id: RELAY_IN_PROGRESS_STATUS, name: "In Progress", position: 3000, terminal: false },
+  { id: RELAY_NEEDS_CLARIFICATION_STATUS, name: "Needs Clarification", position: 4000, terminal: false },
+  { id: RELAY_REVIEW_STATUS, name: "Review", position: 5000, terminal: false },
+  { id: RELAY_NOT_DOING_STATUS, name: "Not Doing", position: 6000, terminal: true },
+  { id: RELAY_COMPLETED_STATUS, name: "Completed", position: 7000, terminal: true }
 ];
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type TicketType = "task" | "epic";
 export type RunStatus =
   | "idle"
+  | "queued"
   | "drafting"
   | "draft_failed"
   | "draft_complete"
@@ -47,11 +50,16 @@ export type RelayColumn = {
 
 export type ProjectSettings = {
   defaultModel: string | null;
-  defaultApprovalPolicy: "untrusted" | "on-request" | "never";
+  defaultModelReasoningEffort: null | "minimal" | "low" | "medium" | "high" | "xhigh";
+  defaultApprovalPolicy: "untrusted" | "on-request" | "on-failure" | "never";
   defaultSandboxMode: "read-only" | "workspace-write" | "danger-full-access";
   allowNonGitCodexRuns: boolean;
   ticketDraftingEnabled: boolean;
   codexExecutionEnabled: boolean;
+  codexNetworkAccessEnabled: boolean;
+  codexWebSearchMode: "disabled" | "cached" | "live";
+  codexAdditionalDirectories: string[];
+  agentConcurrency: number;
 };
 
 export type ProjectConfig = {
@@ -122,6 +130,7 @@ export type TicketFrontMatter = {
   codexThreadId: string | null;
   runStatus: RunStatus;
   lastRunId: string | null;
+  lastRunStartedAt: string | null;
 };
 
 export type TicketRecord = {
@@ -312,6 +321,19 @@ export type TicketSaveInput = {
   ticket: TicketRecord;
 };
 
+export type TicketAttachmentSaveInput = {
+  projectPath: string;
+  fileName: string;
+  mimeType?: string | null;
+  contentBase64: string;
+};
+
+export type TicketAttachmentSaveResult = {
+  fileName: string;
+  markdownPath: string;
+  absolutePath: string;
+};
+
 export type TicketMoveInput = {
   projectPath: string;
   ticketId: string;
@@ -394,6 +416,15 @@ export type RelayCodexEvent =
   | { type: "command.completed"; status: "completed" | "failed" | "declined"; timestamp: string }
   | { type: "file.change"; path: string; summary?: string; timestamp: string }
   | { type: "web.search"; query: string; timestamp: string }
+  | { type: "todo.updated"; items: Array<{ text: string; completed: boolean }>; timestamp: string }
+  | {
+      type: "mcp.tool_call";
+      server: string;
+      tool: string;
+      status: "in_progress" | "completed" | "failed";
+      error?: string;
+      timestamp: string;
+    }
   | { type: "approval.requested"; approvalId: string; kind: "command" | "file-change" | "network" | "other"; payload: unknown; timestamp: string }
   | { type: "approval.resolved"; approvalId: string; decision: string; timestamp: string }
   | { type: "ticket.status_changed"; fromStatus: string; toStatus: string; actor: RelayActor; source: RelayEventSource; timestamp: string }
@@ -424,8 +455,9 @@ export type StartRunInput = {
 };
 
 export type CodexRunStartResult = {
+  state: "queued" | "started";
   runId: string;
-  threadId: string;
+  threadId: string | null;
 };
 
 export type CodexRunPreflightResult = {
@@ -500,6 +532,7 @@ export type RelayApi = {
     references: (projectPath: string) => Promise<TicketReferenceCandidate[]>;
     read: (projectPath: string, ticketId: string) => Promise<TicketRecord>;
     save: (input: TicketSaveInput) => Promise<TicketRecord>;
+    saveAttachment: (input: TicketAttachmentSaveInput) => Promise<TicketAttachmentSaveResult>;
     move: (input: TicketMoveInput) => Promise<BoardSnapshot>;
     clarifications: (projectPath: string, ticketId: string) => Promise<ClarificationQuestion[]>;
     answerClarification: (input: ClarificationAnswerInput) => Promise<ClarificationQuestion>;

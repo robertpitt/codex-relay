@@ -882,6 +882,7 @@ kbd {
 
 .priority,
 .run-pill,
+.run-elapsed-pill,
 .ticket-type-pill,
 .ticket-blocker-pill,
 .labels span {
@@ -897,8 +898,15 @@ kbd {
   line-height: 1.2;
 }
 
-.run-pill {
+.run-pill,
+.run-elapsed-pill {
   gap: 5px;
+}
+
+.run-elapsed-pill {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .run-pill-icon {
@@ -996,9 +1004,11 @@ kbd {
   color: var(--relay-danger-text);
 }
 
+.run-pill.queued,
 .run-pill.running,
 .run-pill.blocked,
-.run-pill.drafting {
+.run-pill.drafting,
+.run-elapsed-pill {
   background: var(--relay-warning-muted);
   color: var(--relay-warning-text);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--relay-warning) 18%, transparent);
@@ -1314,6 +1324,13 @@ kbd {
   min-height: 320px;
   font-family: var(--relay-font-mono);
   line-height: 1.5;
+}
+
+.markdown-editor.drop-active {
+  border-color: rgb(96 165 250 / 65%);
+  box-shadow:
+    var(--relay-inset-highlight),
+    0 0 0 3px rgb(96 165 250 / 22%);
 }
 
 .ticket-reference-editor {

@@ -12,6 +12,7 @@ import type {
   RelayApprovalDecision,
   RendererRunEvent,
   StartRunInput,
+  TicketAttachmentSaveInput,
   TicketCreateInput,
   TicketMoveInput,
   TicketSaveInput
@@ -45,6 +46,7 @@ const api: RelayApi = {
     references: (projectPath: string) => invoke(relayIpcChannels.ticketReferences, projectPath),
     read: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketRead, projectPath, ticketId),
     save: (input: TicketSaveInput) => invoke(relayIpcChannels.ticketSave, input),
+    saveAttachment: (input: TicketAttachmentSaveInput) => invoke(relayIpcChannels.ticketSaveAttachment, input),
     move: (input: TicketMoveInput) => invoke(relayIpcChannels.ticketMove, input),
     clarifications: (projectPath: string, ticketId: string) => invoke(relayIpcChannels.ticketClarifications, projectPath, ticketId),
     answerClarification: (input: ClarificationAnswerInput) => invoke(relayIpcChannels.ticketAnswerClarification, input),

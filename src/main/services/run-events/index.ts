@@ -122,7 +122,7 @@ export const summarizeRunUsage = (usage: unknown): RunUsageSummary | null => {
 };
 
 const isInactiveStatus = (status: RunStatus | null | undefined): status is RunStatus =>
-  Boolean(status && status !== "idle" && status !== "running" && status !== "drafting");
+  Boolean(status && status !== "idle" && status !== "queued" && status !== "running" && status !== "drafting");
 
 const terminalStatusFromEvent = (event: RelayCodexEvent | null, statusOverride?: RunStatus | null): RunStatus | null => {
   if (isInactiveStatus(statusOverride)) return statusOverride;

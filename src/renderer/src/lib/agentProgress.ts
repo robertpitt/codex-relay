@@ -37,7 +37,8 @@ const timestampMs = (timestamp?: string | null): number | null => {
 
 const eventTime = (event: RendererRunEvent): number => timestampMs(event.timestamp) ?? 0;
 
-export const isAgentSessionActive = (status: AgentProgressStatus): boolean => status === "running" || status === "drafting";
+export const isAgentSessionActive = (status: AgentProgressStatus): boolean =>
+  status === "queued" || status === "running" || status === "drafting";
 
 export const formatElapsedDuration = (durationMs: number | null): string => {
   if (durationMs === null) return "Unavailable";
@@ -51,6 +52,8 @@ export const formatElapsedDuration = (durationMs: number | null): string => {
 
 export const isWebSearchEvent = (event: RendererRunEvent): boolean =>
   event.type === "web.search" || (event.type === "agent.message.delta" && /^web search:/i.test(event.text.trim()));
+
+const formatMcpStatus = (status: "in_progress" | "completed" | "failed"): string => status.replace("_", " ");
 
 export const agentEventText = (event: RendererRunEvent): string => {
   switch (event.type) {
@@ -69,6 +72,20 @@ export const agentEventText = (event: RendererRunEvent): string => {
       return event.summary ?? event.path;
     case "web.search":
       return `Web search: ${event.query}`;
+    case "todo.updated": {
+      const completed = event.items.filter((item) => item.completed).length;
+      const summary =
+        event.items.length === 0
+          ? "Todo list updated: no items"
+          : `Todo list updated: ${completed}/${event.items.length} completed`;
+      const items = event.items.map((item) => `[${item.completed ? "x" : " "}] ${item.text}`).join("\n");
+      return items ? `${summary}\n${items}` : summary;
+    }
+    case "mcp.tool_call": {
+      const call = `${event.server}.${event.tool}`;
+      const status = formatMcpStatus(event.status);
+      return event.error ? `MCP tool ${status}: ${call}: ${event.error}` : `MCP tool ${status}: ${call}`;
+    }
     case "approval.requested":
       return `Approval requested: ${event.kind}`;
     case "approval.resolved":
@@ -106,6 +123,10 @@ export const agentEventLabel = (event: RendererRunEvent): string => {
       return "File";
     case "web.search":
       return "Web Search";
+    case "todo.updated":
+      return "Todo";
+    case "mcp.tool_call":
+      return "MCP Tool";
     case "approval.requested":
     case "approval.resolved":
       return "Approval";
@@ -119,10 +140,23 @@ export const agentEventLabel = (event: RendererRunEvent): string => {
 };
 
 export const agentEventTone = (event: RendererRunEvent): "neutral" | "success" | "warning" | "danger" | "info" => {
+  if (event.type === "mcp.tool_call" && event.status === "failed") return "danger";
   if (event.type === "run.failed" || (event.type === "command.completed" && event.status === "failed")) return "danger";
-  if (event.type === "run.completed" || (event.type === "command.completed" && event.status === "completed")) return "success";
+  if (
+    event.type === "run.completed" ||
+    (event.type === "command.completed" && event.status === "completed") ||
+    (event.type === "mcp.tool_call" && event.status === "completed")
+  )
+    return "success";
   if (event.type === "clarification.requested" || event.type === "approval.requested") return "warning";
-  if (isWebSearchEvent(event) || event.type === "file.change" || event.type === "ticket.status_changed") return "info";
+  if (
+    isWebSearchEvent(event) ||
+    event.type === "file.change" ||
+    event.type === "ticket.status_changed" ||
+    event.type === "todo.updated" ||
+    event.type === "mcp.tool_call"
+  )
+    return "info";
   return "neutral";
 };
 
@@ -145,6 +179,8 @@ const statusCopy = (
   status: AgentProgressStatus
 ): Pick<AgentProgressMetrics, "statusLabel" | "statusDetail" | "statusTone"> => {
   switch (status) {
+    case "queued":
+      return { statusLabel: "Queued", statusDetail: "Codex is waiting to start this ticket.", statusTone: "active" };
     case "drafting":
       return { statusLabel: "Drafting", statusDetail: "Codex is preparing a ticket draft.", statusTone: "active" };
     case "draft_failed":

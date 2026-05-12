@@ -16,7 +16,15 @@ import {
   type TicketDraftStartDependencies,
   type TicketDraftThread
 } from "../src/main/services/codex";
-import { answerClarificationQuestion, initializeProject, readBoard, readClarificationQuestions, readTicket } from "../src/main/services/storage";
+import {
+  answerClarificationQuestion,
+  initializeProject,
+  readBoard,
+  readClarificationQuestions,
+  readProjectConfig,
+  readTicket,
+  writeProjectConfig
+} from "../src/main/services/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
 import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
 
@@ -35,6 +43,7 @@ const createProject = async (): Promise<string> => {
 };
 
 type TicketDraftRunOptions = NonNullable<Parameters<TicketDraftThread["run"]>[1]> & { signal: AbortSignal };
+type TicketDraftThreadOptions = Parameters<TicketDraftCodexClient["startThread"]>[0];
 type TicketDraftRunResult = Awaited<ReturnType<TicketDraftThread["run"]>>;
 type TicketDraftRunResolver = (value: Pick<TicketDraftRunResult, "finalResponse">) => void;
 type TicketDraftRunMock = (
@@ -42,15 +51,21 @@ type TicketDraftRunMock = (
   options: TicketDraftRunOptions
 ) => Promise<Pick<TicketDraftRunResult, "finalResponse">> | Pick<TicketDraftRunResult, "finalResponse">;
 
-const createDraftCodexClient = (run: TicketDraftRunMock): TicketDraftCodexClient => ({
-  startThread: () => ({
-    run: async (input, options) => {
-      if (typeof input !== "string") throw new TypeError("Ticket draft tests expect string prompts.");
-      if (!options?.signal) throw new TypeError("Ticket draft tests expect an AbortSignal.");
-      const result = await run(input, { ...options, signal: options.signal });
-      return { items: [], usage: null, ...result };
-    }
-  })
+const createDraftCodexClient = (
+  run: TicketDraftRunMock,
+  onStartThread?: (options: TicketDraftThreadOptions) => void
+): TicketDraftCodexClient => ({
+  startThread: (options) => {
+    onStartThread?.(options);
+    return {
+      run: async (input, runOptions) => {
+        if (typeof input !== "string") throw new TypeError("Ticket draft tests expect string prompts.");
+        if (!runOptions?.signal) throw new TypeError("Ticket draft tests expect an AbortSignal.");
+        const result = await run(input, { ...runOptions, signal: runOptions.signal });
+        return { items: [], usage: null, ...result };
+      }
+    };
+  }
 });
 
 const createFakeRunEventSink = (): {
@@ -195,17 +210,32 @@ const clarificationDraftJson = (question = "Which storage backend should this ta
 
 test("ticket draft creation succeeds with a mocked Codex response", async () => {
   const projectPath = await createProject();
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    settings: {
+      ...config.settings,
+      codexNetworkAccessEnabled: true,
+      codexWebSearchMode: "live"
+    }
+  });
   let prompt = "";
+  let capturedOptions: Partial<TicketDraftThreadOptions> = {};
   const signals: AbortSignal[] = [];
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_success",
     createCodexClient: () =>
-      createDraftCodexClient(async (nextPrompt, options) => {
-        prompt = nextPrompt;
-        signals.push(options.signal);
-        return { finalResponse: validDraftJson("Recoverable timeout handling") };
-      })
+      createDraftCodexClient(
+        async (nextPrompt, options) => {
+          prompt = nextPrompt;
+          signals.push(options.signal);
+          return { finalResponse: validDraftJson("Recoverable timeout handling") };
+        },
+        (options) => {
+          capturedOptions = options;
+        }
+      )
   };
 
   const draft = await createTicketDraft({ projectPath, idea: "Make timeouts recoverable" }, dependencies);
@@ -214,6 +244,8 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
   assert.match(prompt, /Make timeouts recoverable/);
   assert.match(prompt, /Research context:/);
   assert.equal(signals[0].aborted, false);
+  assert.equal(capturedOptions.networkAccessEnabled, false);
+  assert.equal(capturedOptions.webSearchMode, "disabled");
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
   const draftWithSummary = { ...draft, summary: "**Generated** [summary](https://example.test)." };
   assert.equal(ticketDraftDialogSubtext(draftWithSummary), "Generated summary.");

@@ -10,7 +10,14 @@ import {
   type TicketUpdateDependencies,
   type TicketUpdateThread
 } from "../src/main/services/codex";
-import { createTicket, initializeProject, readClarificationQuestions, readTicket } from "../src/main/services/storage";
+import {
+  createTicket,
+  initializeProject,
+  readClarificationQuestions,
+  readProjectConfig,
+  readTicket,
+  writeProjectConfig
+} from "../src/main/services/storage";
 import type { AgentTicketUpdate, RendererRunEvent } from "../src/shared/types";
 
 const createProject = async (): Promise<string> => {
@@ -84,6 +91,15 @@ const updateJson = (patch: Partial<AgentTicketUpdate> = {}): string =>
 
 test("ticket update agent applies validated structured output and preserves unrelated metadata", async () => {
   const projectPath = await createProject();
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    settings: {
+      ...config.settings,
+      codexNetworkAccessEnabled: true,
+      codexWebSearchMode: "live"
+    }
+  });
   const ticket = await createTicket(projectPath, {
     title: "Original ticket",
     priority: "medium",
@@ -127,6 +143,7 @@ test("ticket update agent applies validated structured output and preserves unre
   assert.equal(capturedOptions.sandboxMode, "read-only");
   assert.equal(capturedOptions.approvalPolicy, "never");
   assert.equal(capturedOptions.networkAccessEnabled, false);
+  assert.equal(capturedOptions.webSearchMode, "disabled");
   assert.equal(updated.frontMatter.id, original.frontMatter.id);
   assert.equal(updated.frontMatter.status, original.frontMatter.status);
   assert.equal(updated.frontMatter.position, original.frontMatter.position);

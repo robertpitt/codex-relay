@@ -24,6 +24,7 @@ export const NodePathLive = Layer.succeed(Path.Path, nodePathService);
 export const pathBasename = (target: string, suffix?: string): string => nodePath.basename(target, suffix);
 export const pathDirname = (target: string): string => nodePath.dirname(target);
 export const pathExtname = (target: string): string => nodePath.extname(target);
+export const pathIsAbsolute = (target: string): boolean => nodePath.isAbsolute(target);
 export const pathJoin = (...parts: string[]): string => nodePath.join(...parts);
 export const pathRelative = (from: string, to: string): string => nodePath.relative(from, to);
 export const pathResolve = (...parts: string[]): string => nodePath.resolve(...parts);

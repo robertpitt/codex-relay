@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krcm5g06h6mh8wfv1h57pa9x
 title: Add Ready Queue and Single-Thread Codex Run Scheduler
 ticketType: task
-status: todo
-position: 15000
+status: completed
+position: 42000
 priority: high
 labels:
   - codex
@@ -16,10 +16,10 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T22:57:45.478Z'
-updatedAt: '2026-05-11T23:04:36.139Z'
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krcm5e7w6xxmpqxmxgz14jtp
+updatedAt: '2026-05-11T23:31:19.873Z'
+codexThreadId: 019e194c-4788-7e71-af5d-cf6cfab21827
+runStatus: completed
+lastRunId: run_01krcmrhpbqz26z64qny9wz5bh
 ---
 # Add Ready Queue and Single-Thread Codex Run Scheduler
 
@@ -174,5 +174,43 @@ Introduce a Ready swimlane and a durable main-thread execution queue so users ca
 - Limitation: Code search stopped after scanning 160 candidate files.
 
 ## Codex Handoff
+
+### 5/12/2026, 12:25:20 AM
+
+Summary of changes made:
+- Added the Ready swimlane and `queued` run status across shared types, schemas, storage defaults, and legacy normalization.
+- Added `ProjectSettings.agentConcurrency` with default `1` and schema validation.
+- Refactored Codex Start/Resume to enqueue first, then drain through a per-project scheduler using an Effect queue and bounded scheduler retry.
+- Added queued cancellation, Ready-lane manual move reconciliation, and single-run-per-project default behavior.
+- Updated renderer run pills, controls, progress summaries, and stop handling for queued runs.
+- Added backend/schema tests for Ready normalization, queue ordering, cancellation, preflight blocking, and concurrency.
+
+Files changed:
+- `src/shared/types.ts`
+- `src/main/services/schemas.ts`
+- `src/main/services/storage/index.ts`
+- `src/main/services/codex/index.ts`
+- `src/main/services/run-events/index.ts`
+- `src/main/ipc/methods/tickets.ts`
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/components/AgentActivity.tsx`
+- `src/renderer/src/lib/agentProgress.ts`
+- `src/renderer/src/styles.css`
+- `tests/backend.test.ts`
+- `tests/schemas.test.ts`
+
+Commands run:
+- `npm run typecheck`
+- `npm test`
+- plus targeted `git status`, `git diff`, `grep`, and `sed` inspections.
+
+Tests run and results:
+- `npm run typecheck`: passed.
+- `npm test`: passed, 95 tests. Existing esbuild warning about `import.meta` with CJS output still appears.
+
+Remaining risks or follow-up:
+- No settings UI was added for `agentConcurrency`, per ticket scope.
+- Git status also shows `.relay` ticket/run metadata changes generated around this Relay run; I did not use those as implementation files.
+
 
 No Codex run has been started.

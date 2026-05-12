@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Check,
   CircleDashed,
+  Clock,
   Code2,
   Copy,
   ExternalLink,
@@ -24,7 +25,8 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, ReactElement } from "react";
+import type { CSSProperties, DragEvent, KeyboardEvent, ReactElement } from "react";
+import { RELAY_IN_PROGRESS_STATUS } from "@shared/types";
 import type {
   BoardSnapshot,
   ClarificationQuestion,
@@ -36,6 +38,7 @@ import type {
   RendererRunEvent,
   RunSummary,
   RunStatus,
+  TicketAttachmentSaveResult,
   TicketDraft,
   TicketDraftErrorPayload,
   TicketDraftSubticket,
@@ -55,7 +58,13 @@ import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "./comp
 import { ClarificationPanel } from "./components/ClarificationPanel";
 import { GitMetadataPill, loadingGitMetadata } from "./components/GitMetadata";
 import { MarkdownBlock } from "./components/MarkdownBlock";
-import { isAgentSessionActive, mergeRunEvents } from "./lib/agentProgress";
+import { formatElapsedDuration, isAgentSessionActive, mergeRunEvents } from "./lib/agentProgress";
+import {
+  attachmentMarkdownBlock,
+  droppedImageFileToAttachmentInput,
+  insertMarkdownAtSelection,
+  isSupportedDroppedImageFile
+} from "./lib/attachments";
 import {
   createTicketShortcutLabel,
   isCreateTicketShortcut,
@@ -178,6 +187,8 @@ const runLabel = (status: RunStatus): string => {
   switch (status) {
     case "idle":
       return "Idle";
+    case "queued":
+      return "Queued";
     case "running":
       return "Running";
     case "blocked":
@@ -204,6 +215,28 @@ export function TicketRunStatusPill({ status }: { status: RunStatus }): ReactEle
     <span className={clsx("run-pill", status)}>
       {status === "drafting" && <Loader2 className="spin run-pill-icon" size={12} aria-hidden="true" />}
       <span>{runLabel(status)}</span>
+    </span>
+  );
+}
+
+export const activeRunElapsedLabel = (
+  ticket: Pick<TicketSummary, "status" | "runStatus" | "lastRunStartedAt">,
+  now: number
+): string | null => {
+  if (ticket.status !== RELAY_IN_PROGRESS_STATUS || ticket.runStatus !== "running" || !ticket.lastRunStartedAt) return null;
+  const startedAt = Date.parse(ticket.lastRunStartedAt);
+  if (Number.isNaN(startedAt)) return null;
+  const elapsedMs = now - startedAt;
+  if (!Number.isFinite(elapsedMs)) return null;
+  return formatElapsedDuration(elapsedMs);
+};
+
+export function TicketRunElapsedPill({ label }: { label: string }): ReactElement {
+  const title = `Agent running for ${label}`;
+  return (
+    <span className="run-elapsed-pill" title={title} aria-label={title}>
+      <Clock className="run-pill-icon" size={12} aria-hidden="true" />
+      <span>{label}</span>
     </span>
   );
 }
@@ -444,7 +477,8 @@ function DroppableColumn({
   selectedTicketId,
   onOpen,
   onTicketFocus,
-  onTicketButtonRef
+  onTicketButtonRef,
+  now
 }: {
   column: RelayColumn;
   tickets: TicketSummary[];
@@ -454,6 +488,7 @@ function DroppableColumn({
   onOpen: (ticketId: string) => void;
   onTicketFocus: (ticketId: string) => void;
   onTicketButtonRef: (ticketId: string, node: HTMLButtonElement | null) => void;
+  now: number;
 }): ReactElement {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const emptyMessage = emptyColumnMessage(column.name);
@@ -474,6 +509,7 @@ function DroppableColumn({
             onOpen={onOpen}
             onFocus={onTicketFocus}
             onTicketButtonRef={onTicketButtonRef}
+            now={now}
           />
         ))}
         {tickets.length === 0 && (
@@ -487,6 +523,61 @@ function DroppableColumn({
   );
 }
 
+export function TicketCardContent({
+  ticket,
+  allTickets,
+  columns,
+  now
+}: {
+  ticket: TicketSummary;
+  allTickets: TicketSummary[];
+  columns: RelayColumn[];
+  now: number;
+}): ReactElement {
+  const visibleLabels = ticket.labels.slice(0, 2);
+  const hiddenLabelCount = ticket.labels.length - visibleLabels.length;
+  const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
+  const showRunStatus = ticket.runStatus !== "idle";
+  const elapsedLabel = activeRunElapsedLabel(ticket, now);
+  const showRelationship = ticket.ticketType === "epic" || Boolean(ticket.parentEpicId);
+  const blockerState = useMemo(() => resolveTicketBlockers(ticket, allTickets, columns), [allTickets, columns, ticket]);
+  const showBlockerState = blockerState.isBlocked || blockerState.warnings.length > 0;
+
+  return (
+    <>
+      <div className="card-title">{ticket.title}</div>
+      <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
+      {(showRelationship || showPriority || showRunStatus || showBlockerState || elapsedLabel) && (
+        <div className="card-meta">
+          {ticket.ticketType === "epic" && <span className="ticket-type-pill epic">Epic</span>}
+          {ticket.parentEpicId && <span className="ticket-type-pill subticket">Subticket</span>}
+          {blockerState.isBlocked && (
+            <span className="ticket-blocker-pill active" title={blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
+              Blocked
+            </span>
+          )}
+          {blockerState.warnings.length > 0 && (
+            <span className="ticket-blocker-pill warning" title={blockerState.warnings.join(" ")}>
+              Blocker Warning
+            </span>
+          )}
+          {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
+          {showRunStatus && <TicketRunStatusPill status={ticket.runStatus} />}
+          {elapsedLabel && <TicketRunElapsedPill label={elapsedLabel} />}
+        </div>
+      )}
+      {visibleLabels.length > 0 && (
+        <div className="labels">
+          {visibleLabels.map((label) => (
+            <span key={label}>{label}</span>
+          ))}
+          {hiddenLabelCount > 0 && <span className="label-overflow">+{hiddenLabelCount}</span>}
+        </div>
+      )}
+    </>
+  );
+}
+
 function DraggableCard({
   ticket,
   allTickets,
@@ -494,7 +585,8 @@ function DraggableCard({
   selected,
   onOpen,
   onFocus,
-  onTicketButtonRef
+  onTicketButtonRef,
+  now
 }: {
   ticket: TicketSummary;
   allTickets: TicketSummary[];
@@ -503,17 +595,11 @@ function DraggableCard({
   onOpen: (ticketId: string) => void;
   onFocus: (ticketId: string) => void;
   onTicketButtonRef: (ticketId: string, node: HTMLButtonElement | null) => void;
+  now: number;
 }): ReactElement {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: ticket.id });
   const dragTransform = transform ? CSS.Translate.toString(transform) : null;
   const style = dragTransform ? { transform: dragTransform } : undefined;
-  const visibleLabels = ticket.labels.slice(0, 2);
-  const hiddenLabelCount = ticket.labels.length - visibleLabels.length;
-  const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
-  const showRunStatus = ticket.runStatus !== "idle";
-  const showRelationship = ticket.ticketType === "epic" || Boolean(ticket.parentEpicId);
-  const blockerState = useMemo(() => resolveTicketBlockers(ticket, allTickets, columns), [allTickets, columns, ticket]);
-  const showBlockerState = blockerState.isBlocked || blockerState.warnings.length > 0;
   return (
     <article ref={setNodeRef} style={style} className={clsx("ticket-card", isDragging && "dragging", selected && "keyboard-selected")}>
       <button
@@ -523,34 +609,7 @@ function DraggableCard({
         onClick={() => onOpen(ticket.id)}
         onFocus={() => onFocus(ticket.id)}
       >
-        <div className="card-title">{ticket.title}</div>
-        <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
-        {(showRelationship || showPriority || showRunStatus || showBlockerState) && (
-          <div className="card-meta">
-            {ticket.ticketType === "epic" && <span className="ticket-type-pill epic">Epic</span>}
-            {ticket.parentEpicId && <span className="ticket-type-pill subticket">Subticket</span>}
-            {blockerState.isBlocked && (
-              <span className="ticket-blocker-pill active" title={blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
-                Blocked
-              </span>
-            )}
-            {blockerState.warnings.length > 0 && (
-              <span className="ticket-blocker-pill warning" title={blockerState.warnings.join(" ")}>
-                Blocker Warning
-              </span>
-            )}
-            {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
-            {showRunStatus && <TicketRunStatusPill status={ticket.runStatus} />}
-          </div>
-        )}
-        {visibleLabels.length > 0 && (
-          <div className="labels">
-            {visibleLabels.map((label) => (
-              <span key={label}>{label}</span>
-            ))}
-            {hiddenLabelCount > 0 && <span className="label-overflow">+{hiddenLabelCount}</span>}
-          </div>
-        )}
+        <TicketCardContent ticket={ticket} allTickets={allTickets} columns={columns} now={now} />
       </button>
       <button className="drag-handle" {...listeners} {...attributes} aria-label={`Drag ${ticket.title}`}>
         <CircleDashed size={16} />
@@ -582,6 +641,7 @@ function BoardView({
   const boardRef = useRef<HTMLDivElement | null>(null);
   const ticketButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const filteredTickets = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return board.tickets;
@@ -598,6 +658,10 @@ function BoardView({
     [board.columns, filteredTickets]
   );
   const orderedTicketIds = useMemo(() => orderedTickets.map((ticket) => ticket.id), [orderedTickets]);
+  const hasActiveElapsedLabel = useMemo(
+    () => orderedTickets.some((ticket) => activeRunElapsedLabel(ticket, now) !== null),
+    [orderedTickets, now]
+  );
   const createShortcut = createTicketShortcutLabel();
 
   const setTicketButtonRef = useCallback((ticketId: string, node: HTMLButtonElement | null): void => {
@@ -646,6 +710,14 @@ function BoardView({
       setSelectedTicketId(null);
     }
   }, [orderedTicketIds, selectedTicketId]);
+
+  useEffect(() => {
+    if (!hasActiveElapsedLabel) return;
+    const updateNow = (): void => setNow(Date.now());
+    updateNow();
+    const interval = window.setInterval(updateNow, 1000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveElapsedLabel]);
 
   useKeyboardShortcut({
     id: "ticket-navigation",
@@ -727,6 +799,7 @@ function BoardView({
               onOpen={onOpenTicket}
               onTicketFocus={setSelectedTicketId}
               onTicketButtonRef={setTicketButtonRef}
+              now={now}
             />
           ))}
         </div>
@@ -1438,6 +1511,8 @@ function TicketDetail({
   const [ticketUpdateError, setTicketUpdateError] = useState<string | null>(null);
   const [ticketUpdateCancelling, setTicketUpdateCancelling] = useState(false);
   const [ticketUpdateLogViewerOpen, setTicketUpdateLogViewerOpen] = useState(false);
+  const [attachmentDropActive, setAttachmentDropActive] = useState(false);
+  const [attachmentDropBusy, setAttachmentDropBusy] = useState(false);
   const [addTicketsOpen, setAddTicketsOpen] = useState(false);
   const [blockerPanelOpen, setBlockerPanelOpen] = useState(false);
   const [newSubticketTitle, setNewSubticketTitle] = useState("");
@@ -1446,6 +1521,7 @@ function TicketDetail({
   const [linkSubticketId, setLinkSubticketId] = useState("");
   const [subticketBusy, setSubticketBusy] = useState(false);
   const ticketUpdateInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const markdownEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const labelsInputRef = useRef<HTMLInputElement | null>(null);
   const subticketsPanelRef = useRef<HTMLElement | null>(null);
 
@@ -1493,6 +1569,8 @@ function TicketDetail({
     setTicketUpdateError(null);
     setTicketUpdateCancelling(false);
     setTicketUpdateLogViewerOpen(false);
+    setAttachmentDropActive(false);
+    setAttachmentDropBusy(false);
     setRunPreflight(null);
     setRunSummary(null);
     setAddTicketsOpen(false);
@@ -1573,6 +1651,7 @@ function TicketDetail({
     [events, ticketUpdateRunId]
   );
   const ticketUpdateActive = isAgentSessionActive(ticketUpdateStatus) || ticketUpdateCancelling;
+  const runQueued = ticket?.frontMatter.runStatus === "queued";
   const linkedSubtickets = useMemo(() => {
     if (!ticket || ticket.frontMatter.ticketType !== "epic") return [];
     const byId = new Map(board.tickets.map((item) => [item.id, item]));
@@ -1659,6 +1738,7 @@ function TicketDetail({
     if (!ticket) return Boolean(busy || submittingAnswerId || ticketUpdateActive || ticketUpdateRequest.trim());
     return (
       busy ||
+      attachmentDropBusy ||
       subticketBusy ||
       Boolean(submittingAnswerId) ||
       ticketUpdateActive ||
@@ -1676,6 +1756,7 @@ function TicketDetail({
     );
   }, [
     answerDrafts,
+    attachmentDropBusy,
     blockedByIds,
     busy,
     labels,
@@ -1705,6 +1786,67 @@ function TicketDetail({
       return true;
     }
   });
+
+  const droppedFiles = (event: DragEvent<HTMLTextAreaElement>): File[] => Array.from(event.dataTransfer.files);
+
+  const handleMarkdownDragOver = (event: DragEvent<HTMLTextAreaElement>): void => {
+    if (draftInProgress || attachmentDropBusy) return;
+    const items = Array.from(event.dataTransfer.items).filter((item) => item.kind === "file");
+    if (items.length === 0) return;
+
+    const allImages = items.every((item) => item.type === "" || item.type.startsWith("image/"));
+    if (!allImages) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setAttachmentDropActive(true);
+  };
+
+  const handleMarkdownDragLeave = (event: DragEvent<HTMLTextAreaElement>): void => {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    setAttachmentDropActive(false);
+  };
+
+  const handleMarkdownDrop = async (event: DragEvent<HTMLTextAreaElement>): Promise<void> => {
+    if (draftInProgress || attachmentDropBusy) return;
+    const files = droppedFiles(event);
+    if (files.length === 0) return;
+
+    event.preventDefault();
+    setAttachmentDropActive(false);
+    if (files.some((file) => !isSupportedDroppedImageFile(file))) {
+      setToast({ kind: "error", message: "Only image files can be dropped into ticket markdown." });
+      return;
+    }
+
+    const editor = event.currentTarget;
+    const selectionStart = editor.selectionStart;
+    const selectionEnd = editor.selectionEnd;
+    setAttachmentDropBusy(true);
+    try {
+      const attachments: TicketAttachmentSaveResult[] = [];
+      for (const file of files) {
+        attachments.push(await getRelayApi().ticket.saveAttachment(await droppedImageFileToAttachmentInput(projectPath, file)));
+      }
+      const inserted = insertMarkdownAtSelection(markdown, attachmentMarkdownBlock(attachments), selectionStart, selectionEnd);
+      setMarkdown(inserted.value);
+      window.requestAnimationFrame(() => {
+        markdownEditorRef.current?.focus();
+        markdownEditorRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+      });
+      setToast({
+        kind: "success",
+        message: attachments.length === 1 ? "Image attached to ticket markdown." : `${attachments.length} images attached to ticket markdown.`
+      });
+    } catch (error) {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to save dropped image." });
+    } finally {
+      setAttachmentDropBusy(false);
+    }
+  };
 
   const save = async (): Promise<void> => {
     if (!ticket) return;
@@ -1801,7 +1943,10 @@ function TicketDetail({
         ? await getRelayApi().codex.resumeRun({ projectPath, ticketId, freshThread })
         : await getRelayApi().codex.startRun({ projectPath, ticketId, freshThread });
       setRunId(result.runId);
-      setToast({ kind: "info", message: `Codex run started: ${result.runId}` });
+      setToast({
+        kind: "info",
+        message: result.state === "queued" ? `Codex run queued: ${result.runId}` : `Codex run started: ${result.runId}`
+      });
       onChanged();
       await load();
     } catch (error) {
@@ -2022,18 +2167,18 @@ function TicketDetail({
           <button
             className="primary-button"
             onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))}
-            disabled={busy || ticketUpdateActive || draftInProgress}
+            disabled={busy || ticketUpdateActive || draftInProgress || runQueued}
           >
             {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
             {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
           </button>
           {ticket.frontMatter.codexThreadId && (
-            <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress}>
+            <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
               {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
               Start Fresh Thread
             </button>
           )}
-          {runId && (ticket.frontMatter.runStatus === "running" || draftInProgress) && (
+          {runId && (ticket.frontMatter.runStatus === "queued" || ticket.frontMatter.runStatus === "running" || draftInProgress) && (
             <button onClick={cancelRun}>
               <X size={16} />
               Stop
@@ -2430,10 +2575,14 @@ function TicketDetail({
           <label className="field">
             <span>Markdown</span>
             <textarea
-              className="markdown-editor detail-markdown"
+              ref={markdownEditorRef}
+              className={clsx("markdown-editor detail-markdown", attachmentDropActive && "drop-active")}
               value={markdown}
               onChange={(event) => setMarkdown(event.target.value)}
-              disabled={draftInProgress}
+              onDragOver={handleMarkdownDragOver}
+              onDragLeave={handleMarkdownDragLeave}
+              onDrop={(event) => void handleMarkdownDrop(event)}
+              disabled={draftInProgress || attachmentDropBusy}
             />
           </label>
           <MarkdownBlock
@@ -2658,6 +2807,7 @@ function RelayApp(): ReactElement {
     return getRelayApi().codex.onRunEvent((event) => {
       setEvents((current) => [...current.slice(-400), event]);
       if (
+        event.type === "run.started" ||
         event.type === "run.completed" ||
         event.type === "run.failed" ||
         event.type === "clarification.requested" ||

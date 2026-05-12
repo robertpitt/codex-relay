@@ -83,6 +83,8 @@ const formatStatus = (status: RunStatus | null): string => {
       return "Draft failed";
     case "running":
       return "Running";
+    case "queued":
+      return "Queued";
     case "drafting":
       return "Drafting";
     case "idle":

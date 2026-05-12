@@ -2,7 +2,9 @@ import { Effect } from "effect";
 import matter from "gray-matter";
 import {
   DEFAULT_COLUMNS,
+  RELAY_IN_PROGRESS_STATUS,
   RELAY_NEEDS_CLARIFICATION_STATUS,
+  RELAY_READY_STATUS,
   RELAY_REVIEW_STATUS,
   RELAY_SCHEMA_VERSION,
   RELAY_TODO_STATUS,
@@ -21,6 +23,8 @@ import {
   type RelayEventSource,
   type RelayAuditEvent,
   type EpicSubticketCreateInput,
+  type TicketAttachmentSaveInput,
+  type TicketAttachmentSaveResult,
   type TicketCreateInput,
   type TicketDraft,
   type TicketDraftResearch,
@@ -34,6 +38,7 @@ import {
   type TicketSummary,
   type TicketType
 } from "../../../shared/types";
+import { imageAttachmentExtension, isSupportedImageAttachment } from "../../../shared/attachments";
 import { uniqueTicketIds } from "../../../shared/blockers";
 import { BackendClock, type BackendEffect, runBackendEffect } from "../runtime";
 import { showElectronItemInFolder } from "../../electron";
@@ -43,12 +48,14 @@ import {
   makeDirectoryEffect,
   pathBasename,
   pathDirname,
+  pathExtname,
   pathJoin,
   pathRelative,
   readDirectoryEffect,
   readTextFileEffect,
   renamePathEffect,
-  statPathEffect
+  statPathEffect,
+  writeBinaryFileEffect
 } from "../io";
 import { clarificationStoreSchema, parseSchema, projectConfigSchema, ticketFrontMatterSchema } from "../schemas";
 import { TicketNotFoundError, isTicketNotFoundError } from "./errors";
@@ -75,25 +82,37 @@ export { runsPath } from "./paths";
 
 const defaultSettings = (): ProjectSettings => ({
   defaultModel: null,
+  defaultModelReasoningEffort: null,
   defaultApprovalPolicy: "on-request",
   defaultSandboxMode: "workspace-write",
   allowNonGitCodexRuns: false,
   ticketDraftingEnabled: true,
-  codexExecutionEnabled: true
+  codexExecutionEnabled: true,
+  codexNetworkAccessEnabled: false,
+  codexWebSearchMode: "disabled",
+  codexAdditionalDirectories: [],
+  agentConcurrency: 1
 });
 
 const nowIso = (): string => new Date().toISOString();
 
 const isSidebarActiveRunStatus = (status: TicketSummary["runStatus"]): boolean =>
-  status === "drafting" || status === "running" || status === "blocked";
+  status === "queued" || status === "drafting" || status === "running" || status === "blocked";
 
 const normalizeProjectColumns = (columns: RelayColumn[]): RelayColumn[] => {
   const normalized = columns.map((column) => ({ ...column }));
   const columnIds = new Set(normalized.map((column) => column.id));
   for (const defaultColumn of DEFAULT_COLUMNS) {
     if (columnIds.has(defaultColumn.id)) continue;
-    if (defaultColumn.id === RELAY_REVIEW_STATUS) {
-      const after = normalized.find((column) => column.id === "needs_clarification")?.position ?? 3000;
+    if (defaultColumn.id === RELAY_READY_STATUS) {
+      const after = normalized.find((column) => column.id === RELAY_TODO_STATUS)?.position ?? 1000;
+      const before = normalized.find((column) => column.id === RELAY_IN_PROGRESS_STATUS)?.position ?? defaultColumn.position;
+      normalized.push({
+        ...defaultColumn,
+        position: before > after ? (after + before) / 2 : defaultColumn.position
+      });
+    } else if (defaultColumn.id === RELAY_REVIEW_STATUS) {
+      const after = normalized.find((column) => column.id === RELAY_NEEDS_CLARIFICATION_STATUS)?.position ?? 4000;
       const before =
         normalized.find((column) => column.id === "not_doing")?.position ??
         normalized.find((column) => column.id === "completed")?.position ??
@@ -179,6 +198,51 @@ export const writeProjectConfig = async (projectPath: string, config: ProjectCon
   const updated = normalizeProjectConfig({ ...config, updatedAt: nowIso() });
   await atomicWriteJson(projectConfigPath(projectPath), updated);
   return updated;
+};
+
+const sanitizeAttachmentBaseName = (fileName: string): string => {
+  const baseName = pathBasename(fileName.trim() || "image");
+  const extension = pathExtname(baseName);
+  const withoutExtension = extension ? baseName.slice(0, -extension.length) : baseName;
+  const sanitized = withoutExtension
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^\.+/g, "")
+    .slice(0, 64);
+  return sanitized || "image";
+};
+
+const decodeBase64Content = (contentBase64: string): Uint8Array => {
+  const normalized = contentBase64.replace(/\s+/g, "");
+  if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new Error("Attachment content must be valid base64.");
+  }
+  return new Uint8Array(Buffer.from(normalized, "base64"));
+};
+
+export const saveTicketAttachment = async (input: TicketAttachmentSaveInput): Promise<TicketAttachmentSaveResult> => {
+  const projectPath = resolveProjectPath(input.projectPath);
+  const mimeType = input.mimeType ?? null;
+  if (!isSupportedImageAttachment({ fileName: input.fileName, mimeType })) {
+    throw new Error("Only image attachments can be saved.");
+  }
+
+  const content = decodeBase64Content(input.contentBase64);
+  const extension = imageAttachmentExtension(input.fileName, mimeType);
+  const safeBaseName = sanitizeAttachmentBaseName(input.fileName);
+  const fileName = `${safeBaseName}-${newId("att")}${extension}`;
+  const attachmentDirectory = attachmentsPath(projectPath);
+  const absolutePath = pathJoin(attachmentDirectory, fileName);
+
+  await runBackendEffect(makeDirectoryEffect(attachmentDirectory));
+  await runBackendEffect(writeBinaryFileEffect(absolutePath, content));
+
+  return {
+    fileName,
+    markdownPath: slashPath(pathRelative(projectPath, absolutePath)),
+    absolutePath
+  };
 };
 
 export const summarizeProject = async (projectPath: string, lastOpenedAt?: string): Promise<ProjectSummary> => {
@@ -718,7 +782,8 @@ const createSingleTicket = async (projectPath: string, input: TicketCreateInput)
     updatedAt: createdAt,
     codexThreadId: null,
     runStatus: "idle",
-    lastRunId: null
+    lastRunId: null,
+    lastRunStartedAt: null
   };
   await validateParentEpic(projectPath, frontMatter);
   const ticket: TicketRecord = {
@@ -989,6 +1054,68 @@ export const transitionTicketStatus = async (
   }
 
   return updated;
+};
+
+export const setTicketQueued = async (projectPath: string, ticketId: string, runId: string): Promise<TicketRecord> => {
+  const config = await readProjectConfig(projectPath);
+  const current = await readTicket(projectPath, ticketId);
+  const targetStatus = config.columns.some((column) => column.id === RELAY_READY_STATUS)
+    ? RELAY_READY_STATUS
+    : current.frontMatter.status;
+  const queuedInLane =
+    current.frontMatter.status === targetStatus
+      ? current
+      : await transitionTicketStatus(projectPath, ticketId, targetStatus, {
+          actor: "codex",
+          source: "agent_execution",
+          runId
+        });
+
+  return writeTicket(projectPath, {
+    ...queuedInLane,
+    frontMatter: {
+      ...queuedInLane.frontMatter,
+      runStatus: "queued",
+      lastRunId: runId
+    }
+  });
+};
+
+export const clearQueuedTicket = async (
+  projectPath: string,
+  ticketId: string,
+  targetStatus?: string | null,
+  expectedRunId?: string | null
+): Promise<TicketRecord> => {
+  const current = await readTicket(projectPath, ticketId);
+  if (current.frontMatter.runStatus !== "queued") return current;
+  if (expectedRunId && current.frontMatter.lastRunId !== expectedRunId) return current;
+
+  const runId = current.frontMatter.lastRunId;
+  const cleared = await writeTicket(projectPath, {
+    ...current,
+    frontMatter: {
+      ...current.frontMatter,
+      runStatus: "idle",
+      lastRunId: null
+    }
+  });
+
+  if (!targetStatus || cleared.frontMatter.status === targetStatus) return cleared;
+  const config = await readProjectConfig(projectPath);
+  if (!config.columns.some((column) => column.id === targetStatus)) return cleared;
+  return transitionTicketStatus(projectPath, ticketId, targetStatus, {
+    actor: "system",
+    source: "system_reconciliation",
+    runId
+  });
+};
+
+export const listQueuedReadyTickets = async (projectPath: string): Promise<TicketSummary[]> => {
+  const board = await readBoard(projectPath);
+  return board.tickets
+    .filter((ticket) => ticket.status === RELAY_READY_STATUS && ticket.runStatus === "queued" && Boolean(ticket.lastRunId))
+    .sort((a, b) => a.position - b.position);
 };
 
 export const saveTicket = async (input: TicketSaveInput): Promise<TicketRecord> => {

@@ -117,6 +117,12 @@ export const fileExistsEffect = (target: string): Effect.Effect<boolean, Platfor
 export const readTextFileEffect = (target: string): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem> =>
   FileSystem.FileSystem.use((fs) => fs.readFileString(target, "utf8"));
 
+export const writeBinaryFileEffect = (
+  target: string,
+  value: Uint8Array
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> =>
+  FileSystem.FileSystem.use((fs) => fs.writeFile(target, value));
+
 export const writeTextFileEffect = (target: string, value: string): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> =>
   FileSystem.FileSystem.use((fs) => fs.writeFileString(target, value));
 

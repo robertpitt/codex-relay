@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krckmjbxkn615zszdmrmpz32
 title: Persist SDK todo-list and MCP tool-call events
 ticketType: task
-status: todo
-position: 13000
+status: completed
+position: 44000
 priority: medium
 labels:
   - codex
@@ -15,10 +15,11 @@ parentEpicId: tkt_01krcka112x6zmxsz6416d6hrj
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-11T22:48:30.845Z'
-updatedAt: '2026-05-11T22:48:30.845Z'
-codexThreadId: null
-runStatus: idle
-lastRunId: null
+updatedAt: '2026-05-11T23:57:28.259Z'
+codexThreadId: 019e1965-0429-7020-bbf8-c00501f1e2b5
+runStatus: completed
+lastRunId: run_01krcnyq15kt93h1w2redh4zep
+lastRunStartedAt: null
 ---
 # Persist SDK todo-list and MCP tool-call events
 
@@ -81,5 +82,33 @@ The SDK streams structured todo list and MCP tool-call items. Relay currently dr
 - Keep event payloads JSON-schema-friendly because `RunLogLine.payload` is persisted as JSONL.
 
 ## Codex Handoff
+
+### 5/12/2026, 12:40:29 AM
+
+**Summary**
+Implemented structured Relay events for SDK todo-list updates and MCP tool calls. Todo events persist only `{ text, completed }` items, and MCP events persist server/tool/status plus optional error without arguments or result payloads. Renderer progress utilities now show clear labels, text, and tones for both event types.
+
+**Files Changed**
+- [types.ts](/Users/robertpitt/Projects/relay/src/shared/types.ts)
+- [schemas.ts](/Users/robertpitt/Projects/relay/src/main/services/schemas.ts)
+- [index.ts](/Users/robertpitt/Projects/relay/src/main/services/codex/index.ts)
+- [agentProgress.ts](/Users/robertpitt/Projects/relay/src/renderer/src/lib/agentProgress.ts)
+- [backend.test.ts](/Users/robertpitt/Projects/relay/tests/backend.test.ts)
+- [schemas.test.ts](/Users/robertpitt/Projects/relay/tests/schemas.test.ts)
+- [agent-progress.test.tsx](/Users/robertpitt/Projects/relay/tests/agent-progress.test.tsx)
+
+**Commands Run**
+- `git status --short`
+- `grep`/`sed`/`nl` inspections for event types, schemas, normalizer, and tests
+- `npm test`
+- `npm run typecheck`
+
+**Tests**
+- `npm test`: passed, 99 tests
+- `npm run typecheck`: passed
+
+**Remaining Risks / Follow-Up**
+The worktree already had unrelated dirty files and `.relay` run/ticket artifacts before this change; I left those untouched. No known remaining follow-up for this ticket.
+
 
 No Codex run has been started.

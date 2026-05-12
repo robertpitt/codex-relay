@@ -2,6 +2,7 @@ import type { TicketDraftStartResult } from "../../../shared/types";
 import {
   cancelTicketUpdateRun,
   maybeResumeTicketDraftAfterClarification,
+  reconcileTicketQueueState,
   startTicketDraftRun,
   startTicketUpdateRun,
   ticketDraftErrorToPayload
@@ -16,6 +17,7 @@ import {
   epicSubticketCreateInputSchema,
   epicSubticketLinkInputSchema,
   parseSchema,
+  ticketAttachmentSaveInputSchema,
   ticketCreateInputSchema,
   ticketMoveInputSchema,
   ticketSaveInputSchema
@@ -30,9 +32,11 @@ import {
   listTicketReferenceCandidates,
   linkSubticket,
   moveTicket,
+  readBoard,
   readClarificationQuestions,
   readTicket,
   revealTicketFile,
+  saveTicketAttachment,
   saveTicket,
   unlinkSubticket
 } from "../../services/storage";
@@ -128,13 +132,30 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketSave,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => saveTicket(parseSchema(ticketSaveInputSchema, input)))
+    handler: (_event, input) =>
+      fromPromise(async () => {
+        const parsed = parseSchema(ticketSaveInputSchema, input);
+        const saved = await saveTicket(parsed);
+        return reconcileTicketQueueState(parsed.projectPath, saved.frontMatter.id);
+      })
+  }),
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.ticketSaveAttachment,
+    payload: ipcArgs([ipcObject]),
+    result: ipcResult(),
+    handler: (_event, input) => fromPromise(() => saveTicketAttachment(parseSchema(ticketAttachmentSaveInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketMove,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => moveTicket(parseSchema(ticketMoveInputSchema, input)))
+    handler: (_event, input) =>
+      fromPromise(async () => {
+        const parsed = parseSchema(ticketMoveInputSchema, input);
+        await moveTicket(parsed);
+        await reconcileTicketQueueState(parsed.projectPath, parsed.ticketId);
+        return readBoard(parsed.projectPath);
+      })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketClarifications,

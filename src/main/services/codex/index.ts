@@ -1,5 +1,5 @@
-import { Context, Effect, Layer } from "effect";
-import { Codex, type CodexOptions, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
+import { Context, Effect, Layer, Queue, Schedule } from "effect";
+import { Codex, type CodexOptions, type Input, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
 import {
   type AgentTicketUpdate,
   type AgentTicketUpdateInput,
@@ -13,6 +13,7 @@ import {
   RELAY_IN_PROGRESS_STATUS,
   RELAY_NEEDS_CLARIFICATION_STATUS,
   RELAY_NOT_DOING_STATUS,
+  RELAY_READY_STATUS,
   RELAY_REVIEW_STATUS,
   RELAY_TODO_STATUS,
   type RelayCodexEvent,
@@ -40,7 +41,7 @@ import {
 } from "../run-events";
 import { agentTicketUpdateSchema, isRelaySchemaError, parseSchema, ticketDraftSchema } from "../schemas";
 import { logError, logInfo, logWarn } from "../logger";
-import { pathResolve } from "../io";
+import { pathIsAbsolute, pathRelative, pathResolve } from "../io";
 import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft } from "./research";
 import { resolveAvailableCodexCli, type CodexCliResolution } from "./cli";
 import { getCodexStatus } from "./status";
@@ -48,16 +49,19 @@ import {
   appendCodexHandoff,
   applyTicketDraftToTicket,
   blockPendingTicketDraftForClarification,
+  clearQueuedTicket,
   createClarificationQuestions,
   createPendingTicketDraft,
   failPendingTicketDraft,
   isTicketNotFoundError,
   isGitRepository,
+  listQueuedReadyTickets,
   newId,
   readClarificationQuestions,
   readBoard,
   readProjectConfig,
   readTicket,
+  setTicketQueued,
   ticketMarkdownFromDraft,
   ticketMarkdownFromSubticketDraft,
   transitionTicketStatus,
@@ -73,7 +77,27 @@ type ActiveRun = {
   projectPath: string;
 };
 
+type QueuedRunIntent = {
+  input: StartRunInput;
+  resume: boolean;
+  dependencies: CodexRunDependencies;
+};
+
+type StartingRun = {
+  projectPath: string;
+  ticketId: string;
+};
+
+type ProjectScheduler = {
+  projectPath: string;
+  wakeQueue: Queue.Queue<void>;
+  loopStarted: boolean;
+};
+
 const activeRuns = new Map<string, ActiveRun>();
+const queuedRunIntents = new Map<string, QueuedRunIntent>();
+const startingRuns = new Map<string, StartingRun>();
+const projectSchedulers = new Map<string, Promise<ProjectScheduler>>();
 const activeTicketUpdateRuns = new Map<string, ActiveRun>();
 const activeTicketUpdateRunsByTicket = new Map<string, string>();
 
@@ -84,6 +108,95 @@ const activeRunIdForTicket = (projectPath: string, ticketId: string): string | n
     if (run.projectPath === projectPath && run.ticketId === ticketId) return runId;
   }
   return null;
+};
+
+const activeImplementationRunCountForProject = (projectPath: string): number => {
+  let count = 0;
+  for (const run of activeRuns.values()) {
+    if (run.projectPath === projectPath) count += 1;
+  }
+  for (const run of startingRuns.values()) {
+    if (run.projectPath === projectPath) count += 1;
+  }
+  return count;
+};
+
+const schedulerRetryPolicy = Schedule.addDelay(Schedule.recurs(2), () => Effect.succeed("25 millis"));
+
+const startProjectSchedulerLoop = (scheduler: ProjectScheduler): void => {
+  if (scheduler.loopStarted) return;
+  scheduler.loopStarted = true;
+  void (async () => {
+    for (;;) {
+      await runBackendEffect(Queue.take(scheduler.wakeQueue));
+      try {
+        await runBackendEffect(Effect.retry(fromPromise(() => drainProjectScheduler(scheduler.projectPath)), schedulerRetryPolicy));
+      } catch (error) {
+        await logError("codex:scheduler", "queue drain failed", error, { projectPath: scheduler.projectPath });
+      }
+    }
+  })().catch((error) => {
+    scheduler.loopStarted = false;
+    void logError("codex:scheduler", "scheduler loop stopped", error, { projectPath: scheduler.projectPath });
+  });
+};
+
+const getProjectScheduler = async (projectPath: string): Promise<ProjectScheduler> => {
+  const resolvedProjectPath = pathResolve(projectPath);
+  const existing = projectSchedulers.get(resolvedProjectPath);
+  if (existing) return existing;
+
+  const created = (async (): Promise<ProjectScheduler> => {
+    const wakeQueue = await runBackendEffect(Queue.unbounded<void>());
+    const scheduler: ProjectScheduler = {
+      projectPath: resolvedProjectPath,
+      wakeQueue,
+      loopStarted: false
+    };
+    startProjectSchedulerLoop(scheduler);
+    return scheduler;
+  })();
+  projectSchedulers.set(resolvedProjectPath, created);
+  return created;
+};
+
+const wakeProjectScheduler = async (projectPath: string): Promise<void> => {
+  const scheduler = await getProjectScheduler(projectPath);
+  startProjectSchedulerLoop(scheduler);
+  await runBackendEffect(Queue.offer(scheduler.wakeQueue, undefined));
+};
+
+const wakeProjectSchedulerSoon = (projectPath: string): void => {
+  void wakeProjectScheduler(projectPath).catch((error) =>
+    logError("codex:scheduler", "failed to wake queue", error, { projectPath })
+  );
+};
+
+const drainProjectScheduler = async (projectPath: string): Promise<void> => {
+  const config = await readProjectConfig(projectPath);
+  const concurrency = Math.max(1, config.settings.agentConcurrency);
+
+  while (activeImplementationRunCountForProject(projectPath) < concurrency) {
+    const next = (await listQueuedReadyTickets(projectPath)).find((ticket) => {
+      const runId = ticket.lastRunId;
+      return Boolean(runId && !activeRuns.has(runId) && !startingRuns.has(runId));
+    });
+    if (!next?.lastRunId) return;
+
+    const runId = next.lastRunId;
+    const intent =
+      queuedRunIntents.get(runId) ??
+      ({
+        input: { projectPath, ticketId: next.id },
+        resume: Boolean(next.codexThreadId),
+        dependencies: {}
+      } satisfies QueuedRunIntent);
+    queuedRunIntents.set(runId, intent);
+    startingRuns.set(runId, { projectPath, ticketId: next.id });
+    void startQueuedRunNow(intent.input, intent.resume, runId, intent.dependencies).catch((error) =>
+      logError("codex:run", "queued run failed outside stream", error, { projectPath, ticketId: next.id, runId })
+    );
+  }
 };
 
 const codexEnv = (): Record<string, string> => {
@@ -113,7 +226,12 @@ export const createCodex = async (dependencies: CreateCodexDependencies = {}): P
   return (dependencies.createClient ?? ((codexOptions) => new Codex(codexOptions)))(options);
 };
 
-export type CodexRunThread = Pick<Thread, "id" | "runStreamed">;
+export type CodexRunInput = Input;
+
+export type CodexRunThread = {
+  id: Thread["id"];
+  runStreamed: (input: CodexRunInput, turnOptions?: Parameters<Thread["runStreamed"]>[1]) => ReturnType<Thread["runStreamed"]>;
+};
 
 export type CodexRunClient = {
   startThread: (options: ThreadOptions) => CodexRunThread;
@@ -149,22 +267,46 @@ const ticketUpdateDependencyLayer = (
   dependencies: TicketUpdateDependencies = {}
 ): Layer.Layer<TicketUpdateDependencyServices> => Layer.succeed(TicketUpdateDependencyService)(dependencies);
 
-const threadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => {
-  const config = await readProjectConfig(projectPath);
-  const git = await isGitRepository(projectPath);
+const projectThreadOptionsContext = async (projectPath: string): Promise<{
+  config: Awaited<ReturnType<typeof readProjectConfig>>;
+  git: boolean;
+}> => {
+  const [config, git] = await Promise.all([readProjectConfig(projectPath), isGitRepository(projectPath)]);
+  return { config, git };
+};
+
+const sharedThreadOptionsForProjectContext = (
+  projectPath: string,
+  { config, git }: Awaited<ReturnType<typeof projectThreadOptionsContext>>
+): ThreadOptions => {
   return {
     workingDirectory: projectPath,
     model: config.settings.defaultModel ?? undefined,
+    modelReasoningEffort: config.settings.defaultModelReasoningEffort ?? undefined,
     approvalPolicy: config.settings.defaultApprovalPolicy,
     sandboxMode: config.settings.defaultSandboxMode,
     skipGitRepoCheck: config.settings.allowNonGitCodexRuns || !git,
-    networkAccessEnabled: false,
-    webSearchMode: "disabled"
+    additionalDirectories: [...config.settings.codexAdditionalDirectories]
+  };
+};
+
+const boundedThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => ({
+  ...sharedThreadOptionsForProjectContext(projectPath, await projectThreadOptionsContext(projectPath)),
+  networkAccessEnabled: false,
+  webSearchMode: "disabled"
+});
+
+const implementationThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => {
+  const context = await projectThreadOptionsContext(projectPath);
+  return {
+    ...sharedThreadOptionsForProjectContext(projectPath, context),
+    networkAccessEnabled: context.config.settings.codexNetworkAccessEnabled,
+    webSearchMode: context.config.settings.codexWebSearchMode
   };
 };
 
 const ticketUpdateThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => ({
-  ...(await threadOptionsForProject(projectPath)),
+  ...(await boundedThreadOptionsForProject(projectPath)),
   approvalPolicy: "never",
   sandboxMode: "read-only",
   networkAccessEnabled: false,
@@ -564,7 +706,7 @@ const createTicketDraftPromise = async (
       limits: research.metadata.limits
     });
     const codex = dependencies.createCodexClient?.() ?? (await createCodex());
-    const thread = codex.startThread(await threadOptionsForProject(projectPath));
+    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath));
     const ticketTypeGuidance =
       preferredTicketType === "epic"
         ? "The user selected Epic mode. Return ticketType \"epic\" and decompose the work into normal task subtickets."
@@ -1109,11 +1251,27 @@ const normalizeItemEvent = (
     return [{ type: "run.failed", message: item.message, finalStatus: "failed", timestamp }];
   }
 
+  if (item.type === "todo_list") {
+    return [
+      {
+        type: "todo.updated",
+        items: item.items.map((todoItem) => ({
+          text: todoItem.text,
+          completed: todoItem.completed
+        })),
+        timestamp
+      }
+    ];
+  }
+
   if (item.type === "mcp_tool_call") {
     return [
       {
-        type: "agent.message.delta",
-        text: `${item.server}.${item.tool} ${item.status}`,
+        type: "mcp.tool_call",
+        server: item.server,
+        tool: item.tool,
+        status: item.status,
+        ...(item.error?.message ? { error: item.error.message } : {}),
         timestamp
       }
     ];
@@ -1428,10 +1586,66 @@ Do not mark the ticket completed yourself. At the end, provide:
 Ticket:
 ${ticketMarkdown}`;
 
+const markdownImagePattern = /!\[[^\]\n]*\]\(([^)\n]+)\)/g;
+const urlSchemePattern = /^[a-z][a-z0-9+.-]*:/i;
+
+const normalizeMarkdownImageDestination = (destination: string): string | null => {
+  const trimmed = destination.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//") || urlSchemePattern.test(trimmed)) return null;
+
+  const unwrapped = trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1).trim() : trimmed;
+  if (!unwrapped || unwrapped.startsWith("#") || unwrapped.startsWith("//") || urlSchemePattern.test(unwrapped)) return null;
+
+  try {
+    return decodeURI(unwrapped);
+  } catch {
+    return unwrapped;
+  }
+};
+
+const isPathInsideDirectory = (directory: string, target: string): boolean => {
+  const relative = pathRelative(directory, target);
+  return relative === "" || (!relative.startsWith("..") && !pathIsAbsolute(relative));
+};
+
+export const extractLocalMarkdownImagePaths = (projectPath: string, ticketMarkdown: string): string[] => {
+  const projectRoot = pathResolve(projectPath);
+  const imagePaths: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of ticketMarkdown.matchAll(markdownImagePattern)) {
+    const destination = normalizeMarkdownImageDestination(match[1] ?? "");
+    if (!destination) continue;
+
+    const absolutePath = pathResolve(projectRoot, destination);
+    if (!isPathInsideDirectory(projectRoot, absolutePath) || seen.has(absolutePath)) continue;
+    seen.add(absolutePath);
+    imagePaths.push(absolutePath);
+  }
+
+  return imagePaths;
+};
+
+export const buildExecutionInput = (
+  projectPath: string,
+  ticketMarkdown: string,
+  clarifications: ClarificationQuestion[]
+): CodexRunInput => {
+  const prompt = buildExecutionPrompt(ticketMarkdown, clarifications);
+  const imagePaths = extractLocalMarkdownImagePaths(projectPath, ticketMarkdown);
+  if (imagePaths.length === 0) return prompt;
+
+  return [
+    { type: "text", text: prompt },
+    ...imagePaths.map((imagePath) => ({ type: "local_image" as const, path: imagePath }))
+  ];
+};
+
 type TicketRunStatePatch = Partial<{
   codexThreadId: string | null;
   runStatus: RunStatus;
   lastRunId: string | null;
+  lastRunStartedAt: string | null;
   status: string;
   markdown: string;
 }>;
@@ -1461,6 +1675,7 @@ const updateTicketRunStateEffect = (
           codexThreadId: patch.codexThreadId !== undefined ? patch.codexThreadId : ticket.frontMatter.codexThreadId,
           runStatus: patch.runStatus ?? ticket.frontMatter.runStatus,
           lastRunId: patch.lastRunId !== undefined ? patch.lastRunId : ticket.frontMatter.lastRunId,
+          lastRunStartedAt: patch.lastRunStartedAt !== undefined ? patch.lastRunStartedAt : ticket.frontMatter.lastRunStartedAt,
           status: patch.status ?? ticket.frontMatter.status
         }
       })
@@ -1473,7 +1688,14 @@ const updateTicketRunState = (
   patch: TicketRunStatePatch
 ): Promise<void> => runBackendEffect(updateTicketRunStateEffect(projectPath, ticketId, patch));
 
-export const preflightCodexRun = async (input: StartRunInput): Promise<CodexRunPreflightResult> => {
+type CodexRunPreflightOptions = {
+  allowQueuedRunId?: string | null;
+};
+
+const preflightCodexRunInternal = async (
+  input: StartRunInput,
+  options: CodexRunPreflightOptions = {}
+): Promise<CodexRunPreflightResult> => {
   const projectPath = pathResolve(input.projectPath);
   const ticketId = input.ticketId;
   const errors: string[] = [];
@@ -1551,6 +1773,8 @@ export const preflightCodexRun = async (input: StartRunInput): Promise<CodexRunP
     const activeRunId = activeRunIdForTicket(projectPath, ticketId);
     if (activeRunId) {
       errors.push(`Ticket already has an active Codex run: ${activeRunId}.`);
+    } else if (ticket.frontMatter.runStatus === "queued" && ticket.frontMatter.lastRunId !== options.allowQueuedRunId) {
+      errors.push("Ticket is already queued for a Codex run.");
     } else if (ticket.frontMatter.runStatus === "drafting") {
       errors.push("Codex is still drafting this ticket. Wait for the draft to finish before starting a run.");
     } else if (ticket.frontMatter.runStatus === "running") {
@@ -1581,52 +1805,109 @@ export const preflightCodexRun = async (input: StartRunInput): Promise<CodexRunP
   };
 };
 
-const beginRunPromise = async (
+export const preflightCodexRun = (input: StartRunInput): Promise<CodexRunPreflightResult> => preflightCodexRunInternal(input);
+
+const startQueuedRunNow = async (
   input: StartRunInput,
   resume: boolean,
+  runId: string,
   dependencies: CodexRunDependencies = {}
-): Promise<CodexRunStartResult> => {
+): Promise<CodexRunStartResult | null> => {
   const projectPath = pathResolve(input.projectPath);
   const ticketId = input.ticketId;
   const freshThread = input.freshThread;
   const runEventSink = dependencies.runEventSink;
-  await logInfo("codex:run", "starting run", { projectPath, ticketId, resume, freshThread });
-  const preflight = await preflightCodexRun(input);
-  if (!preflight.ok) {
-    throw new Error(preflight.errors.join(" "));
+  let currentThreadId = `pending_${runId}`;
+  await logInfo("codex:run", "starting queued run", { projectPath, ticketId, runId, resume, freshThread });
+  if (!queuedRunIntents.has(runId)) {
+    startingRuns.delete(runId);
+    return null;
   }
-  const config = await readProjectConfig(projectPath);
-
+  const preflight = await preflightCodexRunInternal(input, { allowQueuedRunId: runId });
+  if (!preflight.ok) {
+    startingRuns.delete(runId);
+    queuedRunIntents.delete(runId);
+    const message = preflight.errors.join(" ");
+    await updateTicketRunState(projectPath, ticketId, { runStatus: "failed" });
+    await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
+      type: "run.failed",
+      message,
+      finalStatus: "failed",
+      timestamp: nowIso()
+    });
+    wakeProjectSchedulerSoon(projectPath);
+    throw new Error(message);
+  }
+  if (!queuedRunIntents.has(runId)) {
+    startingRuns.delete(runId);
+    return null;
+  }
+  let config: Awaited<ReturnType<typeof readProjectConfig>>;
   let ticket: Awaited<ReturnType<typeof readTicket>>;
+  let existingThreadId: string | null;
+  let thread: CodexRunThread;
+  let executionInput: CodexRunInput;
+  let status: string;
+  const abortController = new AbortController();
+  const outputOffsets = new Map<string, number>();
   try {
+    config = await readProjectConfig(projectPath);
     ticket = await readTicket(projectPath, ticketId);
-  } catch (error) {
-    if (isTicketNotFoundError(error)) {
-      await logWarn("codex:run", "ticket file missing", { projectPath, ticketId, filePath: error.filePath });
+    const clarifications = await readClarificationQuestions(projectPath, ticketId);
+    const options = await implementationThreadOptionsForProject(projectPath);
+    existingThreadId = resume && !freshThread ? ticket.frontMatter.codexThreadId : null;
+    executionInput = buildExecutionInput(projectPath, ticket.markdown, clarifications);
+    status = config.columns.some((column) => column.id === RELAY_IN_PROGRESS_STATUS) ? RELAY_IN_PROGRESS_STATUS : ticket.frontMatter.status;
+    if (!queuedRunIntents.has(runId)) {
+      startingRuns.delete(runId);
+      return null;
     }
+    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
+    thread = existingThreadId ? codex.resumeThread(existingThreadId, options) : codex.startThread(options);
+    currentThreadId = existingThreadId ?? thread.id ?? currentThreadId;
+  } catch (error) {
+    startingRuns.delete(runId);
+    await logError("codex:run", "queued run failed before active registration", error, { projectPath, ticketId, runId });
+    try {
+      await updateTicketRunState(projectPath, ticketId, { runStatus: "failed" });
+      await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
+        type: "run.failed",
+        message: errorMessage(error, "Codex run failed before streaming started."),
+        finalStatus: "failed",
+        timestamp: nowIso()
+      });
+    } catch (cleanupError) {
+      await logWarn("codex:run", "failed to persist queued startup failure", {
+        projectPath,
+        ticketId,
+        runId,
+        error: errorMessage(cleanupError, "State update failed.")
+      });
+    }
+    wakeProjectSchedulerSoon(projectPath);
     throw error;
   }
-  const clarifications = await readClarificationQuestions(projectPath, ticketId);
-  const codex = dependencies.createCodexClient?.() ?? (await createCodex());
-  const options = await threadOptionsForProject(projectPath);
-  const runId = dependencies.createRunId?.() ?? newId("run");
-  const existingThreadId = resume && !freshThread ? ticket.frontMatter.codexThreadId : null;
-  const thread = existingThreadId ? codex.resumeThread(existingThreadId, options) : codex.startThread(options);
-  const abortController = new AbortController();
-  const prompt = buildExecutionPrompt(ticket.markdown, clarifications);
-  const outputOffsets = new Map<string, number>();
-  const status = config.columns.some((column) => column.id === RELAY_IN_PROGRESS_STATUS) ? RELAY_IN_PROGRESS_STATUS : ticket.frontMatter.status;
-  let currentThreadId = existingThreadId ?? thread.id ?? `pending_${runId}`;
   let streamed: Awaited<ReturnType<CodexRunThread["runStreamed"]>>;
+  if (!queuedRunIntents.has(runId)) {
+    startingRuns.delete(runId);
+    return null;
+  }
+  startingRuns.delete(runId);
   activeRuns.set(runId, {
     abortController,
     ticketId,
     projectPath
   });
+  queuedRunIntents.delete(runId);
+  const runStartedAt = nowIso();
   try {
+    if (abortController.signal.aborted) {
+      throw new Error("Codex run was cancelled before streaming started.");
+    }
     await updateTicketRunState(projectPath, ticketId, {
       runStatus: "running",
-      lastRunId: runId
+      lastRunId: runId,
+      lastRunStartedAt: runStartedAt
     });
     const transitioned = await transitionTicketStatus(projectPath, ticketId, status, {
       actor: "codex",
@@ -1644,11 +1925,11 @@ const beginRunPromise = async (
         timestamp: nowIso()
       });
     }
-    streamed = await thread.runStreamed(prompt, { signal: abortController.signal });
+    streamed = await thread.runStreamed(executionInput, { signal: abortController.signal });
   } catch (error) {
     await logError("codex:run", "run failed before streaming started", error, { projectPath, ticketId, runId, threadId: currentThreadId });
     try {
-      await updateTicketRunState(projectPath, ticketId, { runStatus: "failed" });
+      await updateTicketRunState(projectPath, ticketId, { runStatus: abortController.signal.aborted ? "cancelled" : "failed" });
     } catch (cleanupError) {
       await logWarn("codex:run", "failed to persist startup failure state", {
         projectPath,
@@ -1661,7 +1942,7 @@ const beginRunPromise = async (
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
         message: errorMessage(error, "Codex run failed before streaming started."),
-        finalStatus: "failed",
+        finalStatus: abortController.signal.aborted ? "cancelled" : "failed",
         timestamp: nowIso()
       });
     } catch (emitError) {
@@ -1673,6 +1954,8 @@ const beginRunPromise = async (
       });
     }
     activeRuns.delete(runId);
+    startingRuns.delete(runId);
+    wakeProjectSchedulerSoon(projectPath);
     throw error;
   }
   const started = new Promise<CodexRunStartResult>((resolve) => {
@@ -1680,7 +1963,7 @@ const beginRunPromise = async (
     const resolveOnce = (threadId: string): void => {
       if (!resolved) {
         resolved = true;
-        resolve({ runId, threadId });
+        resolve({ state: "started", runId, threadId });
       }
     };
 
@@ -1703,7 +1986,8 @@ const beginRunPromise = async (
             await updateTicketRunState(projectPath, ticketId, {
               codexThreadId: currentThreadId,
               runStatus: "running",
-              lastRunId: runId
+              lastRunId: runId,
+              lastRunStartedAt: runStartedAt
             });
             await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
               type: "run.started",
@@ -1828,6 +2112,8 @@ const beginRunPromise = async (
         resolveOnce(currentThreadId);
       } finally {
         activeRuns.delete(runId);
+        startingRuns.delete(runId);
+        wakeProjectSchedulerSoon(projectPath);
       }
     })();
   });
@@ -1835,28 +2121,127 @@ const beginRunPromise = async (
   return started;
 };
 
-const beginRunEffect = (
+const enqueueCodexRunPromise = async (
+  input: StartRunInput,
+  resume: boolean,
+  dependencies: CodexRunDependencies = {}
+): Promise<CodexRunStartResult> => {
+  const projectPath = pathResolve(input.projectPath);
+  const ticketId = input.ticketId;
+  const normalizedInput: StartRunInput = { ...input, projectPath };
+  await logInfo("codex:run", "queueing run", { projectPath, ticketId, resume, freshThread: input.freshThread });
+  const preflight = await preflightCodexRunInternal(normalizedInput);
+  if (!preflight.ok) {
+    throw new Error(preflight.errors.join(" "));
+  }
+
+  const runId = dependencies.createRunId?.() ?? newId("run");
+  queuedRunIntents.set(runId, {
+    input: normalizedInput,
+    resume,
+    dependencies
+  });
+  try {
+    await setTicketQueued(projectPath, ticketId, runId);
+  } catch (error) {
+    queuedRunIntents.delete(runId);
+    throw error;
+  }
+  wakeProjectSchedulerSoon(projectPath);
+  return { state: "queued", runId, threadId: null };
+};
+
+const enqueueCodexRunEffect = (
   input: StartRunInput,
   resume: boolean
 ): BackendEffect<CodexRunStartResult, unknown, BackendServices | CodexRunDependencyServices> =>
   Effect.gen(function*() {
     const dependencies = yield* CodexRunDependencyService;
-    return yield* fromPromise(() => beginRunPromise(input, resume, dependencies));
+    return yield* fromPromise(() => enqueueCodexRunPromise(input, resume, dependencies));
   });
 
 export const startCodexRun = (
   input: StartRunInput,
   dependencies?: CodexRunDependencies
 ): Promise<CodexRunStartResult> =>
-  runBackendEffect(Effect.provide(beginRunEffect(input, false), codexRunDependencyLayer(dependencies)));
+  runBackendEffect(Effect.provide(enqueueCodexRunEffect(input, false), codexRunDependencyLayer(dependencies)));
 
 export const resumeCodexRun = (
   input: StartRunInput,
   dependencies?: CodexRunDependencies
 ): Promise<CodexRunStartResult> =>
-  runBackendEffect(Effect.provide(beginRunEffect(input, true), codexRunDependencyLayer(dependencies)));
+  runBackendEffect(Effect.provide(enqueueCodexRunEffect(input, true), codexRunDependencyLayer(dependencies)));
+
+export const reconcileTicketQueueState = async (
+  projectPath: string,
+  ticketId: string,
+  dependencies: CodexRunDependencies = {}
+): Promise<TicketRecord> => {
+  const resolvedProjectPath = pathResolve(projectPath);
+  const ticket = await readTicket(resolvedProjectPath, ticketId);
+
+  if (ticket.frontMatter.status === RELAY_READY_STATUS) {
+    if (ticket.frontMatter.runStatus === "queued" && ticket.frontMatter.lastRunId) {
+      if (!queuedRunIntents.has(ticket.frontMatter.lastRunId)) {
+        queuedRunIntents.set(ticket.frontMatter.lastRunId, {
+          input: { projectPath: resolvedProjectPath, ticketId },
+          resume: Boolean(ticket.frontMatter.codexThreadId),
+          dependencies
+        });
+      }
+      wakeProjectSchedulerSoon(resolvedProjectPath);
+      return ticket;
+    }
+    if (ticket.frontMatter.runStatus === "running" || ticket.frontMatter.runStatus === "drafting") return ticket;
+
+    const preflight = await preflightCodexRunInternal({ projectPath: resolvedProjectPath, ticketId });
+    if (!preflight.ok) {
+      throw new Error(preflight.errors.join(" "));
+    }
+    const runId = dependencies.createRunId?.() ?? newId("run");
+    queuedRunIntents.set(runId, {
+      input: { projectPath: resolvedProjectPath, ticketId },
+      resume: Boolean(ticket.frontMatter.codexThreadId),
+      dependencies
+    });
+    try {
+      const queued = await setTicketQueued(resolvedProjectPath, ticketId, runId);
+      wakeProjectSchedulerSoon(resolvedProjectPath);
+      return queued;
+    } catch (error) {
+      queuedRunIntents.delete(runId);
+      throw error;
+    }
+  }
+
+  if (ticket.frontMatter.runStatus === "queued" && ticket.frontMatter.lastRunId) {
+    queuedRunIntents.delete(ticket.frontMatter.lastRunId);
+    return clearQueuedTicket(resolvedProjectPath, ticketId, null, ticket.frontMatter.lastRunId);
+  }
+
+  return ticket;
+};
 
 export const cancelCodexRun = async (runId: string): Promise<void> => {
+  const queued = queuedRunIntents.get(runId);
+  if (queued) {
+    queuedRunIntents.delete(runId);
+    startingRuns.delete(runId);
+    const active = activeRuns.get(runId);
+    if (active) {
+      active.abortController.abort();
+      await updateTicketRunState(active.projectPath, active.ticketId, { runStatus: "cancelled" });
+      return;
+    }
+    const projectPath = pathResolve(queued.input.projectPath);
+    const targetStatus = (await readProjectConfig(projectPath)).columns.some((column) => column.id === RELAY_TODO_STATUS)
+      ? RELAY_TODO_STATUS
+      : null;
+    await clearQueuedTicket(projectPath, queued.input.ticketId, targetStatus, runId);
+    wakeProjectSchedulerSoon(projectPath);
+    return;
+  }
+
   const run = activeRuns.get(runId);
   if (!run) return;
   run.abortController.abort();

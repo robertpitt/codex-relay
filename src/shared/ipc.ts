@@ -19,6 +19,8 @@ import type {
   RendererRunEvent,
   RunSummary,
   StartRunInput,
+  TicketAttachmentSaveInput,
+  TicketAttachmentSaveResult,
   TicketCreateInput,
   TicketDraftStartResult,
   TicketMoveInput,
@@ -45,6 +47,7 @@ export type RelayIpcContract = {
   "ticket:references": { args: [projectPath: string]; result: TicketReferenceCandidate[] };
   "ticket:read": { args: [projectPath: string, ticketId: string]; result: TicketRecord };
   "ticket:save": { args: [input: TicketSaveInput]; result: TicketRecord };
+  "ticket:saveAttachment": { args: [input: TicketAttachmentSaveInput]; result: TicketAttachmentSaveResult };
   "ticket:move": { args: [input: TicketMoveInput]; result: BoardSnapshot };
   "ticket:clarifications": { args: [projectPath: string, ticketId: string]; result: ClarificationQuestion[] };
   "ticket:answerClarification": { args: [input: ClarificationAnswerInput]; result: ClarificationQuestion };
@@ -83,6 +86,7 @@ export const relayIpcChannels = {
   ticketReferences: "ticket:references",
   ticketRead: "ticket:read",
   ticketSave: "ticket:save",
+  ticketSaveAttachment: "ticket:saveAttachment",
   ticketMove: "ticket:move",
   ticketClarifications: "ticket:clarifications",
   ticketAnswerClarification: "ticket:answerClarification",
