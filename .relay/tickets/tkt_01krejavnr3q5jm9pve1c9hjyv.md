@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krejavnr3q5jm9pve1c9hjyv
 title: Redesign ticket detail as near-full-screen two-column modal
 ticketType: task
-status: todo
-position: 20000
+status: completed
+position: 56000
 priority: high
 labels:
   - frontend
@@ -15,11 +15,11 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-12T17:04:12.984Z'
-updatedAt: '2026-05-12T17:11:38.829Z'
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krejavm8n64cjhp2sb1q8x1j
-lastRunStartedAt: null
+updatedAt: '2026-05-12T19:27:03.164Z'
+codexThreadId: 019e1d8b-7eb3-7222-b830-059abb8470a6
+runStatus: cancelled
+lastRunId: run_01kretd667k3ynpqdn9ktxxq7y
+lastRunStartedAt: '2026-05-12T19:25:18.114Z'
 ---
 # Redesign ticket detail as near-full-screen two-column modal
 
@@ -152,5 +152,39 @@ Opening a ticket currently renders a constrained right-side detail panel. Redesi
 - Limitation: Code search stopped after scanning 160 candidate files.
 
 ## Codex Handoff
+
+### 5/12/2026, 8:15:47 PM
+
+Implemented the ticket detail redesign.
+
+**Summary**
+- Reworked `TicketDetail` from a right slide-out into a modal/backdrop dialog with roughly 10% viewport margins.
+- Added a two-column desktop layout: primary title/actions/warnings/markdown on the left, metadata/blockers/relationships/clarifications/agent panels/danger actions on the right.
+- Added `TicketMarkdownTabs`, defaulting to Preview with `MarkdownBlock`; Edit renders the existing markdown textarea with the same state, drag/drop attachment handlers, disabled states, and save path.
+- Added responsive CSS to collapse the modal into one scrollable column on narrow screens.
+- Added focused static renderer tests for preview-default and edit-source markdown behavior.
+
+**Files Changed**
+- [src/renderer/src/App.tsx](/Users/robertpitt/Projects/relay/src/renderer/src/App.tsx)
+- [src/renderer/src/styles.css](/Users/robertpitt/Projects/relay/src/renderer/src/styles.css)
+- [tests/ticket-draft-ui.test.tsx](/Users/robertpitt/Projects/relay/tests/ticket-draft-ui.test.tsx)
+
+**Commands Run**
+- `sed`, `grep`, `git diff`, `git status`, `find`, `tail` for inspection
+- `npm test`
+- `npm run typecheck`
+
+**Tests**
+- `npm test`: passed, 137/137. There is an existing esbuild warning about `import.meta` with CJS output.
+- `npm run typecheck`: passed.
+- Initial validation caught one new test assertion issue and one optional prop typing issue; both were fixed before the final passing run.
+
+**Subagent Usage**
+- none used
+
+**Remaining Risks / Follow-Up**
+- I did not run interactive `npm run dev` manual Electron validation, so final visual inspection in the app is still the main follow-up.
+- The worktree already had unrelated dirty files and `.relay` artifacts; I left those untouched.
+
 
 No Codex run has been started.

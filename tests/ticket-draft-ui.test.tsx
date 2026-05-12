@@ -4,15 +4,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   activeRunElapsedLabel,
   CreateTicketDraftMessage,
+  DraftIntakeQuestionsPanel,
   DraftingTicketDetailLoading,
   emptyColumnMessage,
   RepositoryChatPanelContent,
   TicketCardContent,
+  TicketMarkdownTabs,
   TicketSuggestionsModalContent,
   TicketRunElapsedPill,
   TicketRunStatusPill
 } from "../src/renderer/src/App";
-import { DEFAULT_COLUMNS, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
+import { DEFAULT_COLUMNS, type DraftIntakeResult, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
 
 const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   schemaVersion: 1,
@@ -154,6 +156,49 @@ test("drafting ticket detail loading state hides placeholder draft content", () 
   assert.doesNotMatch(markup, /Preview/);
 });
 
+test("ticket markdown tabs render preview by default without source textarea", () => {
+  const markup = renderToStaticMarkup(
+    <TicketMarkdownTabs markdown={"# Ticket body\n\nRun **focused** validation."} onModeChange={() => undefined} />
+  );
+
+  assert.match(markup, /role="tablist"/);
+  assert.match(markup, /id="ticket-markdown-preview-tab"[^>]*aria-selected="true"/);
+  assert.match(markup, /ticket-markdown-preview-panel collapsed/);
+  assert.match(markup, /aria-label="Expand markdown preview"/);
+  assert.match(markup, /aria-expanded="false"/);
+  assert.match(markup, /ticket-markdown-preview/);
+  assert.match(markup, /Ticket body/);
+  assert.match(markup, /focused/);
+  assert.doesNotMatch(markup, /detail-markdown/);
+  assert.doesNotMatch(markup, /<textarea/);
+});
+
+test("ticket markdown tabs render expanded preview mode", () => {
+  const markup = renderToStaticMarkup(
+    <TicketMarkdownTabs markdown={"# Ticket body\n\nRun **focused** validation."} previewExpanded onModeChange={() => undefined} />
+  );
+
+  assert.match(markup, /ticket-markdown-tabs preview-expanded/);
+  assert.match(markup, /ticket-markdown-preview-panel expanded/);
+  assert.match(markup, /aria-label="Collapse markdown preview"/);
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /Ticket body/);
+  assert.doesNotMatch(markup, /detail-markdown/);
+  assert.doesNotMatch(markup, /<textarea/);
+});
+
+test("ticket markdown tabs render source editor without simultaneous preview", () => {
+  const markup = renderToStaticMarkup(
+    <TicketMarkdownTabs mode="edit" markdown={"# Ticket body\n\nRun **focused** validation."} onModeChange={() => undefined} />
+  );
+
+  assert.match(markup, /id="ticket-markdown-edit-tab"[^>]*aria-selected="true"/);
+  assert.match(markup, /detail-markdown/);
+  assert.match(markup, /# Ticket body/);
+  assert.doesNotMatch(markup, /class="markdown-block ticket-markdown-preview/);
+  assert.doesNotMatch(markup, /<strong>focused<\/strong>/);
+});
+
 const suggestion: TicketSuggestion = {
   title: "Tighten board keyboard focus",
   priority: "medium",
@@ -252,6 +297,38 @@ test("create ticket draft messages expose status and alert roles", () => {
   assert.match(errorMarkup, /role="alert"/);
   assert.doesNotMatch(errorMarkup, /spin/);
   assert.match(errorMarkup, /Codex draft failed/);
+});
+
+test("draft intake question panel renders editable recommended answers", () => {
+  const intake: DraftIntakeResult = {
+    scope: "product_feature",
+    confidence: 0.74,
+    knownFacts: ["Existing tickets mention the settings dialog."],
+    relatedTicketIds: ["tkt_settings"],
+    questions: [
+      {
+        question: "Should this preserve the current settings layout?",
+        whyItMatters: "It keeps the scope to a feature change instead of a redesign.",
+        recommendedAnswer: "Preserve the layout and add only the new control."
+      }
+    ]
+  };
+
+  const markup = renderToStaticMarkup(
+    <DraftIntakeQuestionsPanel
+      intake={intake}
+      answerDrafts={{ 0: intake.questions[0].recommendedAnswer }}
+      onAnswerChange={() => undefined}
+      onContinue={() => undefined}
+    />
+  );
+
+  assert.match(markup, /Draft intake questions/);
+  assert.match(markup, /Product Feature intake/);
+  assert.match(markup, /Existing tickets mention the settings dialog/);
+  assert.match(markup, /Should this preserve the current settings layout/);
+  assert.match(markup, /Preserve the layout and add only the new control/);
+  assert.match(markup, /Continue Draft/);
 });
 
 test("repository chat panel content renders transcript, pending state, and controls", () => {

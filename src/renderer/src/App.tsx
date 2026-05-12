@@ -15,7 +15,9 @@ import {
   FolderOpen,
   FolderPlus,
   Loader2,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -29,13 +31,17 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, DragEvent, KeyboardEvent, ReactElement } from "react";
+import type { CSSProperties, DragEvent, KeyboardEvent, ReactElement, Ref } from "react";
 import { RELAY_IN_PROGRESS_STATUS } from "@shared/types";
 import type {
   BoardSnapshot,
   ClarificationQuestion,
   CodexRunPreflightResult,
   CodexStatus,
+  DraftIntakeAnswer,
+  DraftIntakeQuestion,
+  DraftIntakeResult,
+  DraftScope,
   GitMetadata,
   ProjectSummary,
   RelayApi,
@@ -96,6 +102,7 @@ type Toast = { kind: "info" | "error" | "success"; message: string } | null;
 type LocalAgentProgress = { status: RunStatus; startedAt: string; endedAt?: string | null };
 type TicketSuggestionCreateState = "idle" | "creating" | "created";
 type TicketSuggestionLoadState = "loading" | "error" | "ready";
+type TicketMarkdownMode = "preview" | "edit";
 export type RepositoryChatMessage = { id: string; role: "user" | "assistant"; text: string };
 type DraftMessageKind = "info" | "error";
 type ActiveTicketReferenceMention = {
@@ -180,6 +187,26 @@ export const getTicketReferenceMenuLayout = ({
 
 const priorityOptions: TicketPriority[] = ["low", "medium", "high", "urgent"];
 const ticketTypeOptions: TicketType[] = ["task", "epic"];
+const draftScopeOptions: Array<"auto" | DraftScope> = ["auto", "quick_bug", "task", "product_feature", "rewrite", "epic"];
+
+const draftScopeLabel = (scope: "auto" | DraftScope): string => {
+  switch (scope) {
+    case "auto":
+      return "Auto";
+    case "quick_bug":
+      return "Quick Bug";
+    case "task":
+      return "Task";
+    case "product_feature":
+      return "Product Feature";
+    case "rewrite":
+      return "Rewrite";
+    case "epic":
+      return "Epic";
+  }
+};
+
+const ticketTypeForDraftScope = (scope: DraftScope, fallback: TicketType): TicketType => (scope === "epic" ? "epic" : fallback === "epic" ? "epic" : "task");
 
 const initialCodexStatus: CodexStatus = {
   sdkAvailable: false,
@@ -283,6 +310,167 @@ export function CreateTicketDraftMessage({
       {busy && <Loader2 className="spin" size={15} />}
       <span>{message}</span>
     </div>
+  );
+}
+
+export function DraftIntakeQuestionsPanel({
+  intake,
+  answerDrafts,
+  onAnswerChange,
+  onContinue,
+  busy
+}: {
+  intake: DraftIntakeResult;
+  answerDrafts: Record<number, string>;
+  onAnswerChange: (index: number, value: string) => void;
+  onContinue: () => void;
+  busy?: boolean;
+}): ReactElement {
+  const unanswered = intake.questions.some((question, index) => !(answerDrafts[index] ?? question.recommendedAnswer).trim());
+  return (
+    <section className="draft-intake-panel" aria-label="Draft intake questions">
+      <header>
+        <div>
+          <h3>{draftScopeLabel(intake.scope)} intake</h3>
+          <p>Answer the blockers before Relay writes the ticket draft.</p>
+        </div>
+        <span>{Math.round(intake.confidence * 100)}% confidence</span>
+      </header>
+      {intake.knownFacts.length > 0 && (
+        <div className="draft-intake-facts">
+          {intake.knownFacts.map((fact) => (
+            <span key={fact}>{fact}</span>
+          ))}
+        </div>
+      )}
+      <div className="draft-intake-questions">
+        {intake.questions.map((question: DraftIntakeQuestion, index) => (
+          <article className="draft-intake-question" key={`${question.question}-${index}`}>
+            <h4>{question.question}</h4>
+            <p>{question.whyItMatters}</p>
+            <label className="field">
+              <span>Recommended answer</span>
+              <textarea value={answerDrafts[index] ?? question.recommendedAnswer} onChange={(event) => onAnswerChange(index, event.target.value)} />
+            </label>
+          </article>
+        ))}
+      </div>
+      <button className="primary-button" onClick={onContinue} disabled={busy || unanswered}>
+        {busy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+        Continue Draft
+      </button>
+    </section>
+  );
+}
+
+export function TicketMarkdownTabs({
+  mode = "preview",
+  markdown,
+  disabled = false,
+  attachmentDropActive = false,
+  previewExpanded = false,
+  editorRef,
+  onModeChange,
+  onPreviewExpandedChange,
+  onMarkdownChange,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onCopied,
+  onCopyError
+}: {
+  mode?: TicketMarkdownMode;
+  markdown: string;
+  disabled?: boolean;
+  attachmentDropActive?: boolean;
+  previewExpanded?: boolean;
+  editorRef?: Ref<HTMLTextAreaElement>;
+  onModeChange?: (mode: TicketMarkdownMode) => void;
+  onPreviewExpandedChange?: (expanded: boolean) => void;
+  onMarkdownChange?: (markdown: string) => void;
+  onDragOver?: (event: DragEvent<HTMLTextAreaElement>) => void;
+  onDragLeave?: (event: DragEvent<HTMLTextAreaElement>) => void;
+  onDrop?: (event: DragEvent<HTMLTextAreaElement>) => void;
+  onCopied?: (kind: "markdown" | "code") => void;
+  onCopyError?: (error: unknown) => void;
+}): ReactElement {
+  return (
+    <section
+      className={clsx("ticket-markdown-tabs", mode === "preview" && previewExpanded && "preview-expanded", mode === "edit" && "edit-mode")}
+      aria-label="Ticket markdown"
+    >
+      <div className="ticket-markdown-tablist" role="tablist" aria-label="Markdown view">
+        <button
+          type="button"
+          className={clsx("ticket-markdown-tab", mode === "preview" && "active")}
+          role="tab"
+          id="ticket-markdown-preview-tab"
+          aria-selected={mode === "preview"}
+          aria-controls="ticket-markdown-preview-panel"
+          onClick={() => onModeChange?.("preview")}
+        >
+          Preview
+        </button>
+        <button
+          type="button"
+          className={clsx("ticket-markdown-tab", mode === "edit" && "active")}
+          role="tab"
+          id="ticket-markdown-edit-tab"
+          aria-selected={mode === "edit"}
+          aria-controls="ticket-markdown-edit-panel"
+          onClick={() => onModeChange?.("edit")}
+        >
+          Edit
+        </button>
+      </div>
+
+      {mode === "preview" ? (
+        <div
+          className={clsx("ticket-markdown-tab-panel ticket-markdown-preview-panel", previewExpanded ? "expanded" : "collapsed")}
+          id="ticket-markdown-preview-panel"
+          role="tabpanel"
+          aria-labelledby="ticket-markdown-preview-tab"
+        >
+          <MarkdownBlock
+            className="ticket-markdown-preview"
+            source={markdown}
+            title="Preview"
+            onCopied={onCopied}
+            onCopyError={onCopyError}
+          />
+          <div className="ticket-markdown-preview-footer">
+            <button
+              type="button"
+              className="icon-button ticket-markdown-expand-button"
+              aria-label={previewExpanded ? "Collapse markdown preview" : "Expand markdown preview"}
+              aria-expanded={previewExpanded}
+              aria-controls="ticket-markdown-preview-panel"
+              title={previewExpanded ? "Collapse preview" : "Expand preview"}
+              onClick={() => onPreviewExpandedChange?.(!previewExpanded)}
+            >
+              {previewExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="ticket-markdown-tab-panel" id="ticket-markdown-edit-panel" role="tabpanel" aria-labelledby="ticket-markdown-edit-tab">
+          <label className="field ticket-markdown-editor-field">
+            <span>Markdown Source</span>
+            <textarea
+              ref={editorRef}
+              className={clsx("markdown-editor detail-markdown", attachmentDropActive && "drop-active")}
+              value={markdown}
+              onChange={(event) => onMarkdownChange?.(event.target.value)}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+              disabled={disabled}
+              readOnly={!onMarkdownChange}
+            />
+          </label>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1338,7 +1526,8 @@ function TicketSuggestionsModal({
       const result = await getRelayApi().ticket.createDraft({
         projectPath,
         idea: suggestion.request,
-        preferredTicketType: "task"
+        preferredTicketType: "task",
+        runIntake: true
       });
       if (!result.ok) {
         setCreateStates((current) => ({ ...current, [index]: "idle" }));
@@ -1406,6 +1595,7 @@ function CreateTicketModal({
 }): ReactElement {
   const [idea, setIdea] = useState("");
   const [ticketType, setTicketType] = useState<TicketType>("task");
+  const [draftScopeOverride, setDraftScopeOverride] = useState<"auto" | DraftScope>("auto");
   const [manualTitle, setManualTitle] = useState("");
   const [manualPriority, setManualPriority] = useState<TicketPriority>("medium");
   const [manualLabels, setManualLabels] = useState("");
@@ -1416,6 +1606,8 @@ function CreateTicketModal({
   const [draftMessageKind, setDraftMessageKind] = useState<DraftMessageKind>("info");
   const [draftFailure, setDraftFailure] = useState<TicketDraftErrorPayload | null>(null);
   const [draftProgress, setDraftProgress] = useState<LocalAgentProgress | null>(null);
+  const [draftIntake, setDraftIntake] = useState<DraftIntakeResult | null>(null);
+  const [intakeAnswerDrafts, setIntakeAnswerDrafts] = useState<Record<number, string>>({});
   const [ticketReferences, setTicketReferences] = useState<TicketReferenceCandidate[]>([]);
   const [ticketReferencesLoading, setTicketReferencesLoading] = useState(false);
   const [ticketReferencesError, setTicketReferencesError] = useState<string | null>(null);
@@ -1439,8 +1631,10 @@ function CreateTicketModal({
       manualTitle.trim().length > 0 ||
       manualLabels.trim().length > 0 ||
       ticketType !== "task" ||
+      draftScopeOverride !== "auto" ||
+      draftIntake !== null ||
       manualPriority !== "medium",
-    [busy, draft, idea, manualLabels, manualPriority, manualTitle, saving, ticketType]
+    [busy, draft, draftIntake, draftScopeOverride, idea, manualLabels, manualPriority, manualTitle, saving, ticketType]
   );
   const filteredTicketReferences = useMemo(
     () => filterTicketReferenceCandidates(ticketReferences, ticketReferenceMention?.token.query ?? ""),
@@ -1647,6 +1841,81 @@ function CreateTicketModal({
     );
   };
 
+  const intakeAnswersForDraft = (intake: DraftIntakeResult): DraftIntakeAnswer[] =>
+    intake.questions.map((question, index) => ({
+      question: question.question,
+      whyItMatters: question.whyItMatters,
+      recommendedAnswer: question.recommendedAnswer,
+      answer: (intakeAnswerDrafts[index] ?? question.recommendedAnswer).trim()
+    }));
+
+  const startBackgroundDraft = async (ideaSnapshot: string, requestSequence: number): Promise<boolean> => {
+    setDraftMessageKind("info");
+    setDraftMessage("Creating a pending ticket and starting Codex in the background.");
+    const scopeOverride = draftScopeOverride === "auto" ? undefined : draftScopeOverride;
+    const preferredTicketType = ticketTypeForDraftScope(scopeOverride ?? "task", ticketType);
+    const result = await getRelayApi().ticket.createDraft({
+      projectPath,
+      idea: ideaSnapshot,
+      preferredTicketType,
+      draftScope: scopeOverride,
+      runIntake: true
+    });
+    if (draftRequestRef.current !== requestSequence) return false;
+    if (!result.ok) {
+      setDraftFailure(result.error);
+      setToast({ kind: "error", message: result.error.message });
+      setDraftMessageKind("error");
+      setDraftMessage(result.error.message);
+      return false;
+    }
+    setBusy(false);
+    setTicketReferenceMention(null);
+    setDraftFailure(null);
+    setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+    onClose();
+    void Promise.resolve(onCreated()).catch((error) => {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
+    });
+    return true;
+  };
+
+  const startDraftFromIntake = async (
+    intake: DraftIntakeResult,
+    ideaSnapshot: string,
+    requestSequence: number
+  ): Promise<boolean> => {
+    setDraftMessageKind("info");
+    setDraftMessage("Creating a pending ticket and starting Codex in the background.");
+    const preferredTicketType = ticketTypeForDraftScope(intake.scope, ticketType);
+    const result = await getRelayApi().ticket.createDraft({
+      projectPath,
+      idea: ideaSnapshot,
+      preferredTicketType,
+      draftScope: intake.scope,
+      intakeAnswers: intakeAnswersForDraft(intake),
+      intakeKnownFacts: intake.knownFacts,
+      relatedTicketIds: intake.relatedTicketIds
+    });
+    if (draftRequestRef.current !== requestSequence) return false;
+    if (!result.ok) {
+      setDraftFailure(result.error);
+      setToast({ kind: "error", message: result.error.message });
+      setDraftMessageKind("error");
+      setDraftMessage(result.error.message);
+      return false;
+    }
+    setBusy(false);
+    setTicketReferenceMention(null);
+    setDraftFailure(null);
+    setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+    onClose();
+    void Promise.resolve(onCreated()).catch((error) => {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
+    });
+    return true;
+  };
+
   const draftTicket = async (): Promise<void> => {
     const requestSequence = draftRequestRef.current + 1;
     draftRequestRef.current = requestSequence;
@@ -1654,34 +1923,39 @@ function CreateTicketModal({
     let accepted = false;
     setBusy(true);
     setDraft(null);
+    setDraftIntake(null);
+    setIntakeAnswerDrafts({});
     setDraftFailure(null);
     setDraftProgress(null);
     setDraftMessageKind("info");
     setDraftMessage("Creating a pending ticket and starting Codex in the background.");
     try {
-      const result = await getRelayApi().ticket.createDraft({ projectPath, idea: ideaSnapshot, preferredTicketType: ticketType });
-      if (draftRequestRef.current !== requestSequence) return;
-      if (!result.ok) {
-        setDraftFailure(result.error);
-        setToast({ kind: "error", message: result.error.message });
-        setDraftMessageKind("error");
-        setDraftMessage(result.error.message);
-        return;
-      }
-      accepted = true;
-      setBusy(false);
-      setTicketReferenceMention(null);
-      setDraftFailure(null);
-      setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
-      onClose();
-      void Promise.resolve(onCreated()).catch((error) => {
-        setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
-      });
+      accepted = await startBackgroundDraft(ideaSnapshot, requestSequence);
     } catch (error) {
       if (draftRequestRef.current !== requestSequence) return;
       const message = error instanceof Error ? error.message : "Ticket drafting failed.";
       setToast({ kind: "error", message });
       setDraftFailure(null);
+      setDraftMessageKind("error");
+      setDraftMessage(message);
+    } finally {
+      if (!accepted && draftRequestRef.current === requestSequence) setBusy(false);
+    }
+  };
+
+  const continueDraftFromIntake = async (): Promise<void> => {
+    if (!draftIntake) return;
+    const requestSequence = draftRequestRef.current + 1;
+    draftRequestRef.current = requestSequence;
+    let accepted = false;
+    setBusy(true);
+    setDraftFailure(null);
+    try {
+      accepted = await startDraftFromIntake(draftIntake, idea, requestSequence);
+    } catch (error) {
+      if (draftRequestRef.current !== requestSequence) return;
+      const message = error instanceof Error ? error.message : "Ticket drafting failed.";
+      setToast({ kind: "error", message });
       setDraftMessageKind("error");
       setDraftMessage(message);
     } finally {
@@ -1801,6 +2075,8 @@ ${idea.trim() || "No additional details provided."}
                 value={ticketType}
                 onChange={(event) => {
                   setTicketType(event.target.value as TicketType);
+                  setDraftIntake(null);
+                  setIntakeAnswerDrafts({});
                   setDraft(null);
                   setDraftFailure(null);
                   setDraftMessage(null);
@@ -1809,6 +2085,28 @@ ${idea.trim() || "No additional details provided."}
                 {ticketTypeOptions.map((option) => (
                   <option value={option} key={option}>
                     {ticketTypeLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Draft Mode</span>
+              <select
+                value={draftScopeOverride}
+                onChange={(event) => {
+                  const value = event.target.value as "auto" | DraftScope;
+                  setDraftScopeOverride(value);
+                  if (value === "epic") setTicketType("epic");
+                  setDraftIntake(null);
+                  setIntakeAnswerDrafts({});
+                  setDraft(null);
+                  setDraftFailure(null);
+                  setDraftMessage(null);
+                }}
+              >
+                {draftScopeOptions.map((option) => (
+                  <option value={option} key={option}>
+                    {draftScopeLabel(option)}
                   </option>
                 ))}
               </select>
@@ -1850,6 +2148,8 @@ ${idea.trim() || "No additional details provided."}
                 aria-expanded={ideaTicketReferenceMenuOpen}
                 onChange={(event) => {
                   setIdea(event.target.value);
+                  setDraftIntake(null);
+                  setIntakeAnswerDrafts({});
                   updateTicketReferenceMention(event.target.value, event.target.selectionStart, event.target.selectionEnd);
                 }}
                 onFocus={(event) =>
@@ -1869,12 +2169,22 @@ ${idea.trim() || "No additional details provided."}
           <div className="draft-actions">
             <button className="primary-button" onClick={draftTicket} disabled={busy || idea.trim().length === 0}>
               {busy ? <Loader2 className="spin" size={16} /> : draftFailure?.recoverable ? <RefreshCw size={16} /> : <Code2 size={16} />}
-              {busy ? "Starting..." : draftFailure?.recoverable ? "Retry Codex" : "Draft with Codex"}
+              {busy ? "Starting..." : draftFailure?.recoverable ? "Retry Codex" : draftIntake ? "Restart Intake" : "Draft with Codex"}
             </button>
           </div>
         </div>
 
         {draftMessage && <CreateTicketDraftMessage kind={draftMessageKind} message={draftMessage} busy={busy} />}
+
+        {draftIntake && (
+          <DraftIntakeQuestionsPanel
+            intake={draftIntake}
+            answerDrafts={intakeAnswerDrafts}
+            onAnswerChange={(index, value) => setIntakeAnswerDrafts((current) => ({ ...current, [index]: value }))}
+            onContinue={continueDraftFromIntake}
+            busy={busy}
+          />
+        )}
 
         {draftProgress && (
           <AgentProgressSummary
@@ -2081,6 +2391,8 @@ function TicketDetail({
   const [labels, setLabels] = useState("");
   const [blockedByIds, setBlockedByIds] = useState<string[]>([]);
   const [markdown, setMarkdown] = useState("");
+  const [markdownMode, setMarkdownMode] = useState<TicketMarkdownMode>("preview");
+  const [markdownPreviewExpanded, setMarkdownPreviewExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [clarifications, setClarifications] = useState<ClarificationQuestion[]>([]);
@@ -2171,6 +2483,8 @@ function TicketDetail({
     setLinkSubticketId("");
     setSubticketBusy(false);
     setBlockedByIds([]);
+    setMarkdownMode("preview");
+    setMarkdownPreviewExpanded(false);
   }, [projectPath, ticketId]);
 
   useEffect(() => {
@@ -2289,7 +2603,6 @@ function TicketDetail({
     () => clarifications.filter((question) => !question.answer?.trim()).length,
     [clarifications]
   );
-  const reviewStatusAvailable = board.columns.some((column) => column.id === "review");
   const completedStatusAvailable = board.columns.some((column) => column.id === "completed");
   const todoStatusAvailable = board.columns.some((column) => column.id === "todo");
 
@@ -2561,17 +2874,6 @@ function TicketDetail({
     }
   };
 
-  const requestChanges = (): void => {
-    const prefix = "Address review feedback: ";
-    setTicketUpdateRequest((current) => (current.trim().length > 0 ? current : prefix));
-    setTicketUpdateError(null);
-    window.requestAnimationFrame(() => {
-      ticketUpdateInputRef.current?.focus();
-      const cursor = ticketUpdateInputRef.current?.value.length ?? 0;
-      ticketUpdateInputRef.current?.setSelectionRange(cursor, cursor);
-    });
-  };
-
   const focusLabelsInput = (): void => {
     labelsInputRef.current?.scrollIntoView({ block: "center" });
     window.requestAnimationFrame(() => labelsInputRef.current?.focus());
@@ -2697,11 +2999,12 @@ function TicketDetail({
 
   if (detailError) {
     return (
-      <aside className="detail-panel">
+      <div className="modal-backdrop ticket-detail-backdrop">
+      <aside className="detail-panel detail-panel-state" role="dialog" aria-modal="true" aria-labelledby="ticket-detail-error-title">
         <header className="detail-header">
           <div>
             <span className="run-pill failed">Missing</span>
-            <h2>Ticket unavailable</h2>
+            <h2 id="ticket-detail-error-title">Ticket unavailable</h2>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close ticket detail">
             <X size={18} />
@@ -2722,22 +3025,28 @@ function TicketDetail({
           </button>
         </div>
       </aside>
+      </div>
     );
   }
 
   if (!ticket) {
     return (
-      <aside className="detail-panel">
+      <div className="modal-backdrop ticket-detail-backdrop">
+      <aside className="detail-panel detail-panel-state loading" role="dialog" aria-modal="true" aria-label="Loading ticket detail">
         <Loader2 className="spin" />
       </aside>
+      </div>
     );
   }
 
+  const detailDialogTitleId = `ticket-detail-title-${ticket.frontMatter.id}`;
+
   return (
     <>
-      <aside className="detail-panel">
-        <header className="detail-header">
-          <div>
+      <div className="modal-backdrop ticket-detail-backdrop">
+      <aside className="detail-panel" role="dialog" aria-modal="true" aria-labelledby={detailDialogTitleId}>
+        <header className="detail-header ticket-detail-modal-header">
+          <div className="ticket-detail-modal-title">
             <div className="detail-status-row">
               <TicketRunStatusPill status={ticket.frontMatter.runStatus} />
               {blockerResolution?.isBlocked && (
@@ -2746,470 +3055,485 @@ function TicketDetail({
                 </span>
               )}
             </div>
-            <h2>{ticket.frontMatter.title}</h2>
+            <h2 id={detailDialogTitleId} className="sr-only">
+              {title || ticket.frontMatter.title}
+            </h2>
+            <label className="field detail-title-field">
+              <span>Title</span>
+              <input value={title} onChange={(event) => setTitle(event.target.value)} disabled={draftInProgress} />
+            </label>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close ticket detail">
             <X size={18} />
           </button>
         </header>
+        <div className="ticket-detail-layout">
+          <main className="ticket-detail-primary">
+            <div className="detail-actions">
+              <button
+                className="primary-button"
+                onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))}
+                disabled={busy || ticketUpdateActive || draftInProgress || runQueued}
+              >
+                {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
+              </button>
+              {ticket.frontMatter.codexThreadId && (
+                <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
+                  {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                  Start Fresh Thread
+                </button>
+              )}
+              {runId && (ticket.frontMatter.runStatus === "queued" || ticket.frontMatter.runStatus === "running" || draftInProgress) && (
+                <button onClick={cancelRun}>
+                  <X size={16} />
+                  Stop
+                </button>
+              )}
+              {completedStatusAvailable && ticket.frontMatter.status === "review" && (
+                <button onClick={() => void moveTicketTo("completed", "Ticket accepted.")} disabled={busy || ticketUpdateActive || draftInProgress}>
+                  <Check size={16} />
+                  Mark Accepted
+                </button>
+              )}
+              {ticket.frontMatter.status === "completed" && todoStatusAvailable && (
+                <button onClick={() => void moveTicketTo("todo", "Ticket reopened.")} disabled={busy || ticketUpdateActive || draftInProgress}>
+                  <RefreshCw size={16} />
+                  Reopen
+                </button>
+              )}
+              <button onClick={save} disabled={busy || ticketUpdateActive || draftInProgress}>
+                <Save size={16} />
+                Save
+              </button>
+            </div>
 
-        <div className="detail-actions">
-          <button
-            className="primary-button"
-            onClick={() => startRun(Boolean(ticket.frontMatter.codexThreadId))}
-            disabled={busy || ticketUpdateActive || draftInProgress || runQueued}
-          >
-            {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-            {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
-          </button>
-          {ticket.frontMatter.codexThreadId && (
-            <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
-              {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-              Start Fresh Thread
-            </button>
-          )}
-          {runId && (ticket.frontMatter.runStatus === "queued" || ticket.frontMatter.runStatus === "running" || draftInProgress) && (
-            <button onClick={cancelRun}>
-              <X size={16} />
-              Stop
-            </button>
-          )}
-          {completedStatusAvailable && ticket.frontMatter.status === "review" && (
-            <button onClick={() => void moveTicketTo("completed", "Ticket accepted.")} disabled={busy || ticketUpdateActive || draftInProgress}>
-              <Check size={16} />
-              Mark Accepted
-            </button>
-          )}
-          {reviewStatusAvailable && ticket.frontMatter.status === "review" && (
-            <button onClick={requestChanges} disabled={busy || ticketUpdateActive || draftInProgress}>
-              <Send size={16} />
-              Request Changes
-            </button>
-          )}
-          {ticket.frontMatter.status === "completed" && todoStatusAvailable && (
-            <button onClick={() => void moveTicketTo("todo", "Ticket reopened.")} disabled={busy || ticketUpdateActive || draftInProgress}>
-              <RefreshCw size={16} />
-              Reopen
-            </button>
-          )}
-          <button onClick={save} disabled={busy || ticketUpdateActive || draftInProgress}>
-            <Save size={16} />
-            Save
-          </button>
-        </div>
-
-        <div className="ticket-detail-actions-row" role="group" aria-label="Ticket detail actions">
-          <button
-            className={clsx("compact-action-button", blockerPanelOpen && "active")}
-            onClick={() => setBlockerPanelOpen((open) => !open)}
-            disabled={draftInProgress}
-            aria-expanded={blockerPanelOpen}
-            aria-controls="ticket-blocker-manager"
-            aria-label={blockerCount === 0 ? "Add blocker" : `Manage ${blockerCount} blocker${blockerCount === 1 ? "" : "s"}`}
-            title={blockerCount === 0 ? "Add blocker" : "Manage blockers"}
-          >
-            <Plus size={14} />
-            <span>Blocker</span>
-            {blockerCount > 0 && <span className="compact-action-count">{blockerCount}</span>}
-          </button>
-          {ticket.frontMatter.ticketType === "epic" && (
-            <button
-              className={clsx("compact-action-button", addTicketsOpen && "active")}
-              onClick={toggleSubticketPanel}
-              disabled={subticketBusy || draftInProgress}
-              aria-expanded={addTicketsOpen}
-              aria-controls="ticket-subtask-manager"
-              aria-label={linkedSubtickets.length === 0 ? "Add subtask" : `Manage ${linkedSubtickets.length} subtask${linkedSubtickets.length === 1 ? "" : "s"}`}
-              title="Add or link subtasks"
-            >
-              {subticketBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-              <span>Subtask</span>
-              {linkedSubtickets.length > 0 && <span className="compact-action-count">{linkedSubtickets.length}</span>}
-            </button>
-          )}
-          <button
-            className="compact-action-button"
-            onClick={focusLabelsInput}
-            disabled={draftInProgress}
-            aria-label={labelCount === 0 ? "Add tags" : `Edit ${labelCount} tag${labelCount === 1 ? "" : "s"}`}
-            title="Edit tags"
-          >
-            <Plus size={14} />
-            <span>Tags</span>
-            {labelCount > 0 && <span className="compact-action-count">{labelCount}</span>}
-          </button>
-        </div>
-
-        {draftInProgress && (
-          <div className="ticket-update-error warning" role="status">
-            <Loader2 className="spin" size={16} />
-            <span>Codex is drafting this ticket. The generated plan will appear here when the background draft run completes.</span>
-          </div>
-        )}
-
-        {draftFailed && (
-          <div className="ticket-update-error" role="alert">
-            <AlertTriangle size={16} />
-            <span>{draftFailureMessage}</span>
-          </div>
-        )}
-
-        {draftInProgress ? (
-          <DraftingTicketDetailLoading title={ticket.frontMatter.title} />
-        ) : (
-          <>
-            {runPreflight && (!runPreflight.ok || runPreflight.warnings.length > 0) && (
-              <div className={clsx("ticket-update-error", runPreflight.ok ? "warning" : "error")} role={runPreflight.ok ? "status" : "alert"}>
-                <AlertTriangle size={16} />
-                <span>{[...runPreflight.errors, ...runPreflight.warnings].join(" ")}</span>
+            {draftInProgress && (
+              <div className="ticket-update-error warning" role="status">
+                <Loader2 className="spin" size={16} />
+                <span>Codex is drafting this ticket. The generated plan will appear here when the background draft run completes.</span>
               </div>
             )}
 
-            {unansweredClarificationCount > 0 && (
+            {draftFailed && (
               <div className="ticket-update-error" role="alert">
                 <AlertTriangle size={16} />
-                <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming Codex.</span>
+                <span>{draftFailureMessage}</span>
               </div>
             )}
 
-        {blockerResolution?.isBlocked && (
-          <div className="ticket-update-error warning" role="alert">
-            <AlertTriangle size={16} />
-            <span>
-              Blocked by {blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before starting
-              Codex.
-            </span>
-          </div>
-        )}
+            {draftInProgress ? (
+              <DraftingTicketDetailLoading title={ticket.frontMatter.title} />
+            ) : (
+              <>
+                {runPreflight && (!runPreflight.ok || runPreflight.warnings.length > 0) && (
+                  <div className={clsx("ticket-update-error", runPreflight.ok ? "warning" : "error")} role={runPreflight.ok ? "status" : "alert"}>
+                    <AlertTriangle size={16} />
+                    <span>{[...runPreflight.errors, ...runPreflight.warnings].join(" ")}</span>
+                  </div>
+                )}
 
-        {blockerResolution && blockerResolution.warnings.length > 0 && (
-          <div className="ticket-update-error warning" role="status">
-            <AlertTriangle size={16} />
-            <span>{blockerResolution.warnings.join(" ")}</span>
-          </div>
-        )}
+                {unansweredClarificationCount > 0 && (
+                  <div className="ticket-update-error" role="alert">
+                    <AlertTriangle size={16} />
+                    <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming Codex.</span>
+                  </div>
+                )}
 
-        {blockerPanelOpen && (
-          <section className="epic-link-panel blocker-panel" id="ticket-blocker-manager">
-            <header>
-              <div className="blocker-panel-title">
-                <h3>Blockers</h3>
-                {blockerResolution?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
-              </div>
-              <button className="icon-button" onClick={() => setBlockerPanelOpen(false)} aria-label="Close blocker manager">
-                <X size={15} />
-              </button>
-            </header>
-            <div className="blocker-summary-list">
-              {blockedByIds.length === 0 ? (
-                <p>No blockers selected.</p>
-              ) : (
-                <>
-                  {blockerResolution?.resolvedBlockers.map((blocker) => (
-                    <div className={clsx("blocker-row", blocker.active && "active")} key={blocker.id}>
-                      <button className="blocker-main" onClick={() => onOpenTicket(blocker.id)}>
-                        <strong>{blocker.title}</strong>
-                        <span>{blocker.contextLabel}</span>
-                        <em>{blocker.columnName}</em>
-                      </button>
-                      <button className="icon-button" onClick={() => removeBlocker(blocker.id)} aria-label={`Remove ${blocker.title} blocker`}>
-                        <X size={15} />
-                      </button>
-                    </div>
-                  ))}
-                  {blockerResolution?.missingBlockerIds.map((blockerId) => (
-                    <div className="blocker-row warning" key={blockerId}>
-                      <div className="blocker-main static">
-                        <strong>{blockerId}</strong>
-                        <span>Missing blocker reference</span>
-                        <em>Warning</em>
-                      </div>
-                      <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label={`Remove missing blocker ${blockerId}`}>
-                        <X size={15} />
-                      </button>
-                    </div>
-                  ))}
-                  {blockerResolution?.selfBlockerIds.map((blockerId) => (
-                    <div className="blocker-row warning" key={blockerId}>
-                      <div className="blocker-main static">
-                        <strong>{blockerId}</strong>
-                        <span>Self blocker reference</span>
-                        <em>Invalid</em>
-                      </div>
-                      <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label="Remove self blocker">
-                        <X size={15} />
-                      </button>
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-            <div className="blocker-picker" role="group" aria-label="Ticket blockers">
-              {blockerCandidates.length === 0 ? (
-                <p>No other tickets available.</p>
-              ) : (
-                blockerCandidates.map((candidate) => (
-                  <label className={clsx("blocker-option", blockedByIds.includes(candidate.id) && "selected")} key={candidate.id}>
-                    <input
-                      type="checkbox"
-                      checked={blockedByIds.includes(candidate.id)}
-                      onChange={() => toggleBlocker(candidate.id)}
-                    />
+                {blockerResolution?.isBlocked && (
+                  <div className="ticket-update-error warning" role="alert">
+                    <AlertTriangle size={16} />
                     <span>
-                      <strong>{candidate.title}</strong>
-                      <small>{ticketContextLabel(candidate, board.tickets)}</small>
+                      Blocked by {blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before
+                      starting Codex.
                     </span>
-                    <em>{statusName(board.columns, candidate.status)}</em>
+                  </div>
+                )}
+
+                {blockerResolution && blockerResolution.warnings.length > 0 && (
+                  <div className="ticket-update-error warning" role="status">
+                    <AlertTriangle size={16} />
+                    <span>{blockerResolution.warnings.join(" ")}</span>
+                  </div>
+                )}
+
+                <TicketMarkdownTabs
+                  mode={markdownMode}
+                  markdown={markdown}
+                  disabled={draftInProgress || attachmentDropBusy}
+                  attachmentDropActive={attachmentDropActive}
+                  editorRef={markdownEditorRef}
+                  previewExpanded={markdownPreviewExpanded}
+                  onModeChange={setMarkdownMode}
+                  onPreviewExpandedChange={setMarkdownPreviewExpanded}
+                  onMarkdownChange={setMarkdown}
+                  onDragOver={handleMarkdownDragOver}
+                  onDragLeave={handleMarkdownDragLeave}
+                  onDrop={(event) => void handleMarkdownDrop(event)}
+                  onCopied={(kind) => setToast(copyToast(kind))}
+                  onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
+                />
+
+                <section className="ticket-update-panel">
+                  <header>
+                    <h3>Agent Ticket Update</h3>
+                    <span className={clsx("run-pill", ticketUpdateStatus)}>{runLabel(ticketUpdateStatus)}</span>
+                  </header>
+                  <label className="field">
+                    <span>Change Request</span>
+                    <textarea
+                      ref={ticketUpdateInputRef}
+                      className="ticket-update-input"
+                      value={ticketUpdateRequest}
+                      placeholder="Add acceptance criteria, revise requirements, capture new context..."
+                      disabled={ticketUpdateActive || draftInProgress}
+                      onChange={(event) => {
+                        setTicketUpdateRequest(event.target.value);
+                        if (ticketUpdateError) setTicketUpdateError(null);
+                      }}
+                    />
                   </label>
-                ))
-              )}
-            </div>
-          </section>
-        )}
-
-        {parentEpic && (
-          <section className="epic-link-panel">
-            <header>
-              <h3>Parent Epic</h3>
-            </header>
-            <button className="subticket-row parent" onClick={() => onOpenTicket(parentEpic.id)}>
-              <strong>{parentEpic.title}</strong>
-              <span>{statusName(board.columns, parentEpic.status)}</span>
-              {parentEpicBlockers?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
-              {parentEpicBlockers && parentEpicBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
-              <em className={clsx("priority", parentEpic.priority)}>{parentEpic.priority}</em>
-            </button>
-          </section>
-        )}
-
-        {ticket.frontMatter.ticketType === "epic" && (
-          <section className="epic-link-panel" id="ticket-subtask-manager" ref={subticketsPanelRef}>
-            <header>
-              <h3>Subtickets</h3>
-              <button onClick={toggleSubticketPanel} disabled={subticketBusy}>
-                {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-                Add Tickets
-              </button>
-            </header>
-            <div className="subticket-list">
-              {linkedSubtickets.length === 0 ? (
-                <p>No subtickets linked.</p>
-              ) : (
-                linkedSubtickets.map((subticket) => {
-                  const subticketBlockers = resolveTicketBlockers(subticket, board.tickets, board.columns);
-                  return (
-                    <div className="subticket-item" key={subticket.id}>
-                      <button className="subticket-row" onClick={() => onOpenTicket(subticket.id)}>
-                        <strong>{subticket.title}</strong>
-                        <span>{statusName(board.columns, subticket.status)}</span>
-                        {subticketBlockers.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
-                        {subticketBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
-                        <em className={clsx("priority", subticket.priority)}>{subticket.priority}</em>
+                  <div className="ticket-update-actions">
+                    <button
+                      className="primary-button"
+                      onClick={() => void startTicketUpdate()}
+                      disabled={ticketUpdateActive || draftInProgress || ticketUpdateRequest.trim().length === 0}
+                    >
+                      {ticketUpdateActive ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+                      Update Ticket
+                    </button>
+                    {ticketUpdateActive && ticketUpdateRunId && (
+                      <button onClick={() => void cancelTicketUpdate()} disabled={ticketUpdateCancelling}>
+                        {ticketUpdateCancelling ? <Loader2 className="spin" size={16} /> : <X size={16} />}
+                        Stop
                       </button>
-                      <button
-                        className="icon-button"
-                        onClick={() => void unlinkChildTicket(subticket.id)}
-                        disabled={subticketBusy}
-                        aria-label={`Unlink ${subticket.title}`}
-                      >
-                        <X size={15} />
+                    )}
+                    <button onClick={() => setTicketUpdateLogViewerOpen(true)} disabled={!ticketUpdateRunId && ticketUpdateEvents.length === 0}>
+                      <CircleDashed size={16} />
+                      Logs
+                    </button>
+                  </div>
+                  {ticketUpdateError && (
+                    <div className="ticket-update-error" role="alert">
+                      <AlertTriangle size={16} />
+                      <span>{ticketUpdateError}</span>
+                    </div>
+                  )}
+                  {(ticketUpdateRunId || ticketUpdateStatus !== "idle") && (
+                    <AgentProgressSummary
+                      events={ticketUpdateEvents}
+                      status={ticketUpdateStatus}
+                      startedAt={ticketUpdateStartedAt}
+                      endedAt={ticketUpdateEndedAt}
+                      metricsAvailable={ticketUpdateEvents.length > 0}
+                    />
+                  )}
+                </section>
+              </>
+            )}
+          </main>
+
+          <aside className="ticket-detail-sidebar" aria-label="Ticket metadata and activity">
+            <section className="ticket-detail-section ticket-detail-metadata" aria-label="Ticket details">
+              <header>
+                <h3>Details</h3>
+              </header>
+              <div className="ticket-detail-fields">
+                <label className="field">
+                  <span>Status</span>
+                  <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
+                    {board.columns.map((column) => (
+                      <option value={column.id} key={column.id}>
+                        {column.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Priority</span>
+                  <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
+                    {priorityOptions.map((option) => (
+                      <option key={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Labels</span>
+                  <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
+                </label>
+              </div>
+              <div className="ticket-detail-actions-row" role="group" aria-label="Ticket detail actions">
+                <button
+                  className={clsx("compact-action-button", blockerPanelOpen && "active")}
+                  onClick={() => setBlockerPanelOpen((open) => !open)}
+                  disabled={draftInProgress}
+                  aria-expanded={blockerPanelOpen}
+                  aria-controls="ticket-blocker-manager"
+                  aria-label={blockerCount === 0 ? "Add blocker" : `Manage ${blockerCount} blocker${blockerCount === 1 ? "" : "s"}`}
+                  title={blockerCount === 0 ? "Add blocker" : "Manage blockers"}
+                >
+                  <Plus size={14} />
+                  <span>Blocker</span>
+                  {blockerCount > 0 && <span className="compact-action-count">{blockerCount}</span>}
+                </button>
+                {ticket.frontMatter.ticketType === "epic" && (
+                  <button
+                    className={clsx("compact-action-button", addTicketsOpen && "active")}
+                    onClick={toggleSubticketPanel}
+                    disabled={subticketBusy || draftInProgress}
+                    aria-expanded={addTicketsOpen}
+                    aria-controls="ticket-subtask-manager"
+                    aria-label={
+                      linkedSubtickets.length === 0 ? "Add subtask" : `Manage ${linkedSubtickets.length} subtask${linkedSubtickets.length === 1 ? "" : "s"}`
+                    }
+                    title="Add or link subtasks"
+                  >
+                    {subticketBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+                    <span>Subtask</span>
+                    {linkedSubtickets.length > 0 && <span className="compact-action-count">{linkedSubtickets.length}</span>}
+                  </button>
+                )}
+                <button
+                  className="compact-action-button"
+                  onClick={focusLabelsInput}
+                  disabled={draftInProgress}
+                  aria-label={labelCount === 0 ? "Add tags" : `Edit ${labelCount} tag${labelCount === 1 ? "" : "s"}`}
+                  title="Edit tags"
+                >
+                  <Plus size={14} />
+                  <span>Tags</span>
+                  {labelCount > 0 && <span className="compact-action-count">{labelCount}</span>}
+                </button>
+              </div>
+              <div className="ticket-detail-blocker-summary" aria-label="Blocker state">
+                <span
+                  className={clsx(
+                    "ticket-blocker-pill",
+                    blockerResolution?.isBlocked && "active",
+                    blockerResolution && blockerResolution.warnings.length > 0 && "warning"
+                  )}
+                >
+                  {blockerResolution?.isBlocked ? "Blocked" : blockerCount === 0 ? "No blockers" : `${blockerCount} blocker${blockerCount === 1 ? "" : "s"}`}
+                </span>
+                <p>
+                  {blockerResolution?.isBlocked
+                    ? blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")
+                    : blockerResolution && blockerResolution.warnings.length > 0
+                      ? blockerResolution.warnings.join(" ")
+                      : blockerCount === 0
+                        ? "This ticket can run when other preflight checks pass."
+                        : "Selected blockers are not currently active."}
+                </p>
+              </div>
+            </section>
+
+            {blockerPanelOpen && (
+              <section className="epic-link-panel blocker-panel" id="ticket-blocker-manager">
+                <header>
+                  <div className="blocker-panel-title">
+                    <h3>Blockers</h3>
+                    {blockerResolution?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+                  </div>
+                  <button className="icon-button" onClick={() => setBlockerPanelOpen(false)} aria-label="Close blocker manager">
+                    <X size={15} />
+                  </button>
+                </header>
+                <div className="blocker-summary-list">
+                  {blockedByIds.length === 0 ? (
+                    <p>No blockers selected.</p>
+                  ) : (
+                    <>
+                      {blockerResolution?.resolvedBlockers.map((blocker) => (
+                        <div className={clsx("blocker-row", blocker.active && "active")} key={blocker.id}>
+                          <button className="blocker-main" onClick={() => onOpenTicket(blocker.id)}>
+                            <strong>{blocker.title}</strong>
+                            <span>{blocker.contextLabel}</span>
+                            <em>{blocker.columnName}</em>
+                          </button>
+                          <button className="icon-button" onClick={() => removeBlocker(blocker.id)} aria-label={`Remove ${blocker.title} blocker`}>
+                            <X size={15} />
+                          </button>
+                        </div>
+                      ))}
+                      {blockerResolution?.missingBlockerIds.map((blockerId) => (
+                        <div className="blocker-row warning" key={blockerId}>
+                          <div className="blocker-main static">
+                            <strong>{blockerId}</strong>
+                            <span>Missing blocker reference</span>
+                            <em>Warning</em>
+                          </div>
+                          <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label={`Remove missing blocker ${blockerId}`}>
+                            <X size={15} />
+                          </button>
+                        </div>
+                      ))}
+                      {blockerResolution?.selfBlockerIds.map((blockerId) => (
+                        <div className="blocker-row warning" key={blockerId}>
+                          <div className="blocker-main static">
+                            <strong>{blockerId}</strong>
+                            <span>Self blocker reference</span>
+                            <em>Invalid</em>
+                          </div>
+                          <button className="icon-button" onClick={() => removeBlocker(blockerId)} aria-label="Remove self blocker">
+                            <X size={15} />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+                <div className="blocker-picker" role="group" aria-label="Ticket blockers">
+                  {blockerCandidates.length === 0 ? (
+                    <p>No other tickets available.</p>
+                  ) : (
+                    blockerCandidates.map((candidate) => (
+                      <label className={clsx("blocker-option", blockedByIds.includes(candidate.id) && "selected")} key={candidate.id}>
+                        <input type="checkbox" checked={blockedByIds.includes(candidate.id)} onChange={() => toggleBlocker(candidate.id)} />
+                        <span>
+                          <strong>{candidate.title}</strong>
+                          <small>{ticketContextLabel(candidate, board.tickets)}</small>
+                        </span>
+                        <em>{statusName(board.columns, candidate.status)}</em>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </section>
+            )}
+
+            {parentEpic && (
+              <section className="epic-link-panel">
+                <header>
+                  <h3>Parent Epic</h3>
+                </header>
+                <button className="subticket-row parent" onClick={() => onOpenTicket(parentEpic.id)}>
+                  <strong>{parentEpic.title}</strong>
+                  <span>{statusName(board.columns, parentEpic.status)}</span>
+                  {parentEpicBlockers?.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+                  {parentEpicBlockers && parentEpicBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
+                  <em className={clsx("priority", parentEpic.priority)}>{parentEpic.priority}</em>
+                </button>
+              </section>
+            )}
+
+            {ticket.frontMatter.ticketType === "epic" && (
+              <section className="epic-link-panel" id="ticket-subtask-manager" ref={subticketsPanelRef}>
+                <header>
+                  <h3>Subtickets</h3>
+                  <button onClick={toggleSubticketPanel} disabled={subticketBusy}>
+                    {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                    Add Tickets
+                  </button>
+                </header>
+                <div className="subticket-list">
+                  {linkedSubtickets.length === 0 ? (
+                    <p>No subtickets linked.</p>
+                  ) : (
+                    linkedSubtickets.map((subticket) => {
+                      const subticketBlockers = resolveTicketBlockers(subticket, board.tickets, board.columns);
+                      return (
+                        <div className="subticket-item" key={subticket.id}>
+                          <button className="subticket-row" onClick={() => onOpenTicket(subticket.id)}>
+                            <strong>{subticket.title}</strong>
+                            <span>{statusName(board.columns, subticket.status)}</span>
+                            {subticketBlockers.isBlocked && <span className="ticket-blocker-pill active">Blocked</span>}
+                            {subticketBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
+                            <em className={clsx("priority", subticket.priority)}>{subticket.priority}</em>
+                          </button>
+                          <button
+                            className="icon-button"
+                            onClick={() => void unlinkChildTicket(subticket.id)}
+                            disabled={subticketBusy}
+                            aria-label={`Unlink ${subticket.title}`}
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                {addTicketsOpen && (
+                  <div className="add-subticket-panel">
+                    <label className="field">
+                      <span>New Subticket</span>
+                      <input value={newSubticketTitle} onChange={(event) => setNewSubticketTitle(event.target.value)} placeholder="Subticket title" />
+                    </label>
+                    <div className="two-fields">
+                      <label className="field">
+                        <span>Priority</span>
+                        <select value={newSubticketPriority} onChange={(event) => setNewSubticketPriority(event.target.value as TicketPriority)}>
+                          {priorityOptions.map((option) => (
+                            <option key={option}>{option}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>Labels</span>
+                        <input value={newSubticketLabels} onChange={(event) => setNewSubticketLabels(event.target.value)} />
+                      </label>
+                    </div>
+                    <button className="primary-button" onClick={() => void createChildTicket()} disabled={subticketBusy || newSubticketTitle.trim().length === 0}>
+                      {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                      Create Subticket
+                    </button>
+                    <div className="link-existing-row">
+                      <label className="field">
+                        <span>Link Existing</span>
+                        <select value={linkSubticketId} onChange={(event) => setLinkSubticketId(event.target.value)} disabled={linkableTickets.length === 0}>
+                          <option value="">{linkableTickets.length === 0 ? "No available task tickets" : "Select a ticket"}</option>
+                          {linkableTickets.map((candidate) => (
+                            <option value={candidate.id} key={candidate.id}>
+                              {ticketBlockerOptionLabel(candidate, board.tickets, board.columns)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button onClick={() => void linkExistingTicket()} disabled={subticketBusy || !linkSubticketId}>
+                        <Plus size={16} />
+                        Link
                       </button>
                     </div>
-                  );
-                })
-              )}
-            </div>
-            {addTicketsOpen && (
-              <div className="add-subticket-panel">
-                <label className="field">
-                  <span>New Subticket</span>
-                  <input
-                    value={newSubticketTitle}
-                    onChange={(event) => setNewSubticketTitle(event.target.value)}
-                    placeholder="Subticket title"
-                  />
-                </label>
-                <div className="two-fields">
-                  <label className="field">
-                    <span>Priority</span>
-                    <select value={newSubticketPriority} onChange={(event) => setNewSubticketPriority(event.target.value as TicketPriority)}>
-                      {priorityOptions.map((option) => (
-                        <option key={option}>{option}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Labels</span>
-                    <input value={newSubticketLabels} onChange={(event) => setNewSubticketLabels(event.target.value)} />
-                  </label>
-                </div>
-                <button className="primary-button" onClick={() => void createChildTicket()} disabled={subticketBusy || newSubticketTitle.trim().length === 0}>
-                  {subticketBusy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-                  Create Subticket
+                  </div>
+                )}
+              </section>
+            )}
+
+            <ClarificationPanel
+              questions={clarifications}
+              answerDrafts={answerDrafts}
+              submittingId={submittingAnswerId}
+              onDraftChange={(questionId, answer) => setAnswerDrafts((current) => ({ ...current, [questionId]: answer }))}
+              onSubmit={(questionId) => void submitClarificationAnswer(questionId)}
+            />
+
+            <AgentActivityPanel
+              events={currentRunEvents}
+              status={ticket.frontMatter.runStatus}
+              runId={runId}
+              runSummary={runSummary}
+              logLoading={logLoading}
+              logError={logError}
+              onOpenLogs={() => setLogViewerOpen(true)}
+              onRevealFile={() => void getRelayApi().ticket.revealFile(projectPath, ticketId)}
+            />
+
+            {!draftInProgress && (
+              <div className="danger-row">
+                <button onClick={duplicate}>
+                  <Copy size={16} />
+                  Duplicate
                 </button>
-                <div className="link-existing-row">
-                  <label className="field">
-                    <span>Link Existing</span>
-                    <select value={linkSubticketId} onChange={(event) => setLinkSubticketId(event.target.value)} disabled={linkableTickets.length === 0}>
-                      <option value="">{linkableTickets.length === 0 ? "No available task tickets" : "Select a ticket"}</option>
-                      {linkableTickets.map((candidate) => (
-                        <option value={candidate.id} key={candidate.id}>
-                          {ticketBlockerOptionLabel(candidate, board.tickets, board.columns)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button onClick={() => void linkExistingTicket()} disabled={subticketBusy || !linkSubticketId}>
-                    <Plus size={16} />
-                    Link
-                  </button>
-                </div>
+                <button className="danger" onClick={remove}>
+                  <Trash2 size={16} />
+                  Delete
+                </button>
               </div>
             )}
-          </section>
-        )}
-
-        <ClarificationPanel
-          questions={clarifications}
-          answerDrafts={answerDrafts}
-          submittingId={submittingAnswerId}
-          onDraftChange={(questionId, answer) => setAnswerDrafts((current) => ({ ...current, [questionId]: answer }))}
-          onSubmit={(questionId) => void submitClarificationAnswer(questionId)}
-        />
-
-        <section className="ticket-update-panel">
-          <header>
-            <h3>Agent Ticket Update</h3>
-            <span className={clsx("run-pill", ticketUpdateStatus)}>{runLabel(ticketUpdateStatus)}</span>
-          </header>
-          <label className="field">
-            <span>Change Request</span>
-            <textarea
-              ref={ticketUpdateInputRef}
-              className="ticket-update-input"
-              value={ticketUpdateRequest}
-              placeholder="Add acceptance criteria, revise requirements, capture new context..."
-              disabled={ticketUpdateActive || draftInProgress}
-              onChange={(event) => {
-                setTicketUpdateRequest(event.target.value);
-                if (ticketUpdateError) setTicketUpdateError(null);
-              }}
-            />
-          </label>
-          <div className="ticket-update-actions">
-            <button
-              className="primary-button"
-              onClick={() => void startTicketUpdate()}
-              disabled={ticketUpdateActive || draftInProgress || ticketUpdateRequest.trim().length === 0}
-            >
-              {ticketUpdateActive ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-              Update Ticket
-            </button>
-            {ticketUpdateActive && ticketUpdateRunId && (
-              <button onClick={() => void cancelTicketUpdate()} disabled={ticketUpdateCancelling}>
-                {ticketUpdateCancelling ? <Loader2 className="spin" size={16} /> : <X size={16} />}
-                Stop
-              </button>
-            )}
-            <button onClick={() => setTicketUpdateLogViewerOpen(true)} disabled={!ticketUpdateRunId && ticketUpdateEvents.length === 0}>
-              <CircleDashed size={16} />
-              Logs
-            </button>
-          </div>
-          {ticketUpdateError && (
-            <div className="ticket-update-error" role="alert">
-              <AlertTriangle size={16} />
-              <span>{ticketUpdateError}</span>
-            </div>
-          )}
-          {(ticketUpdateRunId || ticketUpdateStatus !== "idle") && (
-            <AgentProgressSummary
-              events={ticketUpdateEvents}
-              status={ticketUpdateStatus}
-              startedAt={ticketUpdateStartedAt}
-              endedAt={ticketUpdateEndedAt}
-              metricsAvailable={ticketUpdateEvents.length > 0}
-            />
-          )}
-        </section>
-
-        <div className="editor-stack">
-          <label className="field">
-            <span>Title</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} disabled={draftInProgress} />
-          </label>
-          <div className="two-fields">
-            <label className="field">
-              <span>Status</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
-                {board.columns.map((column) => (
-                  <option value={column.id} key={column.id}>
-                    {column.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Priority</span>
-              <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
-                {priorityOptions.map((option) => (
-                  <option key={option}>{option}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span>Labels</span>
-            <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
-          </label>
-          <label className="field">
-            <span>Markdown</span>
-            <textarea
-              ref={markdownEditorRef}
-              className={clsx("markdown-editor detail-markdown", attachmentDropActive && "drop-active")}
-              value={markdown}
-              onChange={(event) => setMarkdown(event.target.value)}
-              onDragOver={handleMarkdownDragOver}
-              onDragLeave={handleMarkdownDragLeave}
-              onDrop={(event) => void handleMarkdownDrop(event)}
-              disabled={draftInProgress || attachmentDropBusy}
-            />
-          </label>
-          <MarkdownBlock
-            className="ticket-markdown-preview"
-            source={markdown}
-            title="Preview"
-            onCopied={(kind) => setToast(copyToast(kind))}
-            onCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
-          />
+          </aside>
         </div>
-          </>
-        )}
-
-        <AgentActivityPanel
-          events={currentRunEvents}
-          status={ticket.frontMatter.runStatus}
-          runId={runId}
-          runSummary={runSummary}
-          logLoading={logLoading}
-          logError={logError}
-          onOpenLogs={() => setLogViewerOpen(true)}
-          onRevealFile={() => void getRelayApi().ticket.revealFile(projectPath, ticketId)}
-        />
-
-        {!draftInProgress && (
-          <div className="danger-row">
-            <button onClick={duplicate}>
-              <Copy size={16} />
-              Duplicate
-            </button>
-            <button className="danger" onClick={remove}>
-              <Trash2 size={16} />
-              Delete
-            </button>
-          </div>
-        )}
       </aside>
+      </div>
       {logViewerOpen && (
         <AgentLogViewer
           title={`${ticket.frontMatter.title} Logs`}

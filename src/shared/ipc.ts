@@ -9,6 +9,8 @@ import type {
   CodexRunPreflightResult,
   CodexStatus,
   CreateDraftInput,
+  DraftIntakeInput,
+  DraftIntakeResult,
   EpicSubticketCreateInput,
   EpicSubticketLinkInput,
   EpicSubticketUnlinkInput,
@@ -40,6 +42,7 @@ export type RelayIpcContract = {
   "projects:gitMetadata": { args: [projectPath: string, options?: GitMetadataOptions]; result: GitMetadata };
   "projects:revealInFinder": { args: [projectPath: string]; result: void };
   "board:read": { args: [projectPath: string]; result: BoardSnapshot };
+  "ticket:intakeDraft": { args: [input: DraftIntakeInput]; result: DraftIntakeResult };
   "ticket:createDraft": { args: [input: CreateDraftInput]; result: TicketDraftStartResult };
   "ticket:generateSuggestions": { args: [projectPath: string]; result: TicketSuggestionsGenerateResult };
   "ticket:createManual": { args: [projectPath: string, input: TicketCreateInput]; result: TicketRecord };
@@ -81,6 +84,7 @@ export const relayIpcChannels = {
   projectsGitMetadata: "projects:gitMetadata",
   projectsRevealInFinder: "projects:revealInFinder",
   boardRead: "board:read",
+  ticketIntakeDraft: "ticket:intakeDraft",
   ticketCreateDraft: "ticket:createDraft",
   ticketGenerateSuggestions: "ticket:generateSuggestions",
   ticketCreateManual: "ticket:createManual",

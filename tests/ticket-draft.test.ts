@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   cancelCodexRun,
+  createDraftIntake,
   createTicketDraft,
   draftToCreateInput,
   extractTicketDraftUrls,
@@ -18,6 +19,7 @@ import {
 } from "../src/main/services/codex";
 import {
   answerClarificationQuestion,
+  createTicket,
   initializeProject,
   readBoard,
   readClarificationQuestions,
@@ -141,6 +143,83 @@ test("ticket draft output schema requires every declared property for strict res
   assertStrictSchemaRequiresAllProperties(outputSchema);
 });
 
+const validDraftIntakeJson = (patch: Partial<Record<string, unknown>> = {}): string =>
+  JSON.stringify({
+    scope: "quick_bug",
+    confidence: 0.82,
+    knownFacts: ["The bug report names the settings dialog."],
+    relatedTicketIds: ["tkt_related_settings"],
+    questions: [
+      {
+        question: "Should the fix preserve the current dialog layout?",
+        whyItMatters: "It decides whether the task is a surgical bug fix or a layout refactor.",
+        recommendedAnswer: "Preserve the current layout and only fix the crash."
+      }
+    ],
+    ...patch
+  });
+
+test("draft intake classifies scope, includes board context, and requires recommended answers", async () => {
+  const projectPath = await createProject();
+  const related = await createTicket(projectPath, {
+    title: "Existing settings dialog ticket",
+    priority: "medium",
+    labels: ["settings"],
+    markdown: "# Existing settings dialog ticket\n"
+  });
+  let prompt = "";
+  let outputSchema: unknown;
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "din_scope",
+    disableResearch: true,
+    createCodexClient: () =>
+      createDraftCodexClient(async (nextPrompt, options) => {
+        prompt = nextPrompt;
+        outputSchema = options.outputSchema;
+        return {
+          finalResponse: validDraftIntakeJson({
+            relatedTicketIds: [related.frontMatter.id, "tkt_missing"]
+          })
+        };
+      })
+  };
+
+  const intake = await createDraftIntake({ projectPath, idea: "Fix the settings dialog crash" }, dependencies);
+
+  assert.equal(intake.scope, "quick_bug");
+  assert.equal(intake.relatedTicketIds.length, 1);
+  assert.equal(intake.relatedTicketIds[0], related.frontMatter.id);
+  assert.equal(intake.questions[0].recommendedAnswer, "Preserve the current layout and only fix the crash.");
+  assert.match(prompt, /Existing settings dialog ticket/);
+  assert.match(prompt, /Do not ask questions answerable from local codebase files, current board tickets/);
+  assertStrictSchemaRequiresAllProperties(outputSchema);
+});
+
+test("draft intake rejects blocker questions without recommended answers", async () => {
+  const projectPath = await createProject();
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "din_invalid_question",
+    disableResearch: true,
+    createCodexClient: () =>
+      createDraftCodexClient(async () => ({
+        finalResponse: JSON.stringify({
+          scope: "task",
+          confidence: 0.6,
+          knownFacts: [],
+          relatedTicketIds: [],
+          questions: [{ question: "Which mode?", whyItMatters: "It changes behavior." }]
+        })
+      }))
+  };
+
+  await assert.rejects(
+    createDraftIntake({ projectPath, idea: "Add a mode toggle" }, dependencies),
+    (error) => error instanceof TicketDraftServiceError && error.code === "invalid_response"
+  );
+});
+
 const validEpicDraftJson = (): string =>
   JSON.stringify({
     title: "Account migration epic",
@@ -256,6 +335,65 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
   assert.ok(fallbackSubtext.length <= 83);
 });
 
+test("ticket draft prompt includes intake answers and applies lean scope budgets", async () => {
+  const projectPath = await createProject();
+  let prompt = "";
+  const dependencies: TicketDraftDependencies = {
+    getStatus: async () => readyStatus,
+    createRequestId: () => "tdr_intake_context",
+    disableResearch: true,
+    createCodexClient: () =>
+      createDraftCodexClient(async (nextPrompt) => {
+        prompt = nextPrompt;
+        return {
+          finalResponse: JSON.stringify({
+            title: "Lean crash fix",
+            priority: "medium",
+            labels: ["bug"],
+            context: "Fix a crash in the settings dialog.",
+            researchFindings: ["Settings dialog lives in src/renderer/src/App.tsx."],
+            requirements: ["Prevent the crash.", "Keep the existing layout.", "Preserve keyboard behavior.", "Show a useful error."],
+            implementationPlan: ["Add a guard.", "Add a focused regression test.", "Run validation.", "Avoid unrelated layout changes."],
+            testPlan: ["Run settings dialog test.", "Run npm test.", "Run npm run typecheck."],
+            acceptanceCriteria: ["Dialog no longer crashes.", "Existing layout remains.", "Regression is covered.", "No unrelated UI changes."],
+            clarificationQuestions: [],
+            assumptions: ["Preserve current layout."],
+            implementationNotes: ["Keep the fix surgical."],
+            draftState: "ready",
+            blockingClarificationQuestions: [],
+            ticketType: "task",
+            subtickets: []
+          })
+        };
+      })
+  };
+
+  const draft = await createTicketDraft(
+    {
+      projectPath,
+      idea: "Fix the settings dialog crash",
+      draftScope: "quick_bug",
+      intakeKnownFacts: ["The crash is reproducible from Settings."],
+      intakeAnswers: [
+        {
+          question: "Should the current layout be preserved?",
+          whyItMatters: "It decides whether this is a bug fix or redesign.",
+          recommendedAnswer: "Preserve layout.",
+          answer: "Preserve the current layout and only fix the crash."
+        }
+      ]
+    },
+    dependencies
+  );
+
+  assert.match(prompt, /Draft scope: quick_bug/);
+  assert.match(prompt, /The crash is reproducible from Settings/);
+  assert.match(prompt, /User answer: Preserve the current layout and only fix the crash/);
+  assert.equal(draft.requirements.length, 3);
+  assert.equal(draft.implementationPlan.length, 3);
+  assert.equal(draft.acceptanceCriteria.length, 3);
+});
+
 test("async ticket draft creates a Todo placeholder before Codex completes and applies the draft later", async () => {
   const projectPath = await createProject();
   const { runEventSink, events } = createFakeRunEventSink();
@@ -310,6 +448,55 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
   assert.equal(completedBoard.tickets.length, 1);
   assert.equal(completedBoard.tickets[0].id, pending.frontMatter.id);
   assert.equal(events.at(-1)?.type, "run.completed");
+});
+
+test("async ticket draft can run intake in the background after creating the pending ticket", async () => {
+  const projectPath = await createProject();
+  const { runEventSink, events } = createFakeRunEventSink();
+  let resolveIntake: TicketDraftRunResolver | null = null;
+  const prompts: string[] = [];
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_background_intake",
+    createRequestId: () => "tdr_background_intake",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient((prompt) => {
+        prompts.push(prompt);
+        if (prompts.length === 1) {
+          return new Promise((resolve) => {
+            resolveIntake = resolve;
+          });
+        }
+        return { finalResponse: validDraftJson("Background intake draft") };
+      })
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Fix a settings modal crash", runIntake: true }, dependencies);
+  const pending = await readTicket(projectPath, started.ticket.frontMatter.id);
+
+  assert.equal(pending.frontMatter.runStatus, "drafting");
+  assert.match(pending.frontMatter.title, /^Draft: Fix a settings modal crash/);
+  await waitFor(() => resolveIntake !== null, "background intake request");
+  assert.ok(events.some((event) => event.type === "agent.message.completed" && /Running draft intake/.test(event.text)));
+
+  const completeIntake = resolveIntake as unknown as TicketDraftRunResolver;
+  completeIntake({
+    finalResponse: validDraftIntakeJson({
+      questions: [],
+      knownFacts: ["Settings modal crashes when opened without saved preferences."],
+      relatedTicketIds: []
+    })
+  });
+
+  await waitFor(async () => (await readTicket(projectPath, pending.frontMatter.id)).frontMatter.runStatus === "draft_complete", "draft completion");
+  const completed = await readTicket(projectPath, pending.frontMatter.id);
+
+  assert.equal(completed.frontMatter.title, "Background intake draft");
+  assert.match(prompts[0], /fast intake pass/);
+  assert.match(prompts[1], /Draft scope: quick_bug/);
+  assert.match(prompts[1], /Settings modal crashes when opened without saved preferences/);
 });
 
 test("async ticket draft keeps the pending ticket visible when Codex drafting fails", async () => {
@@ -410,6 +597,50 @@ test("async ticket draft stores formal clarification questions when drafting is 
   assert.equal(events.at(-1)?.type, "clarification.requested");
 });
 
+test("background intake blocks the pending draft with recommended clarification answers", async () => {
+  const projectPath = await createProject();
+  const { runEventSink, events } = createFakeRunEventSink();
+  let codexCalls = 0;
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_intake_clarification",
+    createRequestId: () => "tdr_intake_clarification",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () =>
+      createDraftCodexClient(async () => {
+        codexCalls += 1;
+        if (codexCalls > 1) throw new Error("Full drafting should not start while intake is blocked.");
+        return {
+          finalResponse: validDraftIntakeJson({
+            scope: "product_feature",
+            questions: [
+              {
+                question: "Should the new setting be enabled by default?",
+                whyItMatters: "The default changes rollout risk and acceptance criteria.",
+                recommendedAnswer: "Keep it disabled by default and let users opt in."
+              }
+            ]
+          })
+        };
+      })
+  };
+
+  const started = await startTicketDraftRun({ projectPath, idea: "Add a workspace setting", runIntake: true }, dependencies);
+
+  await waitFor(async () => (await readTicket(projectPath, started.ticket.frontMatter.id)).frontMatter.runStatus === "blocked", "intake clarification");
+  const blocked = await readTicket(projectPath, started.ticket.frontMatter.id);
+  const questions = await readClarificationQuestions(projectPath, started.ticket.frontMatter.id);
+
+  assert.equal(codexCalls, 1);
+  assert.equal(blocked.frontMatter.status, "needs_clarification");
+  assert.equal(questions.length, 1);
+  assert.match(questions[0].question, /Should the new setting be enabled by default/);
+  assert.match(questions[0].question, /Why it matters: The default changes rollout risk/);
+  assert.match(questions[0].question, /Recommended answer: Keep it disabled by default/);
+  assert.equal(events.at(-1)?.type, "clarification.requested");
+});
+
 test("answering all draft clarification questions auto-resumes drafting on the same ticket", async () => {
   const projectPath = await createProject();
   const prompts: string[] = [];
@@ -446,7 +677,7 @@ test("answering all draft clarification questions auto-resumes drafting on the s
 
   assert.equal(completed.frontMatter.title, "Storage backend migration");
   assert.equal(completed.frontMatter.lastRunId, "run_auto_resume_2");
-  assert.match(completed.markdown, /## Codebase Findings/);
+  assert.match(completed.markdown, /## Goal/);
   assert.match(prompts[1], /Answer: Use SQLite for the first implementation\./);
   assert.match(prompts[1], /Existing draft ticket markdown/);
 });
@@ -565,9 +796,9 @@ test("ticket draft URL research fetches detected URLs and renders source metadat
   assert.equal(draft.research.checkedUrls[0].title, "External Draft Spec");
   assert.match(prompt, /External Draft Spec/);
   assert.match(prompt, /Research-aware drafting/);
-  assert.match(markdown, /## Codebase Findings/);
+  assert.match(markdown, /## Implementation Notes/);
   assert.match(markdown, /External Draft Spec says URLs should be fetched/);
-  assert.match(markdown, /URL fetched: https:\/\/example\.test\/spec\?draft=1 \(External Draft Spec\)/);
+  assert.match(markdown, /Fetched "External Draft Spec" \(https:\/\/example\.test\/spec\?draft=1\) for external context/);
 });
 
 test("ticket draft codebase research inspects matching project files before prompting Codex", async () => {
@@ -628,8 +859,8 @@ test("ticket draft research records URL and codebase limitations in generated ma
   assert.match(draft.research.checkedUrls[0].reason ?? "", /network blocked/);
   assert.ok(draft.research.limitations.some((limitation) => /Code search found no searchable project files|Code search found no matches/.test(limitation)));
   assert.match(markdown, /Could not fetch https:\/\/example\.test\/missing: network blocked/);
-  assert.match(markdown, /## Research Metadata/);
-  assert.match(markdown, /Limitation:/);
+  assert.doesNotMatch(markdown, /## Research Metadata/);
+  assert.match(markdown, /Research limitation:/);
 });
 
 test("ticket draft waits for slow Codex responses without an internal timeout", async () => {
@@ -718,7 +949,7 @@ test("ticket draft creation supports epic output with reviewable subtickets", as
   assert.equal(createInput.subtickets?.length, 2);
   assert.match(createInput.markdown, /# Account migration epic/);
   assert.match(createInput.subtickets?.[0].markdown ?? "", /# Account API migration/);
-  assert.match(createInput.subtickets?.[0].markdown ?? "", /## Parent Epic/);
+  assert.match(createInput.subtickets?.[0].markdown ?? "", /Parent epic: Account migration epic/);
   assert.doesNotMatch(createInput.subtickets?.[0].markdown ?? "", /## Research Metadata/);
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
 });

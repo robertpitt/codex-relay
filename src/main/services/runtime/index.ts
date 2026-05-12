@@ -1,4 +1,5 @@
-import { Context, Effect, FileSystem, Layer, ManagedRuntime, Path } from "effect";
+import { Config, Context, Effect, FileSystem, Layer, ManagedRuntime, Path } from "effect";
+import type { ConfigProvider } from "effect";
 import { IoLive } from "../io";
 import { CommandExecutor, HttpClient, SocketBoundary } from "../io";
 
@@ -22,11 +23,28 @@ export type BackendConfigService = {
 
 export const BackendConfig = Context.Service<BackendConfigService>("relay/BackendConfig");
 
-export const BackendConfigLive = Layer.succeed(BackendConfig)({
+export const BackendConfigDefaults = {
   gitMetadataCacheTtlMs: 3_000,
   gitCommandTimeoutMs: 5_000,
   codexStatusTimeoutMs: 5_000
+} satisfies BackendConfigService;
+
+export const BackendConfigSpec = Config.all({
+  gitMetadataCacheTtlMs: Config.int("RELAY_GIT_METADATA_CACHE_TTL_MS").pipe(
+    Config.withDefault(BackendConfigDefaults.gitMetadataCacheTtlMs)
+  ),
+  gitCommandTimeoutMs: Config.int("RELAY_GIT_COMMAND_TIMEOUT_MS").pipe(
+    Config.withDefault(BackendConfigDefaults.gitCommandTimeoutMs)
+  ),
+  codexStatusTimeoutMs: Config.int("RELAY_CODEX_STATUS_TIMEOUT_MS").pipe(
+    Config.withDefault(BackendConfigDefaults.codexStatusTimeoutMs)
+  )
 });
+
+export const loadBackendConfig = (provider?: ConfigProvider.ConfigProvider) =>
+  provider ? BackendConfigSpec.parse(provider) : BackendConfigSpec.asEffect();
+
+export const BackendConfigLive = Layer.effect(BackendConfig, loadBackendConfig());
 
 export type BackendLogLevel = "info" | "warn" | "error";
 

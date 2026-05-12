@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krecndf61bkjwmycgwnd4e65
 title: Add Read-Only Repository Chat Pane to Project Board
 ticketType: task
-status: review
-position: 1000
+status: completed
+position: 59000
 priority: medium
 labels:
   - frontend
@@ -14,7 +14,7 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-12T15:25:07.430Z'
-updatedAt: '2026-05-12T15:58:43.415Z'
+updatedAt: '2026-05-12T20:00:36.321Z'
 codexThreadId: 019e1cd4-f46b-7d82-9e89-4f3a7fc21066
 runStatus: completed
 lastRunId: run_01kred9wqjvawgmgk503bbdt62

@@ -2,6 +2,18 @@
 
 Relay's Electron main process now boots a single Effect runtime from `AppLayerLive`.
 
+## Runtime Config
+
+Backend process config is owned by `src/main/services/runtime/index.ts` and installed into the desktop app through `src/main/services/runtime/appLayer.ts`. The runtime reads these Effect `Config` keys from the default environment provider; missing values keep the listed defaults.
+
+| Env key | BackendConfig field | Default |
+| --- | --- | --- |
+| `RELAY_GIT_METADATA_CACHE_TTL_MS` | `gitMetadataCacheTtlMs` | `3000` |
+| `RELAY_GIT_COMMAND_TIMEOUT_MS` | `gitCommandTimeoutMs` | `5000` |
+| `RELAY_CODEX_STATUS_TIMEOUT_MS` | `codexStatusTimeoutMs` | `5000` |
+
+Tests can parse the same config spec with `ConfigProvider.fromUnknown` through `loadBackendConfig`.
+
 ## Boundaries
 
 - `src/main/index.ts` is the bootstrap: install runtime, register IPC, create the window, wire lifecycle shutdown.

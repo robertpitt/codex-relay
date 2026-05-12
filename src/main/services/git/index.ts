@@ -17,12 +17,15 @@ type GitMetadataDependencies = {
 
 const defaultGitRunner: GitCommandRunner = (projectPath, args) =>
   runBackendEffect(
-    CommandExecutor.use((executor) =>
-      executor.execFile("git", ["-C", projectPath, ...args], {
-        maxBuffer: 1024 * 1024,
-        timeoutMs: 5_000
-      })
-    )
+    Effect.gen(function*() {
+      const config = yield* BackendConfig;
+      return yield* CommandExecutor.use((executor) =>
+        executor.execFile("git", ["-C", projectPath, ...args], {
+          maxBuffer: 1024 * 1024,
+          timeoutMs: config.gitCommandTimeoutMs
+        })
+      );
+    })
   );
 
 const baseMetadata = (

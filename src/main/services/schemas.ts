@@ -9,6 +9,11 @@ import type {
   ClarificationQuestion,
   ClarificationQuestionStore,
   CreateDraftInput,
+  DraftIntakeAnswer,
+  DraftIntakeInput,
+  DraftIntakeQuestion,
+  DraftIntakeResult,
+  DraftScope,
   EpicSubticketCreateInput,
   EpicSubticketLinkInput,
   GitMetadataOptions,
@@ -136,6 +141,14 @@ export const isRelaySchemaError = (error: unknown): error is Schema.SchemaError 
 export const ticketPrioritySchema: RelaySchema<TicketPriority> = Schema.Literals(["low", "medium", "high", "urgent"]);
 
 export const ticketTypeSchema: RelaySchema<TicketType> = Schema.Literals(["task", "epic"]);
+
+export const draftScopeSchema: RelaySchema<DraftScope> = Schema.Literals([
+  "quick_bug",
+  "task",
+  "product_feature",
+  "rewrite",
+  "epic"
+]);
 
 export const runStatusSchema: RelaySchema<RunStatus> = Schema.Literals([
   "idle",
@@ -352,6 +365,35 @@ export const agentTicketUpdateSchema: RelaySchema<AgentTicketUpdate> = strictStr
   clarificationQuestions: stringArrayWithDefault()
 });
 
+const draftIntakeQuestionFields = {
+  question: nonEmptyString,
+  whyItMatters: nonEmptyString,
+  recommendedAnswer: nonEmptyString
+} as const;
+
+export const draftIntakeQuestionSchema: RelaySchema<DraftIntakeQuestion> = strictStruct(draftIntakeQuestionFields);
+
+export const draftIntakeAnswerSchema: RelaySchema<DraftIntakeAnswer> = passthroughStruct({
+  question: nonEmptyString,
+  answer: nonEmptyString,
+  whyItMatters: Schema.optional(Schema.NullOr(Schema.String)),
+  recommendedAnswer: Schema.optional(Schema.NullOr(Schema.String))
+});
+
+export const draftIntakeInputSchema: RelaySchema<DraftIntakeInput> = passthroughStruct({
+  projectPath: Schema.String,
+  idea: Schema.String,
+  scopeOverride: Schema.optional(draftScopeSchema)
+});
+
+export const draftIntakeResultSchema: RelaySchema<DraftIntakeResult> = strictStruct({
+  scope: draftScopeSchema,
+  confidence: numberSchema,
+  knownFacts: stringArrayWithDefault(),
+  relatedTicketIds: stringArrayWithDefault(),
+  questions: withDefault(mutableArray(draftIntakeQuestionSchema), () => [])
+});
+
 export const clarificationQuestionSchema: RelaySchema<ClarificationQuestion> = passthroughStruct({
   id: nonEmptyString,
   ticketId: nonEmptyString,
@@ -439,7 +481,12 @@ export const createDraftInputSchema: RelaySchema<CreateDraftInput> = passthrough
   projectPath: Schema.String,
   idea: Schema.String,
   preferredTicketType: Schema.optional(ticketTypeSchema),
-  ticketId: Schema.optional(Schema.String)
+  ticketId: Schema.optional(Schema.String),
+  draftScope: Schema.optional(draftScopeSchema),
+  runIntake: Schema.optional(Schema.Boolean),
+  intakeAnswers: Schema.optional(mutableArray(draftIntakeAnswerSchema)),
+  intakeKnownFacts: Schema.optional(mutableArray(Schema.String)),
+  relatedTicketIds: Schema.optional(mutableArray(Schema.String))
 });
 
 export const startRunInputSchema: RelaySchema<StartRunInput> = passthroughStruct({

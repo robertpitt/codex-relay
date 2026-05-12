@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01kreb0r980bfvhp8hgrr3yyx1
 title: Evaluate Effect Workflow for Relay Ticket Lifecycle Control
 ticketType: task
-status: review
-position: 2000
+status: completed
+position: 60000
 priority: medium
 labels:
   - backend
@@ -15,7 +15,7 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-12T14:56:21.800Z'
-updatedAt: '2026-05-12T16:41:52.790Z'
+updatedAt: '2026-05-12T20:00:41.184Z'
 codexThreadId: 019e1ce9-79ee-7170-86ef-2246baf5364b
 runStatus: completed
 lastRunId: run_01kredy41qcdhkwgn3ccwctdzg

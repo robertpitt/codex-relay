@@ -29,29 +29,19 @@ const truncatePreviewText = (value: string, maxLength: number): string => {
 
 type TicketMarkdownDraft = TicketDraftSubticket & { research?: TicketDraft["research"] };
 
-const researchMetadata = (draft: TicketMarkdownDraft): string => {
-  if (
-    !draft.research ||
-    (draft.research.checkedUrls.length === 0 &&
-      draft.research.inspectedFiles.length === 0 &&
-      draft.research.limitations.length === 0)
-  ) {
-    return "- No research metadata recorded.";
-  }
-  const urls = draft.research.checkedUrls.map((source) => {
-    const title = source.title ? ` (${source.title})` : "";
-    const reason = source.reason ? ` - ${source.reason}` : "";
-    return `- URL ${source.status}: ${source.url}${title}; characters read: ${source.charactersRead}${reason}`;
-  });
-  const files = draft.research.inspectedFiles.map((file) => {
-    const symbols = file.symbols.length > 0 ? `; symbols: ${file.symbols.slice(0, 6).join(", ")}` : "";
-    const matches =
-      file.matches.length > 0 ? `\n  Matched lines:\n${file.matches.map((match) => `  - ${match}`).join("\n")}` : "";
-    return `- File inspected: ${file.path} - ${file.reason}; characters read: ${file.charactersRead}${symbols}${matches}`;
-  });
-  const limitations = draft.research.limitations.map((limitation) => `- Limitation: ${limitation}`);
-  return [...urls, ...files, ...limitations].join("\n");
-};
+const draftGoal = (draft: TicketMarkdownDraft): string =>
+  draft.requirements.find((item) => item.trim().length > 0) ?? `Deliver ${draft.title}.`;
+
+const draftDecisionList = (draft: TicketMarkdownDraft): string[] => [
+  ...(draft.assumptions ?? []),
+  ...(draft.clarificationQuestions ?? [])
+];
+
+const draftImplementationNotes = (draft: TicketMarkdownDraft): string[] => [
+  ...(draft.researchFindings ?? []).map((finding) => `Codebase finding: ${finding}`),
+  ...(draft.implementationPlan ?? []).map((step) => `Implementation: ${step}`),
+  ...(draft.implementationNotes ?? [])
+];
 
 export const markdownFromDraft = (draft: TicketMarkdownDraft): string => `# ${draft.title}
 
@@ -59,37 +49,29 @@ export const markdownFromDraft = (draft: TicketMarkdownDraft): string => `# ${dr
 
 ${draft.context || "No additional context provided."}
 
-## Codebase Findings
+## Goal
 
-${list(draft.researchFindings)}
+${draftGoal(draft)}
+
+## Decisions / Assumptions
+
+${list(draftDecisionList(draft))}
 
 ## Requirements
 
 ${list(draft.requirements)}
 
-## Implementation Plan
+## Acceptance Criteria
 
-${list(draft.implementationPlan)}
+${list(draft.acceptanceCriteria)}
 
 ## Test Plan
 
 ${list(draft.testPlan)}
 
-## Acceptance Criteria
-
-${list(draft.acceptanceCriteria)}
-
-## Assumptions / Open Questions
-
-${list([...(draft.assumptions ?? []), ...(draft.clarificationQuestions ?? [])])}
-
 ## Implementation Notes
 
-${list(draft.implementationNotes)}
-
-## Research Metadata
-
-${researchMetadata(draft)}
+${list(draftImplementationNotes(draft))}
 
 ## Codex Handoff
 
@@ -98,41 +80,35 @@ No Codex run has been started.
 
 export const markdownFromSubticketDraft = (draft: TicketDraftSubticket, parentTitle: string): string => `# ${draft.title}
 
-## Parent Epic
-
-${parentTitle}
-
 ## Context
+
+Parent epic: ${parentTitle}
 
 ${draft.context || "No additional context provided."}
 
-## Codebase Findings
+## Goal
 
-${list(draft.researchFindings)}
+${draftGoal(draft)}
+
+## Decisions / Assumptions
+
+${list(draftDecisionList(draft))}
 
 ## Requirements
 
 ${list(draft.requirements)}
 
-## Implementation Plan
+## Acceptance Criteria
 
-${list(draft.implementationPlan)}
+${list(draft.acceptanceCriteria)}
 
 ## Test Plan
 
 ${list(draft.testPlan)}
 
-## Acceptance Criteria
-
-${list(draft.acceptanceCriteria)}
-
-## Assumptions / Open Questions
-
-${list([...(draft.assumptions ?? []), ...(draft.clarificationQuestions ?? [])])}
-
 ## Implementation Notes
 
-${list(draft.implementationNotes)}
+${list(draftImplementationNotes(draft))}
 
 ## Codex Handoff
 

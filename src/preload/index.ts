@@ -4,6 +4,7 @@ import type {
   AgentTicketUpdateInput,
   ClarificationAnswerInput,
   CreateDraftInput,
+  DraftIntakeInput,
   EpicSubticketCreateInput,
   EpicSubticketLinkInput,
   EpicSubticketUnlinkInput,
@@ -37,6 +38,7 @@ const api: RelayApi = {
     read: (projectPath: string) => invoke(relayIpcChannels.boardRead, projectPath)
   },
   ticket: {
+    intakeDraft: (input: DraftIntakeInput) => invoke(relayIpcChannels.ticketIntakeDraft, input),
     createDraft: (input: CreateDraftInput) => invoke(relayIpcChannels.ticketCreateDraft, input),
     generateSuggestions: (projectPath: string) => invoke(relayIpcChannels.ticketGenerateSuggestions, projectPath),
     createManual: (projectPath: string, input: TicketCreateInput) => invoke(relayIpcChannels.ticketCreateManual, projectPath, input),

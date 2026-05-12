@@ -19,6 +19,7 @@ export const DEFAULT_COLUMNS: RelayColumn[] = [
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type TicketType = "task" | "epic";
+export type DraftScope = "quick_bug" | "task" | "product_feature" | "rewrite" | "epic";
 export type RunStatus =
   | "idle"
   | "queued"
@@ -293,6 +294,33 @@ export type AgentTicketUpdate = {
   clarificationQuestions: string[];
 };
 
+export type DraftIntakeQuestion = {
+  question: string;
+  whyItMatters: string;
+  recommendedAnswer: string;
+};
+
+export type DraftIntakeAnswer = {
+  question: string;
+  answer: string;
+  whyItMatters?: string | null;
+  recommendedAnswer?: string | null;
+};
+
+export type DraftIntakeInput = {
+  projectPath: string;
+  idea: string;
+  scopeOverride?: DraftScope;
+};
+
+export type DraftIntakeResult = {
+  scope: DraftScope;
+  confidence: number;
+  knownFacts: string[];
+  relatedTicketIds: string[];
+  questions: DraftIntakeQuestion[];
+};
+
 export type AgentTicketUpdateInput = {
   projectPath: string;
   ticketId: string;
@@ -504,6 +532,11 @@ export type CreateDraftInput = {
   idea: string;
   preferredTicketType?: TicketType;
   ticketId?: string;
+  draftScope?: DraftScope;
+  runIntake?: boolean;
+  intakeAnswers?: DraftIntakeAnswer[];
+  intakeKnownFacts?: string[];
+  relatedTicketIds?: string[];
 };
 
 export type RunLogLine = {
@@ -551,6 +584,7 @@ export type RelayApi = {
     read: (projectPath: string) => Promise<BoardSnapshot>;
   };
   ticket: {
+    intakeDraft: (input: DraftIntakeInput) => Promise<DraftIntakeResult>;
     createDraft: (input: CreateDraftInput) => Promise<TicketDraftStartResult>;
     generateSuggestions: (projectPath: string) => Promise<TicketSuggestionsGenerateResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;

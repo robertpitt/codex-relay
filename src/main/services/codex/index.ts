@@ -9,6 +9,11 @@ import {
   type CodexRunPreflightResult,
   type CodexStatus,
   type CreateDraftInput,
+  type DraftIntakeAnswer,
+  type DraftIntakeInput,
+  type DraftIntakeQuestion,
+  type DraftIntakeResult,
+  type DraftScope,
   RELAY_COMPLETED_STATUS,
   RELAY_IN_PROGRESS_STATUS,
   RELAY_NEEDS_CLARIFICATION_STATUS,
@@ -42,7 +47,14 @@ import {
   readRunSummary,
   type RendererRunEventSink
 } from "../run-events";
-import { agentTicketUpdateSchema, isRelaySchemaError, parseSchema, ticketDraftSchema, ticketSuggestionsResponseSchema } from "../schemas";
+import {
+  agentTicketUpdateSchema,
+  draftIntakeResultSchema,
+  isRelaySchemaError,
+  parseSchema,
+  ticketDraftSchema,
+  ticketSuggestionsResponseSchema
+} from "../schemas";
 import { logError, logInfo, logWarn } from "../logger";
 import { pathIsAbsolute, pathRelative, pathResolve } from "../io";
 import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft } from "./research";
@@ -108,6 +120,100 @@ const activeTicketUpdateRuns = new Map<string, ActiveRun>();
 const activeTicketUpdateRunsByTicket = new Map<string, string>();
 
 const nowIso = (): string => new Date().toISOString();
+
+type DraftScopeProfile = {
+  label: string;
+  maxQuestions: number;
+  guidance: string;
+  sectionBudget: number;
+  researchLimits: Partial<TicketDraftResearchLimits>;
+};
+
+const DRAFT_SCOPE_PROFILES: Record<DraftScope, DraftScopeProfile> = {
+  quick_bug: {
+    label: "Quick bug fix",
+    maxQuestions: 2,
+    guidance: "Optimize for speed. Produce a short bug-shaped ticket with the reproduction clue, expected behavior, fix target, and focused regression test.",
+    sectionBudget: 3,
+    researchLimits: {
+      maxResearchMs: 3_000,
+      maxUrls: 1,
+      maxUrlFetchMs: 1_500,
+      maxUrlContentChars: 3_000,
+      maxFilesToScan: 60,
+      maxFilesToRead: 2,
+      maxFileReadChars: 5_000,
+      maxMatchesPerFile: 2
+    }
+  },
+  task: {
+    label: "Task",
+    maxQuestions: 3,
+    guidance: "Produce a normal implementation ticket with concise requirements, concrete affected areas, and focused validation.",
+    sectionBudget: 5,
+    researchLimits: {
+      maxResearchMs: 5_000,
+      maxUrls: 1,
+      maxUrlFetchMs: 2_000,
+      maxUrlContentChars: 4_000,
+      maxFilesToScan: 90,
+      maxFilesToRead: 3,
+      maxFileReadChars: 7_000,
+      maxMatchesPerFile: 2
+    }
+  },
+  product_feature: {
+    label: "Product feature",
+    maxQuestions: 5,
+    guidance: "Produce a lean PRD-like feature ticket with user-visible behavior, product decisions, acceptance criteria, and implementation notes.",
+    sectionBudget: 6,
+    researchLimits: {
+      maxResearchMs: 7_000,
+      maxUrls: 2,
+      maxUrlFetchMs: 3_000,
+      maxUrlContentChars: 6_000,
+      maxFilesToScan: 120,
+      maxFilesToRead: 4,
+      maxFileReadChars: 9_000,
+      maxMatchesPerFile: 3
+    }
+  },
+  rewrite: {
+    label: "Rewrite/refactor",
+    maxQuestions: 6,
+    guidance: "Produce a rewrite/refactor ticket that calls out migration strategy, compatibility risks, and validation boundaries without becoming exhaustive.",
+    sectionBudget: 7,
+    researchLimits: {
+      maxResearchMs: 8_000,
+      maxUrls: 2,
+      maxUrlFetchMs: 3_000,
+      maxUrlContentChars: 6_000,
+      maxFilesToScan: 140,
+      maxFilesToRead: 5,
+      maxFileReadChars: 10_000,
+      maxMatchesPerFile: 3
+    }
+  },
+  epic: {
+    label: "Epic",
+    maxQuestions: 8,
+    guidance: "Produce a parent planning ticket plus independently implementable vertical-slice child tasks. Keep detail in the child tickets.",
+    sectionBudget: 6,
+    researchLimits: {
+      maxResearchMs: 9_000,
+      maxUrls: 2,
+      maxUrlFetchMs: 3_000,
+      maxUrlContentChars: 6_000,
+      maxFilesToScan: 160,
+      maxFilesToRead: 6,
+      maxFileReadChars: 12_000,
+      maxMatchesPerFile: 3
+    }
+  }
+};
+
+const defaultDraftScopeForInput = (input: Pick<CreateDraftInput, "draftScope" | "preferredTicketType">): DraftScope =>
+  input.draftScope ?? (input.preferredTicketType === "epic" ? "epic" : "task");
 
 const activeRunIdForTicketInMap = (runs: Map<string, ActiveRun>, projectPath: string, ticketId: string): string | null => {
   for (const [runId, run] of runs) {
@@ -370,6 +476,35 @@ const ticketDraftSchemaJson = {
     blockingClarificationQuestions: { type: "array", items: { type: "string" } },
     ticketType: { type: "string", enum: ["task", "epic"] },
     subtickets: { type: "array", items: ticketDraftBaseSchemaJson }
+  }
+} as const;
+
+const draftScopeSchemaJson = {
+  type: "string",
+  enum: ["quick_bug", "task", "product_feature", "rewrite", "epic"]
+} as const;
+
+const draftIntakeQuestionSchemaJson = {
+  type: "object",
+  additionalProperties: false,
+  required: ["question", "whyItMatters", "recommendedAnswer"],
+  properties: {
+    question: { type: "string" },
+    whyItMatters: { type: "string" },
+    recommendedAnswer: { type: "string" }
+  }
+} as const;
+
+const draftIntakeResultSchemaJson = {
+  type: "object",
+  additionalProperties: false,
+  required: ["scope", "confidence", "knownFacts", "relatedTicketIds", "questions"],
+  properties: {
+    scope: draftScopeSchemaJson,
+    confidence: { type: "number" },
+    knownFacts: { type: "array", items: { type: "string" } },
+    relatedTicketIds: { type: "array", items: { type: "string" } },
+    questions: { type: "array", items: draftIntakeQuestionSchemaJson }
   }
 } as const;
 
@@ -684,7 +819,26 @@ const normalizeSubticketDraft = (draft: TicketDraftSubticket): TicketDraftSubtic
 
 const fallbackTestPlan = (): string[] => ["Run the project's standard validation command plus focused tests for the files changed by this ticket."];
 
-const normalizeTicketDraftOutcome = (parsedDraft: TicketDraft, research: Awaited<ReturnType<typeof researchTicketDraft>>): TicketDraftOutcome => {
+const applyDraftSectionBudget = (draft: TicketDraftSubticket, scope: DraftScope): TicketDraftSubticket => {
+  const budget = DRAFT_SCOPE_PROFILES[scope].sectionBudget;
+  return {
+    ...draft,
+    researchFindings: (draft.researchFindings ?? []).slice(0, budget),
+    requirements: (draft.requirements ?? []).slice(0, budget),
+    implementationPlan: (draft.implementationPlan ?? []).slice(0, budget),
+    testPlan: (draft.testPlan ?? []).slice(0, Math.max(2, Math.min(budget, 5))),
+    acceptanceCriteria: (draft.acceptanceCriteria ?? []).slice(0, budget),
+    clarificationQuestions: (draft.clarificationQuestions ?? []).slice(0, Math.min(3, budget)),
+    assumptions: (draft.assumptions ?? []).slice(0, Math.min(4, budget)),
+    implementationNotes: (draft.implementationNotes ?? []).slice(0, budget)
+  };
+};
+
+const normalizeTicketDraftOutcome = (
+  parsedDraft: TicketDraft,
+  research: Awaited<ReturnType<typeof researchTicketDraft>>,
+  scope: DraftScope
+): TicketDraftOutcome => {
   const normalizedBase = normalizeSubticketDraft(parsedDraft);
   const metadataFindings = fallbackResearchFindings(research.metadata);
   const researchFindings = cleanStringList([...normalizedBase.researchFindings, ...metadataFindings]);
@@ -696,26 +850,32 @@ const normalizeTicketDraftOutcome = (parsedDraft: TicketDraft, research: Awaited
     ...(parsedDraft.draftState === "needs_clarification" ? parsedDraft.clarificationQuestions : [])
   ]);
   const readyQuestions = parsedDraft.draftState === "ready" ? cleanStringList(parsedDraft.clarificationQuestions) : [];
+  const budgetedBase = applyDraftSectionBudget(
+    {
+      ...normalizedBase,
+      researchFindings:
+        researchFindings.length > 0
+          ? researchFindings
+          : ["No matching source files or URLs were identified during bounded draft research."],
+      implementationPlan,
+      testPlan,
+      clarificationQuestions: parsedDraft.draftState === "needs_clarification" ? [] : readyQuestions
+    },
+    scope
+  );
   const draft: TicketDraft = {
     ...parsedDraft,
-    ...normalizedBase,
+    ...budgetedBase,
     draftState: parsedDraft.draftState ?? "ready",
     blockingClarificationQuestions: blockingQuestions,
-    researchFindings:
-      researchFindings.length > 0
-        ? researchFindings
-        : ["No matching source files or URLs were identified during bounded draft research."],
-    implementationPlan,
-    testPlan,
-    clarificationQuestions: parsedDraft.draftState === "needs_clarification" ? [] : readyQuestions,
-    assumptions: normalizedBase.assumptions,
-    implementationNotes: normalizedBase.implementationNotes,
+    assumptions: budgetedBase.assumptions,
+    implementationNotes: budgetedBase.implementationNotes,
     subtickets: parsedDraft.subtickets.map((subticket) => {
       const normalizedSubticket = normalizeSubticketDraft(subticket);
-      return {
+      return applyDraftSectionBudget({
         ...normalizedSubticket,
         testPlan: normalizedSubticket.testPlan && normalizedSubticket.testPlan.length > 0 ? normalizedSubticket.testPlan : fallbackTestPlan()
-      };
+      }, scope);
     }),
     research: research.metadata
   };
@@ -803,6 +963,221 @@ const formatBoardTicketsForSuggestionPrompt = (board: Awaited<ReturnType<typeof 
       return `- ${ticket.id}: "${truncatePromptText(ticket.title, 120)}" | status: ${status} | priority: ${ticket.priority} | type: ${ticket.ticketType} | labels: ${labels} | excerpt: ${excerpt}`;
     })
     .join("\n");
+};
+
+const formatRelatedTicketsForPrompt = (board: Awaited<ReturnType<typeof readBoard>>, relatedTicketIds: readonly string[] | undefined): string => {
+  const ids = new Set((relatedTicketIds ?? []).map((id) => id.trim()).filter(Boolean));
+  if (ids.size === 0) return "No related tickets were selected by intake.";
+  const columnNameById = new Map(board.columns.map((column) => [column.id, column.name]));
+  const related = board.tickets.filter((ticket) => ids.has(ticket.id));
+  if (related.length === 0) return "No related tickets matched the current board.";
+  return related
+    .map((ticket) => {
+      const labels = ticket.labels.length > 0 ? ticket.labels.join(", ") : "none";
+      const status = columnNameById.get(ticket.status) ?? ticket.status;
+      return `- ${ticket.id}: "${truncatePromptText(ticket.title, 120)}" | status: ${status} | type: ${ticket.ticketType} | labels: ${labels} | excerpt: ${
+        truncatePromptText(ticket.excerpt, 260) || "No excerpt."
+      }`;
+    })
+    .join("\n");
+};
+
+const formatStringListForPrompt = (items: readonly string[] | undefined): string => {
+  const cleaned = cleanStringList(items);
+  return cleaned.length > 0 ? cleaned.map((item) => `- ${item}`).join("\n") : "- None.";
+};
+
+const formatDraftIntakeAnswersForPrompt = (answers: readonly DraftIntakeAnswer[] | undefined): string => {
+  const cleaned = (answers ?? [])
+    .map((answer) => ({
+      question: normalizeWhitespace(answer.question),
+      answer: normalizeWhitespace(answer.answer),
+      recommendedAnswer: answer.recommendedAnswer ? normalizeWhitespace(answer.recommendedAnswer) : "",
+      whyItMatters: answer.whyItMatters ? normalizeWhitespace(answer.whyItMatters) : ""
+    }))
+    .filter((answer) => answer.question && answer.answer);
+  if (cleaned.length === 0) return "No intake questions were answered.";
+  return cleaned
+    .map((answer) => {
+      const reason = answer.whyItMatters ? `\n  Why it mattered: ${answer.whyItMatters}` : "";
+      const recommendation = answer.recommendedAnswer ? `\n  Recommended default: ${answer.recommendedAnswer}` : "";
+      return `- Question: ${answer.question}${reason}${recommendation}\n  User answer: ${answer.answer}`;
+    })
+    .join("\n");
+};
+
+const hasUserSuppliedIntakeContext = (input: CreateDraftInput): boolean =>
+  Boolean(input.intakeAnswers?.length || input.intakeKnownFacts?.length || input.relatedTicketIds?.length);
+
+const draftIntakeScopeOverrideForCreateInput = (input: CreateDraftInput): DraftScope | undefined =>
+  input.draftScope ?? (input.preferredTicketType === "epic" ? "epic" : undefined);
+
+const preferredTicketTypeForDraftScope = (
+  scope: DraftScope,
+  fallback: CreateDraftInput["preferredTicketType"]
+): CreateDraftInput["preferredTicketType"] => (scope === "epic" ? "epic" : fallback === "epic" ? "task" : fallback);
+
+const draftIntakeQuestionToClarification = (question: DraftIntakeQuestion): string =>
+  `${question.question}
+
+Why it matters: ${question.whyItMatters}
+Recommended answer: ${question.recommendedAnswer}`;
+
+const normalizeDraftIntakeResult = (
+  parsed: DraftIntakeResult,
+  board: Awaited<ReturnType<typeof readBoard>>,
+  scopeOverride?: DraftScope
+): DraftIntakeResult => {
+  const scope = scopeOverride ?? parsed.scope;
+  const profile = DRAFT_SCOPE_PROFILES[scope];
+  const ticketIds = new Set(board.tickets.map((ticket) => ticket.id));
+  const relatedTicketIds = cleanStringList(parsed.relatedTicketIds).filter((ticketId) => ticketIds.has(ticketId)).slice(0, 8);
+  const knownFacts = cleanStringList(parsed.knownFacts).slice(0, 8);
+  const questions: DraftIntakeQuestion[] = [];
+  const seenQuestions = new Set<string>();
+
+  for (const question of parsed.questions) {
+    const normalizedQuestion = normalizeWhitespace(question.question);
+    const whyItMatters = normalizeWhitespace(question.whyItMatters);
+    const recommendedAnswer = normalizeWhitespace(question.recommendedAnswer);
+    const questionKey = normalizedQuestion.toLowerCase();
+    if (!normalizedQuestion || !whyItMatters || !recommendedAnswer || seenQuestions.has(questionKey)) continue;
+    seenQuestions.add(questionKey);
+    questions.push({ question: normalizedQuestion, whyItMatters, recommendedAnswer });
+    if (questions.length >= profile.maxQuestions) break;
+  }
+
+  return {
+    scope,
+    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+    knownFacts,
+    relatedTicketIds,
+    questions
+  };
+};
+
+const buildDraftIntakePrompt = (
+  input: DraftIntakeInput,
+  board: Awaited<ReturnType<typeof readBoard>>,
+  research: Awaited<ReturnType<typeof researchTicketDraft>>
+): string => {
+  const scopeOverride = input.scopeOverride;
+  const scopeRules = Object.entries(DRAFT_SCOPE_PROFILES)
+    .map(([scope, profile]) => `- ${scope}: ${profile.label}; max ${profile.maxQuestions} blocking question(s). ${profile.guidance}`)
+    .join("\n");
+  const overrideGuidance = scopeOverride
+    ? `The user selected scopeOverride "${scopeOverride}". You must return scope "${scopeOverride}".`
+    : "Classify the request into the most appropriate scope.";
+
+  return `You are doing a fast intake pass before Relay drafts an implementation ticket.
+
+Goal: decide how much ticket-drafting depth is needed and ask only blocking questions before the expensive full draft starts.
+
+${overrideGuidance}
+
+Scope profiles:
+${scopeRules}
+
+Question rules:
+- Ask only questions that block an implementation-ready ticket.
+- Do not ask questions answerable from local codebase files, current board tickets, linked ticket references, or the research context.
+- Do not ask questions where a conservative default is acceptable; choose the default and put it in knownFacts.
+- Every question must include whyItMatters and a recommendedAnswer the user can accept or edit.
+- Prefer zero questions for quick bugs and small tasks when the codebase and idea give enough direction.
+- Never ask the implementation agent to research the basics later; intake must separate blockers from facts.
+
+Return only data matching the requested schema.
+
+Project path: ${input.projectPath}
+Current board tickets:
+${formatBoardTicketsForSuggestionPrompt(board)}
+
+Research context:
+${renderResearchForPrompt(research)}
+
+User idea:
+${input.idea}`;
+};
+
+export const createDraftIntake = async (
+  input: DraftIntakeInput,
+  dependencies: TicketDraftDependencies = {}
+): Promise<DraftIntakeResult> => {
+  const projectPath = pathResolve(input.projectPath);
+  const idea = input.idea.trim();
+  if (!idea) throw new Error("Describe the ticket idea before drafting with Codex.");
+
+  const requestId = dependencies.createRequestId?.() ?? newId("din");
+  const startedAt = dependencies.nowMs?.() ?? Date.now();
+  const nowMs = dependencies.nowMs ?? Date.now;
+  const durationMs = (): number => Math.max(0, nowMs() - startedAt);
+  const scopeForResearch = input.scopeOverride ?? "task";
+  const profile = DRAFT_SCOPE_PROFILES[scopeForResearch];
+  const abortController = dependencies.abortController ?? new AbortController();
+  const logBase = { requestId, projectPath, ideaLength: idea.length, scopeOverride: input.scopeOverride ?? null };
+
+  await logInfo("codex:draft-intake", "starting draft intake", logBase);
+  try {
+    const status = await (dependencies.getStatus ?? getCodexStatus)();
+    if (!status.cliAvailable) {
+      throw ticketDraftError(
+        "codex_unavailable",
+        requestId,
+        durationMs(),
+        "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before drafting tickets.",
+        "codex_cli_unavailable"
+      );
+    }
+    if (status.authenticated === false) {
+      throw ticketDraftError(
+        "codex_unauthenticated",
+        requestId,
+        durationMs(),
+        "Codex is not authenticated. Run `codex login` in your terminal, then try drafting again.",
+        "codex_auth_unavailable"
+      );
+    }
+
+    const [board, research] = await Promise.all([
+      readBoard(projectPath),
+      researchTicketDraft(
+        {
+          projectPath,
+          idea,
+          preferredTicketType: input.scopeOverride === "epic" ? "epic" : "task"
+        },
+        {
+          ...dependencies,
+          researchLimits: {
+            ...profile.researchLimits,
+            ...(dependencies.researchLimits ?? {})
+          }
+        }
+      )
+    ]);
+    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
+    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath));
+    const prompt = buildDraftIntakePrompt({ ...input, projectPath, idea }, board, research);
+    const turn = await thread.run(prompt, { outputSchema: draftIntakeResultSchemaJson, signal: abortController.signal });
+    const parsed = parseSchema(draftIntakeResultSchema, parseJsonResponse(turn.finalResponse));
+    const intake = normalizeDraftIntakeResult(parsed, board, input.scopeOverride);
+    await logInfo("codex:draft-intake", "draft intake completed", {
+      ...logBase,
+      durationMs: durationMs(),
+      scope: intake.scope,
+      questionCount: intake.questions.length,
+      relatedTicketCount: intake.relatedTicketIds.length
+    });
+    return intake;
+  } catch (error) {
+    const intakeError = normalizeTicketDraftError(error, {
+      requestId,
+      durationMs: durationMs(),
+      signalAborted: abortController.signal.aborted
+    });
+    await logError("codex:draft-intake", "draft intake failed", intakeError, { ...logBase, ...intakeError.toPayload() });
+    throw intakeError;
+  }
 };
 
 const buildRepositoryChatPrompt = (
@@ -990,7 +1365,7 @@ ${formatBoardTicketsForSuggestionPrompt(board)}`;
 };
 
 const createTicketDraftPromise = async (
-  { projectPath, idea, preferredTicketType, ticketId }: CreateDraftInput,
+  { projectPath, idea, preferredTicketType, ticketId, draftScope, intakeAnswers, intakeKnownFacts, relatedTicketIds }: CreateDraftInput,
   dependencies: TicketDraftDependencies = {}
 ): Promise<TicketDraftOutcome> => {
   const requestId = dependencies.createRequestId?.() ?? newId("tdr");
@@ -998,8 +1373,10 @@ const createTicketDraftPromise = async (
   const nowMs = dependencies.nowMs ?? Date.now;
   const durationMs = (): number => Math.max(0, nowMs() - startedAt);
   const abortController = dependencies.abortController ?? new AbortController();
+  const scope = defaultDraftScopeForInput({ draftScope, preferredTicketType });
+  const scopeProfile = DRAFT_SCOPE_PROFILES[scope];
   let progressInterval: DraftProgressIntervalHandle | null = null;
-  const logBase = { requestId, projectPath, ideaLength: idea.length };
+  const logBase = { requestId, projectPath, ideaLength: idea.length, scope };
 
   await logInfo("codex:draft", "starting ticket draft", logBase);
 
@@ -1027,11 +1404,20 @@ const createTicketDraftPromise = async (
       );
     }
 
-    const config = await readProjectConfig(projectPath);
+    const [config, board] = await Promise.all([readProjectConfig(projectPath), readBoard(projectPath)]);
     const existingDraftTicket = ticketId ? await readTicket(projectPath, ticketId) : null;
     const draftClarifications = ticketId ? await readClarificationQuestions(projectPath, ticketId) : [];
     await reportTicketDraftProgress(dependencies, "Running bounded draft research across the project.");
-    const research = await researchTicketDraft({ projectPath, idea, preferredTicketType, ticketId }, dependencies);
+    const research = await researchTicketDraft(
+      { projectPath, idea, preferredTicketType, ticketId, draftScope: scope, intakeAnswers, intakeKnownFacts, relatedTicketIds },
+      {
+        ...dependencies,
+        researchLimits: {
+          ...scopeProfile.researchLimits,
+          ...(dependencies.researchLimits ?? {})
+        }
+      }
+    );
     await reportTicketDraftProgress(
       dependencies,
       `Draft research completed: checked ${research.metadata.checkedUrls.length} URL${research.metadata.checkedUrls.length === 1 ? "" : "s"}, inspected ${
@@ -1061,6 +1447,16 @@ ${formatClarificationsForPrompt(draftClarifications)}
 Existing draft ticket markdown:
 ${existingDraftTicket?.markdown ?? "No existing draft ticket markdown was loaded."}`
       : "No prior clarification records are attached to this new draft.";
+    const intakeContext = `Draft scope: ${scope} (${scopeProfile.label})
+Scope guidance: ${scopeProfile.guidance}
+Known facts from intake:
+${formatStringListForPrompt(intakeKnownFacts)}
+
+Related tickets selected by intake:
+${formatRelatedTicketsForPrompt(board, relatedTicketIds)}
+
+Answered intake questions:
+${formatDraftIntakeAnswersForPrompt(intakeAnswers)}`;
     const prompt = `You are helping create a local software implementation ticket for Relay.
 
 The user will provide a rough idea. Convert it into an implementation-ready ticket for a coding agent and human developer.
@@ -1076,9 +1472,11 @@ Return draftState "ready" only when the ticket is implementation-ready. A ready 
 - implementationPlan steps that tell the coding agent what to change, not what to research;
 - testPlan entries with focused tests or validation commands.
 
+Keep the output lean. Match the depth to the draft scope instead of writing a full PRD for every request. Stay within about ${scopeProfile.sectionBudget} bullets for each major list. Quick bugs should be very short. Product features and rewrites can include PRD-like decisions, but only where needed. Epics should reserve detail for child vertical-slice tasks.
+
 Do not put deferred discovery into implementationPlan. Avoid steps starting with "inspect", "find", "trace", "audit", "look for", "search", or "review" unless the step is only final verification after concrete codebase findings are already provided.
 
-If a blocking product or technical decision cannot be answered from the user's idea, prior clarification answers, or codebase research, return draftState "needs_clarification" and put only those blocking user-answerable questions in blockingClarificationQuestions. Do not create a weak ticket with questions for the implementation agent. For non-blocking uncertainty, choose a conservative default and record it in assumptions.
+If a blocking product or technical decision cannot be answered from the user's idea, intake answers, prior clarification answers, related tickets, or codebase research, return draftState "needs_clarification" and put only those blocking user-answerable questions in blockingClarificationQuestions. Do not create a weak ticket with questions for the implementation agent. For non-blocking uncertainty, choose a conservative default and record it in assumptions.
 
 Use clarificationQuestions only for non-blocking open questions that should remain visible on a final ticket; prefer assumptions for chosen defaults. When draftState is "needs_clarification", duplicate the blocking questions into clarificationQuestions only if required by the schema.
 
@@ -1092,6 +1490,9 @@ Return only data matching the requested schema. Do not implement the task.
 Project path: ${projectPath}
 Project name: ${config.name}
 Current board columns: ${config.columns.map((column) => column.name).join(", ")}
+
+Draft intake context:
+${intakeContext}
 
 Draft clarification context:
 ${clarificationContext}
@@ -1122,7 +1523,7 @@ ${idea}`;
     let parsed: TicketDraftOutcome;
     try {
       const parsedDraft = parseSchema(ticketDraftSchema, parseJsonResponse(turn.finalResponse));
-      parsed = normalizeTicketDraftOutcome(parsedDraft, research);
+      parsed = normalizeTicketDraftOutcome(parsedDraft, research, scope);
     } catch (error) {
       throw ticketDraftError(
         "invalid_response",
@@ -1259,10 +1660,74 @@ export const startTicketDraftRun = async (
 
   void (async () => {
     try {
-      const outcome = await createTicketDraftOutcome(
-        { projectPath, idea, preferredTicketType: input.preferredTicketType, ticketId: ticket.frontMatter.id },
-        draftDependencies
-      );
+      let draftInput: CreateDraftInput = {
+        projectPath,
+        idea,
+        preferredTicketType: input.preferredTicketType,
+        ticketId: ticket.frontMatter.id,
+        draftScope: input.draftScope,
+        intakeAnswers: input.intakeAnswers,
+        intakeKnownFacts: input.intakeKnownFacts,
+        relatedTicketIds: input.relatedTicketIds
+      };
+
+      if (input.runIntake && !hasUserSuppliedIntakeContext(input)) {
+        await reportTicketDraftProgress(draftDependencies, "Running draft intake to classify scope and find blocking questions.");
+        const intake = await createDraftIntake(
+          {
+            projectPath,
+            idea,
+            scopeOverride: draftIntakeScopeOverrideForCreateInput(input)
+          },
+          draftDependencies
+        );
+        await reportTicketDraftProgress(
+          draftDependencies,
+          `Draft intake classified this as ${DRAFT_SCOPE_PROFILES[intake.scope].label.toLowerCase()} with ${intake.questions.length} blocking question${
+            intake.questions.length === 1 ? "" : "s"
+          }.`
+        );
+
+        if (intake.questions.length > 0) {
+          const clarificationPrompts = intake.questions.map(draftIntakeQuestionToClarification);
+          const questions = await createClarificationQuestions(
+            projectPath,
+            ticket.frontMatter.id,
+            clarificationPrompts.map((question) => ({ question })),
+            {
+              actor: "codex",
+              source: "draft_generation",
+              runId,
+              codexThreadId: threadId
+            }
+          );
+          await blockPendingTicketDraftForClarification(projectPath, ticket.frontMatter.id, idea, runId, clarificationPrompts);
+          await emitDraftEvent({
+            type: "clarification.requested",
+            questions,
+            timestamp: nowIso()
+          });
+          await logInfo("codex:draft", "async ticket draft intake blocked on clarification", {
+            projectPath,
+            ticketId: ticket.frontMatter.id,
+            runId,
+            scope: intake.scope,
+            clarificationQuestionCount: questions.length
+          });
+          return;
+        }
+
+        draftInput = {
+          ...draftInput,
+          preferredTicketType: preferredTicketTypeForDraftScope(intake.scope, input.preferredTicketType),
+          draftScope: intake.scope,
+          intakeKnownFacts: intake.knownFacts,
+          relatedTicketIds: intake.relatedTicketIds,
+          intakeAnswers: []
+        };
+      }
+
+      const outcome = await createTicketDraftOutcome(draftInput, draftDependencies);
       if (outcome.status === "needs_clarification") {
         const questions = await createClarificationQuestions(
           projectPath,

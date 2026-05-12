@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Effect } from "effect";
+import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,8 +21,17 @@ import {
   type RepositoryChatThread,
   type TicketDraftStartDependencies
 } from "../src/main/services/codex";
-import { resolveAvailableCodexCli, type CodexCliCandidate } from "../src/main/services/codex/cli";
-import { BackendClock, runBackendEffect } from "../src/main/services/runtime";
+import { resolveAvailableCodexCli, runCodexVersion, type CodexCliCandidate } from "../src/main/services/codex/cli";
+import { CommandExecutor } from "../src/main/services/io";
+import {
+  BackendClock,
+  BackendConfig,
+  BackendConfigDefaults,
+  BackendRuntimeLive,
+  configureBackendRuntime,
+  loadBackendConfig,
+  runBackendEffect
+} from "../src/main/services/runtime";
 import {
   answerClarificationQuestion,
   createClarificationQuestions,
@@ -274,6 +283,60 @@ test("backend Effect runtime provides shared services", async () => {
   );
 
   assert.match(timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("backend config uses documented defaults when no overrides are provided", async () => {
+  const config = await Effect.runPromise(loadBackendConfig(ConfigProvider.fromUnknown({})));
+
+  assert.deepEqual(config, BackendConfigDefaults);
+});
+
+test("backend config reads explicit RELAY millisecond overrides", async () => {
+  const config = await Effect.runPromise(
+    loadBackendConfig(
+      ConfigProvider.fromUnknown({
+        RELAY_GIT_METADATA_CACHE_TTL_MS: 1_111,
+        RELAY_GIT_COMMAND_TIMEOUT_MS: 2_222,
+        RELAY_CODEX_STATUS_TIMEOUT_MS: 3_333
+      })
+    )
+  );
+
+  assert.deepEqual(config, {
+    gitMetadataCacheTtlMs: 1_111,
+    gitCommandTimeoutMs: 2_222,
+    codexStatusTimeoutMs: 3_333
+  });
+});
+
+test("Codex CLI status command uses BackendConfig timeout", async () => {
+  const captured: Array<{ command: string; args: readonly string[]; timeoutMs?: number }> = [];
+  const runtime = ManagedRuntime.make(
+    Layer.mergeAll(
+      Layer.succeed(BackendConfig)({
+        ...BackendConfigDefaults,
+        codexStatusTimeoutMs: 12_345
+      }),
+      Layer.succeed(CommandExecutor)({
+        execFile: (command, args, options = {}) =>
+          Effect.sync(() => {
+            captured.push({ command, args, timeoutMs: options.timeoutMs });
+            return { stdout: "codex-cli 0.130.0\n", stderr: "" };
+          })
+      })
+    )
+  );
+
+  configureBackendRuntime(runtime);
+  try {
+    const version = await runCodexVersion({ source: "path", command: "codex-test" });
+    assert.equal(version, "codex-cli 0.130.0");
+  } finally {
+    configureBackendRuntime(ManagedRuntime.make(BackendRuntimeLive));
+    await runtime.dispose();
+  }
+
+  assert.deepEqual(captured, [{ command: "codex-test", args: ["--version"], timeoutMs: 12_345 }]);
 });
 
 test("codex status uses the bundled CLI candidate without requiring PATH codex", async () => {

@@ -1,6 +1,7 @@
 import type { TicketDraftStartResult, TicketSuggestionsGenerateResult } from "../../../shared/types";
 import {
   cancelTicketUpdateRun,
+  createDraftIntake,
   generateTicketSuggestions,
   maybeResumeTicketDraftAfterClarification,
   reconcileTicketQueueState,
@@ -15,6 +16,7 @@ import {
   agentTicketUpdateInputSchema,
   clarificationAnswerInputSchema,
   createDraftInputSchema,
+  draftIntakeInputSchema,
   epicSubticketCreateInputSchema,
   epicSubticketLinkInputSchema,
   parseSchema,
@@ -46,6 +48,12 @@ import { relayIpcChannels } from "../channels";
 import { ipcArgs, ipcObject, ipcResult, ipcString, ipcVoid } from "../schema";
 
 export const ticketIpcMethods = [
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.ticketIntakeDraft,
+    payload: ipcArgs([ipcObject]),
+    result: ipcResult(),
+    handler: (_event, input) => fromPromise(() => createDraftIntake(parseSchema(draftIntakeInputSchema, input)))
+  }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketCreateDraft,
     payload: ipcArgs([ipcObject]),

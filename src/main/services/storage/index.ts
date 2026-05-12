@@ -587,46 +587,50 @@ const researchMetadataMarkdown = (research?: TicketDraftResearch): string => {
   return [...urls, ...files, ...limitations].join("\n");
 };
 
+const draftGoal = (draft: TicketMarkdownDraft): string =>
+  draft.requirements.find((item) => item.trim().length > 0) ?? `Deliver ${draft.title}.`;
+
+const draftDecisionList = (draft: TicketMarkdownDraft): string[] => [
+  ...(draft.assumptions ?? []),
+  ...(draft.clarificationQuestions ?? [])
+];
+
+const draftImplementationNotes = (draft: TicketMarkdownDraft): string[] => [
+  ...(draft.researchFindings ?? []).map((finding) => `Codebase finding: ${finding}`),
+  ...(draft.implementationPlan ?? []).map((step) => `Implementation: ${step}`),
+  ...(draft.implementationNotes ?? [])
+];
+
 export const ticketMarkdownFromDraft = (draft: TicketMarkdownDraft): string => {
-  const questions = [...(draft.clarificationQuestions ?? [])];
-  const assumptions = [...(draft.assumptions ?? [])];
   return `# ${draft.title}
 
 ## Context
 
 ${draft.context || "No additional context provided."}
 
-## Codebase Findings
+## Goal
 
-${markdownList(draft.researchFindings)}
+${draftGoal(draft)}
+
+## Decisions / Assumptions
+
+${markdownList(draftDecisionList(draft))}
 
 ## Requirements
 
 ${markdownList(draft.requirements)}
 
-## Implementation Plan
+## Acceptance Criteria
 
-${markdownList(draft.implementationPlan)}
+${markdownList(draft.acceptanceCriteria)}
 
 ## Test Plan
 
 ${markdownList(draft.testPlan)}
 
-## Acceptance Criteria
-
-${markdownList(draft.acceptanceCriteria)}
-
-## Assumptions / Open Questions
-
-${markdownList([...assumptions, ...questions])}
-
 ## Implementation Notes
 
-${markdownList(draft.implementationNotes)}
-
-## Research Metadata
-
-${researchMetadataMarkdown(draft.research)}
+${markdownList(draftImplementationNotes(draft))}
 
 ## Codex Handoff
 
@@ -636,41 +640,35 @@ No Codex run has been started.
 
 export const ticketMarkdownFromSubticketDraft = (draft: TicketDraftSubticket, parentTitle: string): string => `# ${draft.title}
 
-## Parent Epic
-
-${parentTitle}
-
 ## Context
+
+Parent epic: ${parentTitle}
 
 ${draft.context || "No additional context provided."}
 
-## Codebase Findings
+## Goal
 
-${markdownList(draft.researchFindings)}
+${draftGoal(draft)}
+
+## Decisions / Assumptions
+
+${markdownList(draftDecisionList(draft))}
 
 ## Requirements
 
 ${markdownList(draft.requirements)}
 
-## Implementation Plan
+## Acceptance Criteria
 
-${markdownList(draft.implementationPlan)}
+${markdownList(draft.acceptanceCriteria)}
 
 ## Test Plan
 
 ${markdownList(draft.testPlan)}
 
-## Acceptance Criteria
-
-${markdownList(draft.acceptanceCriteria)}
-
-## Assumptions / Open Questions
-
-${markdownList([...(draft.assumptions ?? []), ...(draft.clarificationQuestions ?? [])])}
-
 ## Implementation Notes
 
-${markdownList(draft.implementationNotes)}
+${markdownList(draftImplementationNotes(draft))}
 
 ## Codex Handoff
 

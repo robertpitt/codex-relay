@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
+import { Effect } from "effect";
 import { CommandExecutor, pathDirname, pathJoin } from "../io";
-import { runBackendEffect } from "../runtime";
+import { BackendConfig, runBackendEffect } from "../runtime";
 
 export type CodexCliCandidateSource = "bundled" | "path";
 
@@ -116,7 +117,12 @@ export const resolveCodexCliCandidates = (options: ResolveCodexCliCandidatesOpti
 
 export const runCodexVersion = async (candidate: CodexCliCandidate): Promise<string> => {
   const { stdout } = await runBackendEffect(
-    CommandExecutor.use((executor) => executor.execFile(candidate.command, ["--version"], { timeoutMs: 5_000 }))
+    Effect.gen(function*() {
+      const config = yield* BackendConfig;
+      return yield* CommandExecutor.use((executor) =>
+        executor.execFile(candidate.command, ["--version"], { timeoutMs: config.codexStatusTimeoutMs })
+      );
+    })
   );
   return stdout.trim();
 };
