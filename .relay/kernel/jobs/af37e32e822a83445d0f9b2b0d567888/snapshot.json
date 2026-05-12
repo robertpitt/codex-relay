@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "executionId": "af37e32e822a83445d0f9b2b0d567888",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.implementation",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.implementation:/Users/robertpitt/Projects/relay:tkt_01krf9fc4rxb5qx31pe8jgwf3j:run_01krf9nnxnf37h7j18p00w9hwr",
+  "status": "running",
+  "attempts": 1,
+  "createdAt": "2026-05-12T23:52:04.790Z",
+  "updatedAt": "2026-05-12T23:52:05.080Z",
+  "runId": "run_01krf9nnxnf37h7j18p00w9hwr",
+  "ticketId": "tkt_01krf9fc4rxb5qx31pe8jgwf3j",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "ticketId": "tkt_01krf9fc4rxb5qx31pe8jgwf3j",
+    "freshThread": false,
+    "runId": "run_01krf9nnxnf37h7j18p00w9hwr",
+    "resume": false
+  },
+  "metadata": {
+    "resume": false
+  },
+  "message": "Codex implementation run started."
+}

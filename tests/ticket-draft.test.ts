@@ -425,13 +425,14 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
       )
   };
 
-  const started = await startTicketDraftRun({ projectPath, idea: "Make ticket drafting asynchronous" }, dependencies);
+  const started = await startTicketDraftRun({ projectPath, idea: "Make ticket drafting asynchronous", priority: "high" }, dependencies);
   const pending = await readTicket(projectPath, started.ticket.frontMatter.id);
   const pendingBoard = await readBoard(projectPath);
 
   assert.equal(started.runId, "run_async_draft");
   assert.equal(pending.frontMatter.status, "todo");
   assert.equal(pending.frontMatter.runStatus, "drafting");
+  assert.equal(pending.frontMatter.priority, "high");
   assert.equal(pending.frontMatter.effort, "xhigh");
   assert.equal(pending.frontMatter.lastRunId, "run_async_draft");
   assert.match(pending.frontMatter.title, /^Draft: Make ticket drafting asynchronous/);

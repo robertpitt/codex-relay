@@ -7,6 +7,7 @@ import {
   DraftIntakeQuestionsPanel,
   DraftingTicketDetailLoading,
   emptyColumnMessage,
+  FloatingTicketComposer,
   RepositoryChatPanelContent,
   TicketCardContent,
   TicketMarkdownTabs,
@@ -365,6 +366,44 @@ test("create ticket draft messages expose status and alert roles", () => {
   assert.match(errorMarkup, /role="alert"/);
   assert.doesNotMatch(errorMarkup, /spin/);
   assert.match(errorMarkup, /Codex draft failed/);
+});
+
+test("floating ticket composer renders compact drafting controls without create modal chrome", () => {
+  const markup = renderToStaticMarkup(
+    <FloatingTicketComposer
+      projectPath="/tmp/project"
+      defaultEffort="medium"
+      onCreated={() => undefined}
+      setToast={() => undefined}
+    />
+  );
+
+  assert.match(markup, /floating-ticket-composer/);
+  assert.match(markup, /aria-label="Draft ticket idea"/);
+  assert.match(markup, /aria-label="Ticket idea"/);
+  assert.match(markup, />Type</);
+  assert.match(markup, />Mode</);
+  assert.match(markup, />Priority</);
+  assert.match(markup, />Effort</);
+  assert.match(markup, /value="task" selected="">Task/);
+  assert.match(markup, /Product Feature/);
+  assert.match(markup, /Rewrite/);
+  assert.match(markup, /aria-label="Draft ticket with agent"/);
+  assert.doesNotMatch(markup, /modal-backdrop/);
+  assert.doesNotMatch(markup, /Create Ticket/);
+});
+
+test("floating ticket composer submit button is disabled for blank ideas", () => {
+  const markup = renderToStaticMarkup(
+    <FloatingTicketComposer
+      projectPath="/tmp/project"
+      defaultEffort="medium"
+      onCreated={() => undefined}
+      setToast={() => undefined}
+    />
+  );
+
+  assert.match(markup, /floating-ticket-submit" disabled=""/);
 });
 
 test("draft intake question panel renders editable recommended answers", () => {

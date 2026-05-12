@@ -514,6 +514,7 @@ export const clarificationAnswerInputSchema: RelaySchema<ClarificationAnswerInpu
 export const createDraftInputSchema: RelaySchema<CreateDraftInput> = passthroughStruct({
   projectPath: Schema.String,
   idea: Schema.String,
+  priority: Schema.optional(ticketPrioritySchema),
   effort: Schema.optional(ticketEffortSchema),
   preferredTicketType: Schema.optional(ticketTypeSchema),
   ticketId: Schema.optional(Schema.String),

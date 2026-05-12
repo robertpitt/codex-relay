@@ -52,6 +52,7 @@ type KeyboardShortcutContextValue = {
 
 type OrderedShortcut = KeyboardShortcutRegistration & { order: number; priority: number };
 type OrderedOverlay = OverlayShortcutRegistration & { order: number; priority: number };
+type CommandOrControlKeyEvent = Pick<KeyboardShortcutEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "repeat" | "shiftKey">;
 
 const nonTextInputTypes = new Set([
   "button",
@@ -118,6 +119,9 @@ export const isTextEntryTarget = (target: EventTarget | null): boolean => {
 
 export const isCreateTicketShortcut = (event: KeyboardShortcutEvent): boolean =>
   !event.repeat && isSpaceKey(event) && hasOnlyModifier(event, "commandOrControl");
+
+export const isTicketComposerSubmitShortcut = (event: CommandOrControlKeyEvent): boolean =>
+  !event.repeat && !event.altKey && !event.shiftKey && event.ctrlKey !== event.metaKey && normalizeKey(event.key) === "enter";
 
 export const isSidebarToggleShortcut = (event: KeyboardShortcutEvent): boolean =>
   !event.repeat && normalizeKey(event.key) === "b" && hasOnlyModifier(event, "commandOrControl");

@@ -4,6 +4,7 @@ import {
   handleKeyboardShortcutKeyDown,
   isCreateTicketShortcut,
   isSidebarToggleShortcut,
+  isTicketComposerSubmitShortcut,
   isTextEntryTarget,
   sidebarToggleShortcutLabel,
   ticketNavigationDirection,
@@ -142,6 +143,15 @@ test("Create Ticket shortcut opens from non-typing contexts", () => {
   assert.equal(handled, true);
   assert.equal(openCount, 1);
   assert.equal(isCreateTicketShortcut(keyboardEvent({ key: " ", code: "Space", ctrlKey: true })), true);
+});
+
+test("Ticket composer submit shortcut uses command-or-control Enter only", () => {
+  assert.equal(isTicketComposerSubmitShortcut(keyboardEvent({ key: "Enter", metaKey: true })), true);
+  assert.equal(isTicketComposerSubmitShortcut(keyboardEvent({ key: "Enter", ctrlKey: true })), true);
+  assert.equal(isTicketComposerSubmitShortcut(keyboardEvent({ key: "Enter" })), false);
+  assert.equal(isTicketComposerSubmitShortcut(keyboardEvent({ key: "Enter", metaKey: true, shiftKey: true })), false);
+  assert.equal(isTicketComposerSubmitShortcut(keyboardEvent({ key: "Enter", metaKey: true, ctrlKey: true })), false);
+  assert.equal(isTicketComposerSubmitShortcut(keyboardEvent({ key: "Enter", metaKey: true, repeat: true })), false);
 });
 
 test("Sidebar toggle shortcut matches command-or-control B without extra modifiers", () => {

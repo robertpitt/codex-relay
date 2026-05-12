@@ -553,6 +553,7 @@ export type CodexRunPreflightResult = {
 export type CreateDraftInput = {
   projectPath: string;
   idea: string;
+  priority?: TicketPriority;
   effort?: TicketEffort;
   preferredTicketType?: TicketType;
   ticketId?: string;

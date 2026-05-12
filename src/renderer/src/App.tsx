@@ -31,7 +31,7 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, DragEvent, KeyboardEvent, ReactElement, Ref } from "react";
+import type { CSSProperties, DragEvent, KeyboardEvent, ReactElement, Ref, RefObject } from "react";
 import { RELAY_IN_PROGRESS_STATUS } from "@shared/types";
 import type {
   BoardSnapshot,
@@ -80,9 +80,9 @@ import {
   isSupportedDroppedImageFile
 } from "./lib/attachments";
 import {
-  createTicketShortcutLabel,
   isCreateTicketShortcut,
   isSidebarToggleShortcut,
+  isTicketComposerSubmitShortcut,
   KeyboardShortcutProvider,
   sidebarToggleShortcutLabel,
   ticketNavigationDirection,
@@ -191,6 +191,7 @@ const priorityOptions: TicketPriority[] = ["low", "medium", "high", "urgent"];
 const ticketTypeOptions: TicketType[] = ["task", "epic"];
 const ticketEffortOptions: TicketEffort[] = ["low", "medium", "high", "xhigh"];
 const draftScopeOptions: Array<"auto" | DraftScope> = ["auto", "quick_bug", "task", "product_feature", "rewrite", "epic"];
+const floatingComposerDraftScopeOptions: DraftScope[] = ["quick_bug", "task", "product_feature", "rewrite", "epic"];
 
 const draftScopeLabel = (scope: "auto" | DraftScope): string => {
   switch (scope) {
@@ -1025,7 +1026,6 @@ function BoardView({
   query,
   ticketNavigationEnabled,
   onQuery,
-  onCreate,
   onGenerateTickets,
   onToggleRepositoryChat,
   onOpenTicket,
@@ -1037,7 +1037,6 @@ function BoardView({
   query: string;
   ticketNavigationEnabled: boolean;
   onQuery: (query: string) => void;
-  onCreate: () => void;
   onGenerateTickets: () => void;
   onToggleRepositoryChat: () => void;
   onOpenTicket: (ticketId: string) => void;
@@ -1070,8 +1069,6 @@ function BoardView({
     () => orderedTickets.some((ticket) => activeRunElapsedLabel(ticket, now) !== null),
     [orderedTickets, now]
   );
-  const createShortcut = createTicketShortcutLabel();
-
   const setTicketButtonRef = useCallback((ticketId: string, node: HTMLButtonElement | null): void => {
     if (node) {
       ticketButtonRefs.current.set(ticketId, node);
@@ -1179,16 +1176,6 @@ function BoardView({
           >
             <Sparkles size={16} />
             Generate Tickets
-          </button>
-          <button
-            className="primary-button topbar-button topbar-create-button"
-            onClick={onCreate}
-            aria-keyshortcuts="Meta+Space Control+Space"
-            title={`Create Ticket (${createShortcut})`}
-          >
-            <Plus size={16} />
-            Create Ticket
-            <kbd className="topbar-shortcut">{createShortcut}</kbd>
           </button>
         </div>
       </div>
@@ -1671,6 +1658,370 @@ function TicketSuggestionsModal({
   );
 }
 
+export function FloatingTicketComposer({
+  projectPath,
+  defaultEffort,
+  composerRef,
+  onCreated,
+  setToast
+}: {
+  projectPath: string;
+  defaultEffort: TicketEffort;
+  composerRef?: RefObject<HTMLTextAreaElement | null>;
+  onCreated: () => void | Promise<void>;
+  setToast: (toast: Toast) => void;
+}): ReactElement {
+  const [idea, setIdea] = useState("");
+  const [ticketType, setTicketType] = useState<TicketType>("task");
+  const [draftScope, setDraftScope] = useState<DraftScope>("task");
+  const [priority, setPriority] = useState<TicketPriority>("medium");
+  const [effort, setEffort] = useState<TicketEffort>(defaultEffort);
+  const [busy, setBusy] = useState(false);
+  const [ticketReferences, setTicketReferences] = useState<TicketReferenceCandidate[]>([]);
+  const [ticketReferencesLoading, setTicketReferencesLoading] = useState(false);
+  const [ticketReferencesError, setTicketReferencesError] = useState<string | null>(null);
+  const [ticketReferenceMention, setTicketReferenceMention] = useState<ActiveTicketReferenceMention | null>(null);
+  const [ticketReferenceMenuStyle, setTicketReferenceMenuStyle] = useState<CSSProperties | null>(null);
+  const [activeTicketReferenceIndex, setActiveTicketReferenceIndex] = useState(0);
+  const draftRequestRef = useRef(0);
+  const localComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const ideaEditorRef = composerRef ?? localComposerRef;
+  const filteredTicketReferences = useMemo(
+    () => filterTicketReferenceCandidates(ticketReferences, ticketReferenceMention?.token.query ?? ""),
+    [ticketReferenceMention?.token.query, ticketReferences]
+  );
+  const ideaTicketReferenceMenuOpen = ticketReferenceMention !== null;
+  const canSubmit = !busy && idea.trim().length > 0;
+
+  useEffect(() => {
+    setEffort(defaultEffort);
+  }, [defaultEffort]);
+
+  useEffect(() => {
+    let active = true;
+    setTicketReferencesLoading(true);
+    setTicketReferencesError(null);
+    void getRelayApi().ticket
+      .references(projectPath)
+      .then((candidates) => {
+        if (!active) return;
+        setTicketReferences(candidates);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setTicketReferences([]);
+        setTicketReferencesError(error instanceof Error ? error.message : "Unable to load ticket references.");
+      })
+      .finally(() => {
+        if (active) setTicketReferencesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [projectPath]);
+
+  useEffect(() => {
+    setActiveTicketReferenceIndex((current) => {
+      if (filteredTicketReferences.length === 0) return 0;
+      return Math.min(current, filteredTicketReferences.length - 1);
+    });
+  }, [filteredTicketReferences.length]);
+
+  useEffect(() => {
+    const editor = ideaEditorRef.current;
+    if (!editor) return;
+    const computed = window.getComputedStyle(editor);
+    const lineHeight = Number.parseFloat(computed.lineHeight) || 20;
+    const padding =
+      Number.parseFloat(computed.paddingTop || "0") + Number.parseFloat(computed.paddingBottom || "0");
+    const maxHeight = Math.round(lineHeight * 100 + padding);
+    editor.style.height = "auto";
+    editor.style.maxHeight = `${maxHeight}px`;
+    editor.style.height = `${Math.min(editor.scrollHeight, maxHeight)}px`;
+    editor.style.overflowY = editor.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [idea, ideaEditorRef]);
+
+  const updateTicketReferenceMention = (value: string, selectionStart: number, selectionEnd = selectionStart): void => {
+    const token = getActiveTicketMention(value, selectionStart, selectionEnd);
+    setTicketReferenceMention(token ? { token } : null);
+    setActiveTicketReferenceIndex(0);
+  };
+
+  const updateTicketReferenceMenuPosition = useCallback((): void => {
+    if (!ticketReferenceMention || !ideaEditorRef.current) {
+      setTicketReferenceMenuStyle(null);
+      return;
+    }
+
+    setTicketReferenceMenuStyle(
+      getTicketReferenceMenuLayout({
+        anchorRect: ideaEditorRef.current.getBoundingClientRect(),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight
+      }).style
+    );
+  }, [ideaEditorRef, ticketReferenceMention]);
+
+  useEffect(() => {
+    if (!ticketReferenceMention) {
+      setTicketReferenceMenuStyle(null);
+      return;
+    }
+
+    updateTicketReferenceMenuPosition();
+    const handleReposition = (): void => updateTicketReferenceMenuPosition();
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [
+    filteredTicketReferences.length,
+    ticketReferenceMention,
+    ticketReferencesError,
+    ticketReferencesLoading,
+    updateTicketReferenceMenuPosition
+  ]);
+
+  const closeTicketReferenceMenu = (): void => {
+    setTicketReferenceMention(null);
+    setTicketReferenceMenuStyle(null);
+  };
+
+  const insertTicketReference = (candidate: TicketReferenceCandidate): void => {
+    const editor = ideaEditorRef.current;
+    const currentMention =
+      ticketReferenceMention?.token ?? (editor ? getActiveTicketMention(idea, editor.selectionStart, editor.selectionEnd) : null);
+    if (!currentMention) return;
+
+    const next = replaceTicketMention(idea, currentMention, candidate);
+    setIdea(next.value);
+    setTicketReferenceMention(null);
+    setTicketReferenceMenuStyle(null);
+    window.requestAnimationFrame(() => {
+      editor?.focus();
+      editor?.setSelectionRange(next.cursor, next.cursor);
+    });
+  };
+
+  const submitDraft = async (): Promise<void> => {
+    const ideaSnapshot = idea.trim();
+    if (!ideaSnapshot || busy) return;
+    const requestSequence = draftRequestRef.current + 1;
+    draftRequestRef.current = requestSequence;
+    setBusy(true);
+    try {
+      const result = await getRelayApi().ticket.createDraft({
+        projectPath,
+        idea: ideaSnapshot,
+        priority,
+        effort,
+        preferredTicketType: ticketTypeForDraftScope(draftScope, ticketType),
+        draftScope,
+        runIntake: true
+      });
+      if (draftRequestRef.current !== requestSequence) return;
+      if (!result.ok) {
+        setToast({ kind: "error", message: result.error.message });
+        return;
+      }
+      setIdea("");
+      setTicketReferenceMention(null);
+      setToast({ kind: "info", message: `Agent draft started for ${result.ticket.frontMatter.title}.` });
+      void Promise.resolve(onCreated()).catch((error) => {
+        setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
+      });
+    } catch (error) {
+      if (draftRequestRef.current !== requestSequence) return;
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Ticket drafting failed." });
+    } finally {
+      if (draftRequestRef.current === requestSequence) setBusy(false);
+    }
+  };
+
+  const handleTicketReferenceKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (ticketReferenceMention) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setTicketReferenceMention(null);
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveTicketReferenceIndex((current) =>
+          filteredTicketReferences.length === 0 ? 0 : (current + 1) % filteredTicketReferences.length
+        );
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveTicketReferenceIndex((current) =>
+          filteredTicketReferences.length === 0 ? 0 : (current - 1 + filteredTicketReferences.length) % filteredTicketReferences.length
+        );
+        return;
+      }
+
+      if ((event.key === "Enter" || event.key === "Tab") && filteredTicketReferences.length > 0) {
+        event.preventDefault();
+        insertTicketReference(filteredTicketReferences[activeTicketReferenceIndex] ?? filteredTicketReferences[0]);
+        return;
+      }
+    }
+
+    if (isTicketComposerSubmitShortcut(event)) {
+      event.preventDefault();
+      void submitDraft();
+    }
+  };
+
+  const renderTicketReferenceMenu = (menuId: string): ReactElement | null => {
+    if (!ticketReferenceMention || !ticketReferenceMenuStyle || typeof document === "undefined") return null;
+
+    return createPortal(
+      <div
+        className="ticket-reference-menu floating"
+        id={menuId}
+        role="listbox"
+        aria-label="Ticket references"
+        style={ticketReferenceMenuStyle}
+      >
+        {ticketReferencesLoading && <div className="ticket-reference-empty">Loading local tickets...</div>}
+        {!ticketReferencesLoading && ticketReferencesError && <div className="ticket-reference-empty">{ticketReferencesError}</div>}
+        {!ticketReferencesLoading && !ticketReferencesError && filteredTicketReferences.length === 0 && (
+          <div className="ticket-reference-empty">
+            {ticketReferences.length === 0 ? "No tickets in this project." : "No matching tickets."}
+          </div>
+        )}
+        {!ticketReferencesLoading &&
+          !ticketReferencesError &&
+          filteredTicketReferences.map((candidate, index) => (
+            <button
+              key={candidate.id}
+              type="button"
+              className={clsx("ticket-reference-option", index === activeTicketReferenceIndex && "active")}
+              role="option"
+              aria-selected={index === activeTicketReferenceIndex}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveTicketReferenceIndex(index)}
+              onClick={() => insertTicketReference(candidate)}
+            >
+              <strong>{candidate.title}</strong>
+              <span>{candidate.relativePath}</span>
+              <em>{candidate.columnName}</em>
+            </button>
+          ))}
+      </div>,
+      document.body
+    );
+  };
+
+  return (
+    <section className="floating-ticket-composer" aria-label="Draft ticket idea">
+      <div className="floating-ticket-input-row">
+        <div className="ticket-reference-editor floating-ticket-reference-editor">
+          <textarea
+            ref={ideaEditorRef}
+            value={idea}
+            rows={1}
+            placeholder="Draft a ticket idea..."
+            aria-label="Ticket idea"
+            aria-autocomplete="list"
+            aria-controls="floating-ticket-reference-menu"
+            aria-expanded={ideaTicketReferenceMenuOpen}
+            onChange={(event) => {
+              setIdea(event.target.value);
+              updateTicketReferenceMention(event.target.value, event.target.selectionStart, event.target.selectionEnd);
+            }}
+            onFocus={(event) =>
+              updateTicketReferenceMention(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)
+            }
+            onSelect={(event) =>
+              updateTicketReferenceMention(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)
+            }
+            onKeyDown={handleTicketReferenceKeyDown}
+            onBlur={() => {
+              window.setTimeout(closeTicketReferenceMenu, 120);
+            }}
+          />
+          {renderTicketReferenceMenu("floating-ticket-reference-menu")}
+        </div>
+        <button
+          type="button"
+          className="floating-ticket-submit"
+          onClick={() => void submitDraft()}
+          disabled={!canSubmit}
+          aria-label="Draft ticket with agent"
+          title="Draft ticket with agent"
+        >
+          {busy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+        </button>
+      </div>
+      <div className="floating-ticket-controls" aria-label="Ticket draft options">
+        <label>
+          <span>Type</span>
+          <select
+            value={ticketType}
+            onChange={(event) => {
+              const value = event.target.value as TicketType;
+              setTicketType(value);
+              if (value === "task" && draftScope === "epic") setDraftScope("task");
+            }}
+          >
+            {ticketTypeOptions.map((option) => (
+              <option value={option} key={option}>
+                {ticketTypeLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Mode</span>
+          <select
+            value={draftScope}
+            onChange={(event) => {
+              const value = event.target.value as DraftScope;
+              setDraftScope(value);
+              if (value === "epic") setTicketType("epic");
+            }}
+          >
+            {floatingComposerDraftScopeOptions.map((option) => (
+              <option value={option} key={option}>
+                {draftScopeLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Priority</span>
+          <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)}>
+            {priorityOptions.map((option) => (
+              <option value={option} key={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Effort</span>
+          <select value={effort} onChange={(event) => setEffort(event.target.value as TicketEffort)}>
+            {ticketEffortOptions.map((option) => (
+              <option value={option} key={option}>
+                {ticketEffortLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
+
 function CreateTicketModal({
   projectPath,
   defaultEffort,
@@ -1950,6 +2301,7 @@ function CreateTicketModal({
     const result = await getRelayApi().ticket.createDraft({
       projectPath,
       idea: ideaSnapshot,
+      priority: manualPriority,
       effort: manualEffort,
       preferredTicketType,
       draftScope: scopeOverride,
@@ -1985,6 +2337,7 @@ function CreateTicketModal({
     const result = await getRelayApi().ticket.createDraft({
       projectPath,
       idea: ideaSnapshot,
+      priority: manualPriority,
       effort: manualEffort,
       preferredTicketType,
       draftScope: intake.scope,
@@ -3808,7 +4161,6 @@ function RelayApp(): ReactElement {
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState<Toast>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const [ticketSuggestionsOpen, setTicketSuggestionsOpen] = useState(false);
   const [repositoryChatOpen, setRepositoryChatOpen] = useState(false);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
@@ -3818,6 +4170,7 @@ function RelayApp(): ReactElement {
   const [gitMetadataByPath, setGitMetadataByPath] = useState<Record<string, GitMetadata | undefined>>({});
   const boardRequestRef = useRef(0);
   const gitMetadataRequestRef = useRef<Record<string, number>>({});
+  const floatingComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const sidebarShortcutLabel = useMemo(() => sidebarToggleShortcutLabel(), []);
 
   const gitMetadataError = useCallback(
@@ -3904,7 +4257,6 @@ function RelayApp(): ReactElement {
     (projectPath: string | null) => {
       if (projectPath === selectedPath) return;
       setOpenTicketId(null);
-      setCreateOpen(false);
       setTicketSuggestionsOpen(false);
       setRepositoryChatOpen(false);
       setBoard(null);
@@ -3941,7 +4293,6 @@ function RelayApp(): ReactElement {
 
   useEffect(() => {
     setOpenTicketId(null);
-    setCreateOpen(false);
     setTicketSuggestionsOpen(false);
     setRepositoryChatOpen(false);
   }, [selectedPath]);
@@ -4004,7 +4355,7 @@ function RelayApp(): ReactElement {
     () => events.filter((event) => event.projectPath === selectedPath && event.ticketId === openTicketId),
     [events, openTicketId, selectedPath]
   );
-  const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !ticketSuggestionsOpen && !repositoryChatOpen && !openTicketId);
+  const createShortcutEnabled = Boolean(board && selectedPath && !ticketSuggestionsOpen && !repositoryChatOpen && !openTicketId);
 
   useKeyboardShortcut({
     id: "toggle-sidebar",
@@ -4019,9 +4370,10 @@ function RelayApp(): ReactElement {
     id: "create-ticket",
     enabled: createShortcutEnabled,
     priority: 10,
+    allowInTextEntry: true,
     matcher: isCreateTicketShortcut,
     handler: () => {
-      setCreateOpen(true);
+      floatingComposerRef.current?.focus();
       return true;
     }
   });
@@ -4033,7 +4385,7 @@ function RelayApp(): ReactElement {
         sidebarCollapsed && "sidebar-collapsed",
         openTicketId && "detail-open",
         repositoryChatOpen && "chat-open",
-        (createOpen || ticketSuggestionsOpen) && "modal-open"
+        ticketSuggestionsOpen && "modal-open"
       )}
     >
       <ProjectSidebar
@@ -4072,9 +4424,8 @@ function RelayApp(): ReactElement {
         <BoardView
           board={board}
           query={query}
-          ticketNavigationEnabled={!createOpen && !ticketSuggestionsOpen && !openTicketId}
+          ticketNavigationEnabled={!ticketSuggestionsOpen && !openTicketId}
           onQuery={setQuery}
-          onCreate={() => setCreateOpen(true)}
           onGenerateTickets={() => setTicketSuggestionsOpen(true)}
           onToggleRepositoryChat={() => setRepositoryChatOpen((open) => !open)}
           onOpenTicket={setOpenTicketId}
@@ -4116,11 +4467,12 @@ function RelayApp(): ReactElement {
         />
       )}
 
-      {board && selectedPath && createOpen && (
-        <CreateTicketModal
+      {board && selectedPath && (
+        <FloatingTicketComposer
+          key={selectedPath}
           projectPath={selectedPath}
           defaultEffort={board.config?.settings.defaultTicketEffort ?? "medium"}
-          onClose={() => setCreateOpen(false)}
+          composerRef={floatingComposerRef}
           onCreated={refreshAll}
           setToast={setToast}
         />

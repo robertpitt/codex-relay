@@ -841,7 +841,7 @@ export const createPendingTicketDraft = async (
   const title = pendingTicketDraftTitle(idea, ticketType);
   const placeholder = await createSingleTicket(projectPath, {
     title,
-    priority: "medium",
+    priority: input.priority ?? "medium",
     effort: input.effort,
     labels: [],
     markdown: ticketMarkdownFromPendingDraft(title, idea),
