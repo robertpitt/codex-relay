@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   activeRunElapsedLabel,
+  CreateTicketDraftMessage,
   DraftingTicketDetailLoading,
+  emptyColumnMessage,
   TicketCardContent,
   TicketSuggestionsModalContent,
   TicketRunElapsedPill,
@@ -32,6 +34,46 @@ const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   excerpt: "Runtime card",
   filePath: "/tmp/tkt_elapsed.md",
   ...patch
+});
+
+test("empty column copy is status-aware for standard workflow columns", () => {
+  assert.deepEqual(emptyColumnMessage("Todo"), {
+    title: "No tickets to triage",
+    detail: "New work appears here before it is prioritized."
+  });
+  assert.deepEqual(emptyColumnMessage("Ready"), {
+    title: "Ready queue is empty",
+    detail: "Prioritized tickets will wait here before implementation starts."
+  });
+  assert.deepEqual(emptyColumnMessage("In Progress"), {
+    title: "Nothing in progress",
+    detail: "Active implementation tickets will show here while work is underway."
+  });
+  assert.deepEqual(emptyColumnMessage("Needs Clarification"), {
+    title: "No questions pending",
+    detail: "Tickets needing product or implementation answers will pause here."
+  });
+  assert.deepEqual(emptyColumnMessage("Review"), {
+    title: "Nothing awaiting review",
+    detail: "Completed agent work will land here for final checks."
+  });
+  assert.deepEqual(emptyColumnMessage("Completed"), {
+    title: "No completed tickets yet",
+    detail: "Accepted tickets will appear here after review is finished."
+  });
+
+  const standardTitles = ["Todo", "Ready", "In Progress", "Needs Clarification", "Review", "Completed"].map(
+    (columnName) => emptyColumnMessage(columnName).title
+  );
+  assert.equal(new Set(standardTitles).size, standardTitles.length);
+});
+
+test("empty column copy keeps a generic fallback for custom columns", () => {
+  assert.deepEqual(emptyColumnMessage("Blocked Review"), {
+    title: "Blocked Review is clear",
+    detail: "Tickets will settle here when work reaches this stage."
+  });
+  assert.deepEqual(emptyColumnMessage("  ready  "), emptyColumnMessage("Ready"));
 });
 
 test("drafting ticket status pill renders an active spinner indicator", () => {
@@ -80,6 +122,26 @@ test("elapsed runtime label is hidden outside active in-progress implementation 
   }
 });
 
+test("ticket card label overflow exposes hidden label names without rendering extra label chips", () => {
+  const ticket = ticketSummary({
+    labels: ["frontend", "accessibility", "regression", "polish"],
+    runStatus: "idle",
+    lastRunId: null,
+    lastRunStartedAt: null
+  });
+  const markup = renderToStaticMarkup(<TicketCardContent ticket={ticket} allTickets={[ticket]} columns={DEFAULT_COLUMNS} now={Date.now()} />);
+
+  assert.match(markup, /<div class="labels">/);
+  assert.match(markup, />frontend</);
+  assert.match(markup, />accessibility</);
+  assert.match(markup, /class="label-overflow"/);
+  assert.match(markup, /title="Hidden labels: regression, polish"/);
+  assert.match(markup, /aria-label="2 hidden labels: regression, polish"/);
+  assert.match(markup, />\+2</);
+  assert.doesNotMatch(markup, />regression</);
+  assert.doesNotMatch(markup, />polish</);
+});
+
 test("drafting ticket detail loading state hides placeholder draft content", () => {
   const markup = renderToStaticMarkup(<DraftingTicketDetailLoading title="Draft: Async flow" />);
 
@@ -111,6 +173,8 @@ test("ticket suggestions modal content renders loading, error, and empty states"
       onCreate={noop}
     />
   );
+  assert.match(loadingMarkup, /role="status"/);
+  assert.match(loadingMarkup, /aria-busy="true"/);
   assert.match(loadingMarkup, /Codex is reviewing the local project and current board/);
   assert.match(loadingMarkup, /spin/);
 
@@ -142,13 +206,17 @@ test("ticket suggestions modal content renders loading, error, and empty states"
   assert.match(emptyMarkup, /No suggestions returned/);
 });
 
-test("ticket suggestions rows render create and created button states", () => {
+test("ticket suggestions rows render create, creating, created, and error semantics", () => {
   const markup = renderToStaticMarkup(
     <TicketSuggestionsModalContent
       state="ready"
-      suggestions={[suggestion, { ...suggestion, title: "Refresh draft status", request: "Draft a task to refresh draft status." }]}
+      suggestions={[
+        suggestion,
+        { ...suggestion, title: "Refresh draft status", request: "Draft a task to refresh draft status." },
+        { ...suggestion, title: "Stabilize generation retry", request: "Draft a task to stabilize generation retry." }
+      ]}
       errorMessage={null}
-      createStates={{ 1: "created" }}
+      createStates={{ 1: "created", 2: "creating" }}
       createErrors={{ 0: "Codex draft failed to start." }}
       onCreate={() => undefined}
     />
@@ -158,7 +226,29 @@ test("ticket suggestions rows render create and created button states", () => {
   assert.match(markup, /Tighten board keyboard focus/);
   assert.match(markup, /Draft a task to tighten board keyboard focus handling/);
   assert.match(markup, />Create</);
+  assert.match(markup, />Creating\.\.\.</);
   assert.match(markup, />Created</);
+  assert.match(markup, /aria-label="Create draft for Tighten board keyboard focus"/);
+  assert.match(markup, /aria-label="Created draft for Refresh draft status"/);
+  assert.match(markup, /aria-busy="true"/);
   assert.match(markup, /disabled=""/);
+  assert.match(markup, /role="alert"/);
   assert.match(markup, /Codex draft failed to start/);
+  assert.match(markup, /title="Draft a task to stabilize generation retry\."/);
+});
+
+test("create ticket draft messages expose status and alert roles", () => {
+  const infoMarkup = renderToStaticMarkup(<CreateTicketDraftMessage kind="info" message="Creating a pending ticket." busy />);
+
+  assert.match(infoMarkup, /class="draft-message info"/);
+  assert.match(infoMarkup, /role="status"/);
+  assert.match(infoMarkup, /spin/);
+  assert.match(infoMarkup, /Creating a pending ticket/);
+
+  const errorMarkup = renderToStaticMarkup(<CreateTicketDraftMessage kind="error" message="Codex draft failed." />);
+
+  assert.match(errorMarkup, /class="draft-message error"/);
+  assert.match(errorMarkup, /role="alert"/);
+  assert.doesNotMatch(errorMarkup, /spin/);
+  assert.match(errorMarkup, /Codex draft failed/);
 });

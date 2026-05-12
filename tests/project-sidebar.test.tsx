@@ -77,3 +77,32 @@ test("expanded project sidebar marks swimlanes with active task runs", () => {
   assert.match(markup, /aria-label="In Progress: 2 tasks, 1 active task"/);
   assert.match(markup, /project-swimlane-row active/);
 });
+
+test("expanded project sidebar keeps long labels, counts, and active indicators renderable", () => {
+  const longProjectName = "Sidebar Project With A Very Long Name That Should Truncate Without Losing Disclosure Labels";
+  const longSwimlaneName = "Review Lane With A Very Long Name That Should Preserve Counts And Active Indicators";
+  const markup = renderSidebar(
+    [
+      project({
+        name: longProjectName,
+        activeRunCount: 2,
+        swimlanes: [
+          {
+            id: "long_review_lane",
+            name: longSwimlaneName,
+            position: 1000,
+            ticketCount: 123,
+            activeRunCount: 1
+          }
+        ]
+      })
+    ],
+    [projectPath]
+  );
+
+  assert.ok(markup.includes(`aria-label="Collapse ${longProjectName} swimlanes, 2 active tasks"`));
+  assert.ok(markup.includes(`aria-label="${longSwimlaneName}: 123 tasks, 1 active task"`));
+  assert.match(markup, /project-folder-active/);
+  assert.match(markup, /project-swimlane-active/);
+  assert.match(markup, /class="project-swimlane-count" aria-hidden="true">123<\/span>/);
+});

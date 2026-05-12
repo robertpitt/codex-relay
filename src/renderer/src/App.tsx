@@ -91,6 +91,7 @@ type Toast = { kind: "info" | "error" | "success"; message: string } | null;
 type LocalAgentProgress = { status: RunStatus; startedAt: string; endedAt?: string | null };
 type TicketSuggestionCreateState = "idle" | "creating" | "created";
 type TicketSuggestionLoadState = "loading" | "error" | "ready";
+type DraftMessageKind = "info" | "error";
 type ActiveTicketReferenceMention = {
   token: TicketMentionToken;
 };
@@ -218,10 +219,12 @@ const runLabel = (status: RunStatus): string => {
 };
 
 export function TicketRunStatusPill({ status }: { status: RunStatus }): ReactElement {
+  const label = runLabel(status);
+
   return (
-    <span className={clsx("run-pill", status)}>
+    <span className={clsx("run-pill", status)} title={`Agent status: ${label}`} aria-label={`Agent status: ${label}`}>
       {status === "drafting" && <Loader2 className="spin run-pill-icon" size={12} aria-hidden="true" />}
-      <span>{runLabel(status)}</span>
+      <span>{label}</span>
     </span>
   );
 }
@@ -257,6 +260,23 @@ export function DraftingTicketDetailLoading({ title }: { title: string }): React
         <p>Codex is preparing the generated ticket content for {title}.</p>
       </div>
     </section>
+  );
+}
+
+export function CreateTicketDraftMessage({
+  kind,
+  message,
+  busy
+}: {
+  kind: DraftMessageKind;
+  message: string;
+  busy?: boolean;
+}): ReactElement {
+  return (
+    <div className={clsx("draft-message", kind)} role={kind === "error" ? "alert" : "status"}>
+      {busy && <Loader2 className="spin" size={15} />}
+      <span>{message}</span>
+    </div>
   );
 }
 
@@ -322,10 +342,44 @@ No Codex run has been started.
 const statusName = (columns: RelayColumn[], status: string): string =>
   columns.find((column) => column.id === status)?.name ?? status;
 
-const emptyColumnMessage = (columnName: string): { title: string; detail: string } => ({
-  title: `${columnName} is clear`,
-  detail: "Tickets will settle here when work reaches this stage."
-});
+const STANDARD_EMPTY_COLUMN_MESSAGES: Record<string, { title: string; detail: string }> = {
+  todo: {
+    title: "No tickets to triage",
+    detail: "New work appears here before it is prioritized."
+  },
+  ready: {
+    title: "Ready queue is empty",
+    detail: "Prioritized tickets will wait here before implementation starts."
+  },
+  "in progress": {
+    title: "Nothing in progress",
+    detail: "Active implementation tickets will show here while work is underway."
+  },
+  "needs clarification": {
+    title: "No questions pending",
+    detail: "Tickets needing product or implementation answers will pause here."
+  },
+  review: {
+    title: "Nothing awaiting review",
+    detail: "Completed agent work will land here for final checks."
+  },
+  completed: {
+    title: "No completed tickets yet",
+    detail: "Accepted tickets will appear here after review is finished."
+  }
+};
+
+export const emptyColumnMessage = (columnName: string): { title: string; detail: string } => {
+  const normalizedName = columnName.trim().toLowerCase().replace(/\s+/g, " ");
+  const standardMessage = STANDARD_EMPTY_COLUMN_MESSAGES[normalizedName];
+  if (standardMessage) return standardMessage;
+
+  const displayName = columnName.trim() || "This column";
+  return {
+    title: `${displayName} is clear`,
+    detail: "Tickets will settle here when work reaches this stage."
+  };
+};
 
 // Markdown audit: create-ticket drafts, ticket detail bodies, clarification text,
 // and generated Codex completion/final-response console events use MarkdownBlock.
@@ -426,7 +480,9 @@ export function ProjectSidebar({
                 aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} swimlanes${projectActiveLabel}`}
               >
                 <ProjectFolderIcon className="project-folder-icon" size={18} aria-hidden="true" />
-                <span className="project-folder-name">{project.name}</span>
+                <span className="project-folder-name" title={project.name}>
+                  {project.name}
+                </span>
                 <span className="project-folder-status" aria-hidden="true">
                   {project.health !== "ok" && <AlertTriangle size={13} />}
                   {project.activeRunCount > 0 && (
@@ -449,7 +505,9 @@ export function ProjectSidebar({
                           role="listitem"
                           aria-label={`${swimlane.name}: ${taskCountLabel(swimlane.ticketCount)}${activeLabel}`}
                         >
-                          <span className="project-swimlane-name">{swimlane.name}</span>
+                          <span className="project-swimlane-name" title={swimlane.name}>
+                            {swimlane.name}
+                          </span>
                           <span className="project-swimlane-meta">
                             {hasActiveRun && (
                               <span className="project-swimlane-active" title={activeTaskCountLabel(swimlane.activeRunCount)} aria-hidden="true">
@@ -477,11 +535,11 @@ export function ProjectSidebar({
 
       {selectedPath && (
         <div className="sidebar-actions">
-          <button onClick={() => onReveal(selectedPath)}>
+          <button className="sidebar-action-button" onClick={() => onReveal(selectedPath)}>
             <ExternalLink size={15} />
             Reveal
           </button>
-          <button onClick={() => onRemove(selectedPath)}>
+          <button className="sidebar-action-button" onClick={() => onRemove(selectedPath)}>
             <X size={15} />
             Remove
           </button>
@@ -557,7 +615,9 @@ export function TicketCardContent({
   now: number;
 }): ReactElement {
   const visibleLabels = ticket.labels.slice(0, 2);
-  const hiddenLabelCount = ticket.labels.length - visibleLabels.length;
+  const hiddenLabels = ticket.labels.slice(visibleLabels.length);
+  const hiddenLabelCount = hiddenLabels.length;
+  const hiddenLabelText = hiddenLabels.join(", ");
   const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
   const showRunStatus = ticket.runStatus !== "idle";
   const elapsedLabel = activeRunElapsedLabel(ticket, now);
@@ -571,8 +631,16 @@ export function TicketCardContent({
       <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
       {(showRelationship || showPriority || showRunStatus || showBlockerState || elapsedLabel) && (
         <div className="card-meta">
-          {ticket.ticketType === "epic" && <span className="ticket-type-pill epic">Epic</span>}
-          {ticket.parentEpicId && <span className="ticket-type-pill subticket">Subticket</span>}
+          {ticket.ticketType === "epic" && (
+            <span className="ticket-type-pill epic" title="Epic ticket" aria-label="Epic ticket">
+              Epic
+            </span>
+          )}
+          {ticket.parentEpicId && (
+            <span className="ticket-type-pill subticket" title="Subticket of an epic" aria-label="Subticket of an epic">
+              Subticket
+            </span>
+          )}
           {blockerState.isBlocked && (
             <span className="ticket-blocker-pill active" title={blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
               Blocked
@@ -583,7 +651,11 @@ export function TicketCardContent({
               Blocker Warning
             </span>
           )}
-          {showPriority && <span className={clsx("priority", ticket.priority)}>{ticket.priority}</span>}
+          {showPriority && (
+            <span className={clsx("priority", ticket.priority)} title={`${ticket.priority} priority`} aria-label={`${ticket.priority} priority`}>
+              {ticket.priority}
+            </span>
+          )}
           {showRunStatus && <TicketRunStatusPill status={ticket.runStatus} />}
           {elapsedLabel && <TicketRunElapsedPill label={elapsedLabel} />}
         </div>
@@ -593,7 +665,11 @@ export function TicketCardContent({
           {visibleLabels.map((label) => (
             <span key={label}>{label}</span>
           ))}
-          {hiddenLabelCount > 0 && <span className="label-overflow">+{hiddenLabelCount}</span>}
+          {hiddenLabelCount > 0 && (
+            <span className="label-overflow" title={`Hidden labels: ${hiddenLabelText}`} aria-label={`${hiddenLabelCount} hidden labels: ${hiddenLabelText}`}>
+              +{hiddenLabelCount}
+            </span>
+          )}
         </div>
       )}
     </>
@@ -625,6 +701,7 @@ function DraggableCard({
   return (
     <article ref={setNodeRef} style={style} className={clsx("ticket-card", isDragging && "dragging", selected && "keyboard-selected")}>
       <button
+        type="button"
         ref={(node) => onTicketButtonRef(ticket.id, node)}
         className="card-open"
         data-ticket-id={ticket.id}
@@ -633,7 +710,7 @@ function DraggableCard({
       >
         <TicketCardContent ticket={ticket} allTickets={allTickets} columns={columns} now={now} />
       </button>
-      <button className="drag-handle" {...listeners} {...attributes} aria-label={`Drag ${ticket.title}`}>
+      <button type="button" className="drag-handle" {...listeners} {...attributes} aria-label={`Drag ticket: ${ticket.title}`} title={`Drag ticket: ${ticket.title}`}>
         <CircleDashed size={16} />
       </button>
     </article>
@@ -756,15 +833,19 @@ function BoardView({
   return (
     <main className="workspace">
       <div className="topbar">
-        <div>
-          <h1>{board.project.name}</h1>
+        <div className="topbar-project">
+          <h1 className="topbar-title" title={board.project.name}>
+            {board.project.name}
+          </h1>
           <div className="project-header-meta">
-            <p>{board.project.path}</p>
+            <p className="project-header-path" title={board.project.path}>
+              {board.project.path}
+            </p>
             <GitMetadataPill metadata={gitMetadata ?? loadingGitMetadata()} />
           </div>
         </div>
         <div className="topbar-actions">
-          <label className="search">
+          <label className="search topbar-search">
             <Search size={16} />
             <input
               value={query}
@@ -774,6 +855,7 @@ function BoardView({
             />
           </label>
           <button
+            className="topbar-button topbar-generate-button"
             onClick={onGenerateTickets}
             title="Generate ticket suggestions"
           >
@@ -781,14 +863,14 @@ function BoardView({
             Generate Tickets
           </button>
           <button
-            className="primary-button"
+            className="primary-button topbar-button topbar-create-button"
             onClick={onCreate}
             aria-keyshortcuts="Meta+Space Control+Space"
             title={`Create Ticket (${createShortcut})`}
           >
             <Plus size={16} />
             Create Ticket
-            <kbd>{createShortcut}</kbd>
+            <kbd className="topbar-shortcut">{createShortcut}</kbd>
           </button>
         </div>
       </div>
@@ -858,7 +940,7 @@ export function TicketSuggestionsModalContent({
 }): ReactElement {
   if (state === "loading") {
     return (
-      <div className="draft-message ticket-suggestions-status" role="status">
+      <div className="draft-message ticket-suggestions-status" role="status" aria-busy="true">
         <Loader2 className="spin" size={15} />
         <span>Codex is reviewing the local project and current board.</span>
       </div>
@@ -897,23 +979,35 @@ export function TicketSuggestionsModalContent({
         const created = createState === "created";
         const creating = createState === "creating";
         return (
-          <article className={clsx("ticket-suggestion-row", created && "created")} key={`${suggestion.title}-${index}`}>
+          <article
+            className={clsx("ticket-suggestion-row", created && "created")}
+            key={`${suggestion.title}-${index}`}
+            aria-busy={creating || undefined}
+          >
             <div className="ticket-suggestion-main">
               <div className="ticket-suggestion-heading">
-                <h3>{suggestion.title}</h3>
-                <span className={clsx("priority", suggestion.priority)}>{suggestion.priority}</span>
+                <h3 title={suggestion.title}>{suggestion.title}</h3>
+                <span
+                  className={clsx("priority", suggestion.priority)}
+                  title={`${suggestion.priority} priority`}
+                  aria-label={`${suggestion.priority} priority`}
+                >
+                  {suggestion.priority}
+                </span>
               </div>
               {suggestion.labels.length > 0 && (
                 <div className="labels ticket-suggestion-labels">
                   {suggestion.labels.map((label) => (
-                    <span key={label}>{label}</span>
+                    <span key={label} title={label}>
+                      {label}
+                    </span>
                   ))}
                 </div>
               )}
-              <p>{suggestion.rationale}</p>
+              <p title={suggestion.rationale}>{suggestion.rationale}</p>
               <div className="ticket-suggestion-request">
                 <span>Request</span>
-                <strong>{suggestion.request}</strong>
+                <strong title={suggestion.request}>{suggestion.request}</strong>
               </div>
               {createError && (
                 <div className="draft-message error ticket-suggestion-create-error" role="alert">
@@ -927,7 +1021,8 @@ export function TicketSuggestionsModalContent({
               className="primary-button ticket-suggestion-create"
               onClick={() => onCreate(index)}
               disabled={creating || created}
-              aria-label={`${created ? "Created" : "Create draft for"} ${suggestion.title}`}
+              aria-busy={creating || undefined}
+              aria-label={`${created ? "Created draft for" : "Create draft for"} ${suggestion.title}`}
             >
               {creating ? <Loader2 className="spin" size={16} /> : created ? <Check size={16} /> : <Plus size={16} />}
               {creating ? "Creating..." : created ? "Created" : "Create"}
@@ -1085,7 +1180,7 @@ function CreateTicketModal({
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draftMessage, setDraftMessage] = useState<string | null>(null);
-  const [draftMessageKind, setDraftMessageKind] = useState<"info" | "error">("info");
+  const [draftMessageKind, setDraftMessageKind] = useState<DraftMessageKind>("info");
   const [draftFailure, setDraftFailure] = useState<TicketDraftErrorPayload | null>(null);
   const [draftProgress, setDraftProgress] = useState<LocalAgentProgress | null>(null);
   const [ticketReferences, setTicketReferences] = useState<TicketReferenceCandidate[]>([]);
@@ -1132,6 +1227,16 @@ function CreateTicketModal({
       return true;
     }
   });
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      ideaEditorRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1536,12 +1641,7 @@ ${idea.trim() || "No additional details provided."}
           </div>
         </div>
 
-        {draftMessage && (
-          <div className={clsx("draft-message", draftMessageKind)}>
-            {busy && <Loader2 className="spin" size={15} />}
-            <span>{draftMessage}</span>
-          </div>
-        )}
+        {draftMessage && <CreateTicketDraftMessage kind={draftMessageKind} message={draftMessage} busy={busy} />}
 
         {draftProgress && (
           <AgentProgressSummary

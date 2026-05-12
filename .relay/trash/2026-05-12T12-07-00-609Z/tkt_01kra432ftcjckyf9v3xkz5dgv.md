@@ -2,18 +2,23 @@
 schemaVersion: 1
 id: tkt_01kra432ftcjckyf9v3xkz5dgv
 title: Improve Run Console Filtering and Log Access
-status: todo
-position: 7000
+ticketType: task
+status: not_doing
+position: 1000
 priority: medium
 labels:
   - developer-experience
   - agent-readiness
   - relay
+parentEpicId: null
+subticketIds: []
+blockedByIds: []
 createdAt: '2026-05-10T23:38:20.023Z'
-updatedAt: '2026-05-10T23:38:20.023Z'
+updatedAt: '2026-05-12T12:06:15.312Z'
 codexThreadId: null
 runStatus: idle
 lastRunId: null
+lastRunStartedAt: null
 ---
 # Improve Run Console Filtering and Log Access
 
