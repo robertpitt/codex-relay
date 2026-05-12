@@ -6,6 +6,7 @@ import {
   CreateTicketDraftMessage,
   DraftingTicketDetailLoading,
   emptyColumnMessage,
+  RepositoryChatPanelContent,
   TicketCardContent,
   TicketSuggestionsModalContent,
   TicketRunElapsedPill,
@@ -251,4 +252,58 @@ test("create ticket draft messages expose status and alert roles", () => {
   assert.match(errorMarkup, /role="alert"/);
   assert.doesNotMatch(errorMarkup, /spin/);
   assert.match(errorMarkup, /Codex draft failed/);
+});
+
+test("repository chat panel content renders transcript, pending state, and controls", () => {
+  const noop = (): void => undefined;
+  const markup = renderToStaticMarkup(
+    <RepositoryChatPanelContent
+      projectName="Relay"
+      messages={[
+        { id: "user-1", role: "user", text: "Where is the board rendered?" },
+        { id: "assistant-1", role: "assistant", text: "The board is rendered in `BoardView`." }
+      ]}
+      draft="What owns selected project state?"
+      pending
+      errorMessage="Codex is not authenticated."
+      onDraftChange={noop}
+      onSubmit={noop}
+      onClose={noop}
+    />
+  );
+
+  assert.match(markup, /id="repository-chat-panel"/);
+  assert.match(markup, /aria-label="Repository chat for Relay"/);
+  assert.match(markup, /aria-label="Close repository chat"/);
+  assert.match(markup, />You</);
+  assert.match(markup, /Where is the board rendered/);
+  assert.match(markup, />Codex</);
+  assert.match(markup, /BoardView/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.match(markup, /Reading repository context/);
+  assert.match(markup, /role="alert"/);
+  assert.match(markup, /Codex is not authenticated/);
+  assert.match(markup, /aria-label="Repository chat question"/);
+  assert.match(markup, /aria-label="Send repository chat question"/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("repository chat send button is disabled for blank drafts", () => {
+  const noop = (): void => undefined;
+  const markup = renderToStaticMarkup(
+    <RepositoryChatPanelContent
+      projectName="Relay"
+      messages={[]}
+      draft="   "
+      pending={false}
+      errorMessage={null}
+      onDraftChange={noop}
+      onSubmit={noop}
+      onClose={noop}
+    />
+  );
+
+  assert.match(markup, /Ask a read-only question about this repository/);
+  assert.match(markup, /repository-chat-send" disabled=""/);
+  assert.match(markup, /aria-label="Send repository chat question"/);
 });

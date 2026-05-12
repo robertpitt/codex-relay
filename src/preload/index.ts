@@ -10,6 +10,7 @@ import type {
   GitMetadataOptions,
   RelayApi,
   RelayApprovalDecision,
+  RepositoryChatInput,
   RendererRunEvent,
   StartRunInput,
   TicketAttachmentSaveInput,
@@ -62,6 +63,7 @@ const api: RelayApi = {
     resumeRun: (input: StartRunInput) => invoke(relayIpcChannels.codexResumeRun, input),
     cancelRun: (runId: string) => invoke(relayIpcChannels.codexCancelRun, runId),
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => invoke(relayIpcChannels.codexApproveAction, approvalId, decision),
+    sendRepositoryChatMessage: (input: RepositoryChatInput) => invoke(relayIpcChannels.codexSendRepositoryChatMessage, input),
     readRunEvents: (projectPath: string, ticketId: string, runId: string) =>
       invoke(relayIpcChannels.codexReadRunEvents, projectPath, ticketId, runId),
     readLatestRunSummary: (projectPath: string, ticketId: string) =>

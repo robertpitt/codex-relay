@@ -472,6 +472,17 @@ export type StartRunInput = {
   freshThread?: boolean;
 };
 
+export type RepositoryChatInput = {
+  projectPath: string;
+  message: string;
+  threadId?: string | null;
+};
+
+export type RepositoryChatResponse = {
+  threadId: string;
+  message: string;
+};
+
 export type CodexRunStartResult = {
   state: "queued" | "started";
   runId: string;
@@ -566,6 +577,7 @@ export type RelayApi = {
     resumeRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
     cancelRun: (runId: string) => Promise<void>;
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => Promise<void>;
+    sendRepositoryChatMessage: (input: RepositoryChatInput) => Promise<RepositoryChatResponse>;
     readRunEvents: (projectPath: string, ticketId: string, runId: string) => Promise<RendererRunEvent[]>;
     readLatestRunSummary: (projectPath: string, ticketId: string) => Promise<RunSummary | null>;
     onRunEvent: (listener: (event: RendererRunEvent) => void) => () => void;

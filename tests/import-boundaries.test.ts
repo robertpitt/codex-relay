@@ -5,6 +5,8 @@ import path from "node:path";
 
 const projectRoot = process.cwd();
 const sourceRoots = [path.join(projectRoot, "src", "main"), path.join(projectRoot, "src", "preload")];
+const unstableWorkflowImportPattern =
+  /(?:from\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\)|require\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\))/;
 
 const sourceFiles = async (directory: string): Promise<string[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -22,7 +24,7 @@ const sourceFiles = async (directory: string): Promise<string[]> => {
 
 const relativeSourcePath = (absolutePath: string): string => path.relative(projectRoot, absolutePath).split(path.sep).join("/");
 
-test("backend IO and Electron imports stay behind approved service boundaries", async () => {
+test("backend IO, Electron, and unstable Workflow imports stay behind approved service boundaries", async () => {
   const files = (await Promise.all(sourceRoots.map(sourceFiles))).flat();
   const violations: string[] = [];
 
@@ -43,6 +45,11 @@ test("backend IO and Electron imports stay behind approved service boundaries", 
     }
     if (!electronBoundary && /^import\s+(?!type\b)[\s\S]*?from\s+["']electron["']/m.test(content)) {
       violations.push(`${relativePath}: direct Electron import`);
+    }
+    if (unstableWorkflowImportPattern.test(content)) {
+      violations.push(
+        `${relativePath}: production import from effect/unstable/workflow is blocked; see docs/effect-workflow-lifecycle-evaluation.md`
+      );
     }
   }
 

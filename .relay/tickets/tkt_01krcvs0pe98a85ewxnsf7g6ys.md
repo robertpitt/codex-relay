@@ -14,7 +14,7 @@ parentEpicId: null
 subticketIds: []
 blockedByIds: []
 createdAt: '2026-05-12T01:10:45.198Z'
-updatedAt: '2026-05-12T01:14:20.622Z'
+updatedAt: '2026-05-12T15:28:16.964Z'
 codexThreadId: null
 runStatus: draft_complete
 lastRunId: run_01krcvs0n2891f825kqk6twna0

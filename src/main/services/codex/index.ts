@@ -17,6 +17,8 @@ import {
   RELAY_REVIEW_STATUS,
   RELAY_TODO_STATUS,
   type RelayCodexEvent,
+  type RepositoryChatInput,
+  type RepositoryChatResponse,
   type RendererRunEvent,
   type RunSummary,
   type RunStatus,
@@ -318,6 +320,14 @@ const ticketUpdateThreadOptionsForProject = async (projectPath: string): Promise
   webSearchMode: "disabled"
 });
 
+const repositoryChatThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => ({
+  ...(await boundedThreadOptionsForProject(projectPath)),
+  approvalPolicy: "never",
+  sandboxMode: "read-only",
+  networkAccessEnabled: false,
+  webSearchMode: "disabled"
+});
+
 const ticketDraftBaseSchemaJson = {
   type: "object",
   additionalProperties: false,
@@ -449,6 +459,21 @@ export type TicketDraftDependencies = {
 export type TicketSuggestionDependencies = {
   getStatus?: () => Promise<CodexStatus>;
   createCodexClient?: () => TicketDraftCodexClient;
+  createRequestId?: () => string;
+  nowMs?: () => number;
+  abortController?: AbortController;
+};
+
+export type RepositoryChatThread = Pick<Thread, "run"> & Partial<Pick<Thread, "id">>;
+
+export type RepositoryChatCodexClient = {
+  startThread: (options: ThreadOptions) => RepositoryChatThread;
+  resumeThread: (threadId: string, options: ThreadOptions) => RepositoryChatThread;
+};
+
+export type RepositoryChatDependencies = {
+  getStatus?: () => Promise<CodexStatus>;
+  createCodexClient?: () => RepositoryChatCodexClient;
   createRequestId?: () => string;
   nowMs?: () => number;
   abortController?: AbortController;
@@ -778,6 +803,100 @@ const formatBoardTicketsForSuggestionPrompt = (board: Awaited<ReturnType<typeof 
       return `- ${ticket.id}: "${truncatePromptText(ticket.title, 120)}" | status: ${status} | priority: ${ticket.priority} | type: ${ticket.ticketType} | labels: ${labels} | excerpt: ${excerpt}`;
     })
     .join("\n");
+};
+
+const buildRepositoryChatPrompt = (
+  input: RepositoryChatInput,
+  config: Awaited<ReturnType<typeof readProjectConfig>>,
+  board: Awaited<ReturnType<typeof readBoard>>,
+  message: string
+): string => `You are Codex answering a quick read-only repository question inside Relay.
+
+Answer concisely and directly for the selected local project.
+
+Rules:
+- Do not create, edit, move, rename, or delete files.
+- Do not create, edit, move, rename, or delete Relay tickets or board cards.
+- Do not start implementation work, run ticket workflows, write logs, or emit Relay run events.
+- Network access and web search are disabled; rely on local repository files plus the board context below.
+- If the answer cannot be determined from the repository and board context, say what information is missing.
+
+Project path: ${input.projectPath}
+Project name: ${config.name}
+Workflow columns: ${config.columns.map((column) => column.name).join(", ")}
+
+Current board tickets:
+${formatBoardTicketsForSuggestionPrompt(board)}
+
+User question:
+${message}`;
+
+export const sendRepositoryChatMessage = async (
+  input: RepositoryChatInput,
+  dependencies: RepositoryChatDependencies = {}
+): Promise<RepositoryChatResponse> => {
+  const requestId = dependencies.createRequestId?.() ?? newId("rch");
+  const startedAt = dependencies.nowMs?.() ?? Date.now();
+  const nowMs = dependencies.nowMs ?? Date.now;
+  const durationMs = (): number => Math.max(0, nowMs() - startedAt);
+  const abortController = dependencies.abortController ?? new AbortController();
+  const message = normalizeWhitespace(input.message);
+  const threadId = input.threadId?.trim() || null;
+  const logBase = { requestId, projectPath: input.projectPath, hasThreadId: Boolean(threadId) };
+
+  if (!message) {
+    throw new Error("Enter a repository question before sending.");
+  }
+
+  await logInfo("codex:repository-chat", "starting repository chat turn", logBase);
+
+  try {
+    const status = await (dependencies.getStatus ?? getCodexStatus)();
+    if (!status.cliAvailable) {
+      await logWarn("codex:repository-chat", "codex cli unavailable", { ...logBase, durationMs: durationMs(), status });
+      throw new Error("Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before using repository chat.");
+    }
+    if (status.authenticated === false) {
+      await logWarn("codex:repository-chat", "codex auth unavailable", { ...logBase, durationMs: durationMs(), status });
+      throw new Error("Codex is not authenticated. Run `codex login` in your terminal, then try repository chat again.");
+    }
+
+    const [config, board, options] = await Promise.all([
+      readProjectConfig(input.projectPath),
+      readBoard(input.projectPath),
+      repositoryChatThreadOptionsForProject(input.projectPath)
+    ]);
+    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
+    const thread = threadId ? codex.resumeThread(threadId, options) : codex.startThread(options);
+    const prompt = buildRepositoryChatPrompt(input, config, board, message);
+    const turn = await thread.run(prompt, { signal: abortController.signal });
+    const responseMessage = turn.finalResponse.trim();
+    const responseThreadId = thread.id ?? threadId;
+
+    if (!responseThreadId) {
+      throw new Error("Codex did not return a repository chat thread id.");
+    }
+    if (!responseMessage) {
+      throw new Error("Codex did not return an answer.");
+    }
+
+    await logInfo("codex:repository-chat", "repository chat turn completed", {
+      ...logBase,
+      durationMs: durationMs(),
+      threadId: responseThreadId
+    });
+
+    return {
+      threadId: responseThreadId,
+      message: responseMessage
+    };
+  } catch (error) {
+    await logError("codex:repository-chat", "repository chat turn failed", error, {
+      ...logBase,
+      durationMs: durationMs()
+    });
+    throw error;
+  }
 };
 
 export const generateTicketSuggestions = async (

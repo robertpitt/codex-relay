@@ -12,10 +12,13 @@ import {
   preflightCodexRun,
   readCodexRunEvents,
   reconcileTicketQueueState,
+  sendRepositoryChatMessage,
   startCodexRun,
   startTicketDraftRun,
   type CodexRunDependencies,
   type CreateCodexDependencies,
+  type RepositoryChatCodexClient,
+  type RepositoryChatThread,
   type TicketDraftStartDependencies
 } from "../src/main/services/codex";
 import { resolveAvailableCodexCli, type CodexCliCandidate } from "../src/main/services/codex/cli";
@@ -42,7 +45,15 @@ import {
   unlinkSubticket,
   writeProjectConfig
 } from "../src/main/services/storage";
-import type { RendererRunEvent } from "../src/shared/types";
+import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
+
+const readyCodexStatus: CodexStatus = {
+  sdkAvailable: true,
+  cliAvailable: true,
+  cliVersion: "codex-test",
+  authenticated: true,
+  message: "Codex is available."
+};
 
 const createProject = async (): Promise<string> => {
   const projectPath = await mkdtemp(path.join(os.tmpdir(), "relay-backend-"));
@@ -123,6 +134,136 @@ const validDraftJson = (title: string): string =>
     assumptions: [],
     implementationNotes: ["Keep the change focused."]
   });
+
+type RepositoryChatRunResult = Awaited<ReturnType<RepositoryChatThread["run"]>>;
+
+test("repository chat starts a read-only thread with project and board context", async () => {
+  const projectPath = await createProject();
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    name: "Repository Chat Fixture",
+    settings: {
+      ...config.settings,
+      defaultModel: "gpt-chat-test",
+      defaultModelReasoningEffort: "high",
+      defaultApprovalPolicy: "on-request",
+      defaultSandboxMode: "danger-full-access",
+      codexNetworkAccessEnabled: true,
+      codexWebSearchMode: "live",
+      codexAdditionalDirectories: [path.join(projectPath, "packages")]
+    }
+  });
+  await createTicket(projectPath, {
+    title: "Document board shortcuts",
+    priority: "high",
+    labels: ["docs"],
+    markdown: "# Document board shortcuts\n\nExplain the keyboard flow for board navigation.",
+    status: "todo"
+  });
+
+  let capturedPrompt = "";
+  const capturedOptions: ThreadOptions[] = [];
+  let startCalls = 0;
+  const dependencies = {
+    getStatus: async () => readyCodexStatus,
+    createRequestId: () => "rch_start",
+    createCodexClient: (): RepositoryChatCodexClient => ({
+      startThread: (options) => {
+        startCalls += 1;
+        capturedOptions.push(options);
+        return {
+          id: "thread_repository_chat",
+          run: async (input, turnOptions): Promise<RepositoryChatRunResult> => {
+            if (typeof input !== "string") throw new TypeError("Repository chat tests expect string prompts.");
+            capturedPrompt = input;
+            assert.ok(turnOptions?.signal);
+            return { items: [], usage: null, finalResponse: "  The shortcut docs should cover arrow and J/K navigation.  " };
+          }
+        };
+      },
+      resumeThread: () => {
+        throw new Error("resumeThread should not be used for the first repository chat message.");
+      }
+    })
+  };
+
+  const response = await sendRepositoryChatMessage({ projectPath, message: "Where should shortcut docs go?" }, dependencies);
+
+  assert.equal(startCalls, 1);
+  assert.deepEqual(response, {
+    threadId: "thread_repository_chat",
+    message: "The shortcut docs should cover arrow and J/K navigation."
+  });
+  const options = capturedOptions[0];
+  assert.equal(options.workingDirectory, projectPath);
+  assert.equal(options.model, "gpt-chat-test");
+  assert.equal(options.modelReasoningEffort, "high");
+  assert.equal(options.approvalPolicy, "never");
+  assert.equal(options.sandboxMode, "read-only");
+  assert.equal(options.networkAccessEnabled, false);
+  assert.equal(options.webSearchMode, "disabled");
+  assert.equal(options.skipGitRepoCheck, true);
+  assert.deepEqual(options.additionalDirectories, [path.join(projectPath, "packages")]);
+  assert.match(capturedPrompt, /Project path:/);
+  assert.match(capturedPrompt, /Repository Chat Fixture/);
+  assert.match(capturedPrompt, /Workflow columns: Todo, Ready, In Progress/);
+  assert.match(capturedPrompt, /Document board shortcuts/);
+  assert.match(capturedPrompt, /status: Todo/);
+  assert.match(capturedPrompt, /Explain the keyboard flow for board navigation/);
+  assert.match(capturedPrompt, /Do not create, edit, move, rename, or delete files/);
+  assert.match(capturedPrompt, /Do not create, edit, move, rename, or delete Relay tickets or board cards/);
+  assert.match(capturedPrompt, /Network access and web search are disabled/);
+  assert.match(capturedPrompt, /Where should shortcut docs go/);
+});
+
+test("repository chat resumes an existing thread without mutating board state", async () => {
+  const projectPath = await createProject();
+  await createTicket(projectPath, {
+    title: "Keep chat read only",
+    priority: "medium",
+    labels: ["codex"],
+    markdown: "# Keep chat read only\n\nRepository chat must not move or edit tickets.",
+    status: "ready"
+  });
+  const boardBefore = await readBoard(projectPath);
+  let resumedThreadId = "";
+  let resumeCalls = 0;
+  const dependencies = {
+    getStatus: async () => readyCodexStatus,
+    createRequestId: () => "rch_resume",
+    createCodexClient: (): RepositoryChatCodexClient => ({
+      startThread: () => {
+        throw new Error("startThread should not be used when repository chat has a thread id.");
+      },
+      resumeThread: (threadId, options) => {
+        resumeCalls += 1;
+        resumedThreadId = threadId;
+        assert.equal(options.approvalPolicy, "never");
+        assert.equal(options.sandboxMode, "read-only");
+        return {
+          id: threadId,
+          run: async (input, turnOptions): Promise<RepositoryChatRunResult> => {
+            assert.equal(typeof input, "string");
+            assert.ok(turnOptions?.signal);
+            return { items: [], usage: null, finalResponse: "No board state changes are needed." };
+          }
+        };
+      }
+    })
+  };
+
+  const response = await sendRepositoryChatMessage(
+    { projectPath, message: "What changed since my last question?", threadId: "thread_existing_chat" },
+    dependencies
+  );
+  const boardAfter = await readBoard(projectPath);
+
+  assert.equal(resumeCalls, 1);
+  assert.equal(resumedThreadId, "thread_existing_chat");
+  assert.deepEqual(response, { threadId: "thread_existing_chat", message: "No board state changes are needed." });
+  assert.deepEqual(boardAfter, boardBefore);
+});
 
 test("backend Effect runtime provides shared services", async () => {
   const timestamp = await runBackendEffect(

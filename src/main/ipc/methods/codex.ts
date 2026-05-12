@@ -6,10 +6,11 @@ import {
   readCodexLatestRunSummary,
   readCodexRunEvents,
   resumeCodexRun,
+  sendRepositoryChatMessage,
   startCodexRun
 } from "../../services/codex";
 import { fromPromise } from "../../services/runtime";
-import { parseSchema, relayApprovalDecisionSchema, startRunInputSchema } from "../../services/schemas";
+import { parseSchema, relayApprovalDecisionSchema, repositoryChatInputSchema, startRunInputSchema } from "../../services/schemas";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
 import { emptyArgs, ipcArgs, ipcObject, ipcResult, ipcString, ipcVoid } from "../schema";
@@ -51,6 +52,12 @@ export const codexIpcMethods = [
     result: ipcVoid,
     handler: (_event, approvalId, decision) =>
       fromPromise(() => approveCodexAction(approvalId, parseSchema(relayApprovalDecisionSchema, decision)))
+  }),
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.codexSendRepositoryChatMessage,
+    payload: ipcArgs([ipcObject]),
+    result: ipcResult(),
+    handler: (_event, input) => fromPromise(() => sendRepositoryChatMessage(parseSchema(repositoryChatInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexReadRunEvents,

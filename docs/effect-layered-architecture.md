@@ -29,3 +29,5 @@ Relay's Electron main process now boots a single Effect runtime from `AppLayerLi
 ## Transitional Facades
 
 Some modules still expose Promise-returning functions because Electron IPC and existing tests use Promise boundaries. New backend internals should prefer `Context.Service` plus `Layer`, consume IO through `src/main/services/io/`, and keep Promise conversion at IPC or test adapter edges.
+
+For ticket lifecycle control, see `docs/effect-workflow-lifecycle-evaluation.md`; Relay v1 keeps board columns plus ticket `runStatus` authoritative while limiting Workflow engine ideas to future evaluations.

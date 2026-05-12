@@ -16,6 +16,8 @@ import type {
   GitMetadataOptions,
   ProjectSummary,
   RelayApprovalDecision,
+  RepositoryChatInput,
+  RepositoryChatResponse,
   RendererRunEvent,
   RunSummary,
   StartRunInput,
@@ -62,6 +64,7 @@ export type RelayIpcContract = {
   "codex:resumeRun": { args: [input: StartRunInput]; result: CodexRunStartResult };
   "codex:cancelRun": { args: [runId: string]; result: void };
   "codex:approveAction": { args: [approvalId: string, decision: RelayApprovalDecision]; result: void };
+  "codex:sendRepositoryChatMessage": { args: [input: RepositoryChatInput]; result: RepositoryChatResponse };
   "codex:readRunEvents": { args: [projectPath: string, ticketId: string, runId: string]; result: RendererRunEvent[] };
   "codex:readLatestRunSummary": { args: [projectPath: string, ticketId: string]; result: RunSummary | null };
 };
@@ -102,6 +105,7 @@ export const relayIpcChannels = {
   codexResumeRun: "codex:resumeRun",
   codexCancelRun: "codex:cancelRun",
   codexApproveAction: "codex:approveAction",
+  codexSendRepositoryChatMessage: "codex:sendRepositoryChatMessage",
   codexReadRunEvents: "codex:readRunEvents",
   codexReadLatestRunSummary: "codex:readLatestRunSummary"
 } as const satisfies Record<string, RelayIpcChannel>;

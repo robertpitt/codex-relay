@@ -19,6 +19,7 @@ import type {
   RelayCodexEvent,
   RelayColumn,
   RelayEventSource,
+  RepositoryChatInput,
   RunLogLine,
   RunStatus,
   StartRunInput,
@@ -445,6 +446,12 @@ export const startRunInputSchema: RelaySchema<StartRunInput> = passthroughStruct
   projectPath: Schema.String,
   ticketId: Schema.String,
   freshThread: Schema.optional(Schema.Boolean)
+});
+
+export const repositoryChatInputSchema: RelaySchema<RepositoryChatInput> = passthroughStruct({
+  projectPath: Schema.String,
+  message: Schema.String,
+  threadId: Schema.optional(Schema.NullOr(Schema.String))
 });
 
 export const agentTicketUpdateInputSchema: RelaySchema<AgentTicketUpdateInput> = passthroughStruct({

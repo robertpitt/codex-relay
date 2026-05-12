@@ -15,6 +15,7 @@ import {
   FolderOpen,
   FolderPlus,
   Loader2,
+  MessageCircle,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -95,6 +96,7 @@ type Toast = { kind: "info" | "error" | "success"; message: string } | null;
 type LocalAgentProgress = { status: RunStatus; startedAt: string; endedAt?: string | null };
 type TicketSuggestionCreateState = "idle" | "creating" | "created";
 type TicketSuggestionLoadState = "loading" | "error" | "ready";
+export type RepositoryChatMessage = { id: string; role: "user" | "assistant"; text: string };
 type DraftMessageKind = "info" | "error";
 type ActiveTicketReferenceMention = {
   token: TicketMentionToken;
@@ -748,9 +750,11 @@ function BoardView({
   onQuery,
   onCreate,
   onGenerateTickets,
+  onToggleRepositoryChat,
   onOpenTicket,
   onMove,
-  gitMetadata
+  gitMetadata,
+  repositoryChatOpen
 }: {
   board: BoardSnapshot;
   query: string;
@@ -758,9 +762,11 @@ function BoardView({
   onQuery: (query: string) => void;
   onCreate: () => void;
   onGenerateTickets: () => void;
+  onToggleRepositoryChat: () => void;
   onOpenTicket: (ticketId: string) => void;
   onMove: (event: DragEndEvent) => void;
   gitMetadata: GitMetadata | undefined;
+  repositoryChatOpen: boolean;
 }): ReactElement {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const boardRef = useRef<HTMLDivElement | null>(null);
@@ -878,6 +884,17 @@ function BoardView({
               aria-label="Search tickets"
             />
           </label>
+          <button
+            type="button"
+            className={clsx("topbar-button topbar-chat-button", repositoryChatOpen && "active")}
+            onClick={onToggleRepositoryChat}
+            aria-label={repositoryChatOpen ? "Close repository chat" : "Open repository chat"}
+            aria-pressed={repositoryChatOpen}
+            aria-controls="repository-chat-panel"
+            title={repositoryChatOpen ? "Close repository chat" : "Open repository chat"}
+          >
+            <MessageCircle size={16} />
+          </button>
           <button
             className="topbar-button topbar-generate-button"
             onClick={onGenerateTickets}
@@ -1055,6 +1072,198 @@ export function TicketSuggestionsModalContent({
         );
       })}
     </div>
+  );
+}
+
+export function RepositoryChatPanelContent({
+  projectName,
+  messages,
+  draft,
+  pending,
+  errorMessage,
+  onDraftChange,
+  onSubmit,
+  onClose,
+  onAnswerCopied,
+  onAnswerCopyError
+}: {
+  projectName: string;
+  messages: RepositoryChatMessage[];
+  draft: string;
+  pending: boolean;
+  errorMessage: string | null;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  onAnswerCopied?: (kind: "markdown" | "code") => void;
+  onAnswerCopyError?: (error: unknown) => void;
+}): ReactElement {
+  const canSend = draft.trim().length > 0 && !pending;
+  const handleSubmit = (): void => {
+    if (!canSend) return;
+    onSubmit();
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    handleSubmit();
+  };
+
+  return (
+    <aside className="repository-chat-panel" id="repository-chat-panel" aria-label={`Repository chat for ${projectName}`}>
+      <header className="repository-chat-header">
+        <div>
+          <span>Repository Chat</span>
+          <h2 title={projectName}>{projectName}</h2>
+        </div>
+        <button type="button" className="icon-button" onClick={onClose} aria-label="Close repository chat" title="Close repository chat">
+          <X size={18} />
+        </button>
+      </header>
+
+      <div className="repository-chat-transcript" aria-live="polite">
+        {messages.length === 0 && !pending ? (
+          <div className="repository-chat-empty" role="status">
+            Ask a read-only question about this repository.
+          </div>
+        ) : (
+          messages.map((message) => (
+            <article className={clsx("repository-chat-message", message.role)} key={message.id}>
+              <span>{message.role === "user" ? "You" : "Codex"}</span>
+              {message.role === "assistant" ? (
+                <MarkdownBlock
+                  className="repository-chat-answer"
+                  source={message.text}
+                  compact
+                  onCopied={onAnswerCopied}
+                  onCopyError={onAnswerCopyError}
+                />
+              ) : (
+                <p>{message.text}</p>
+              )}
+            </article>
+          ))
+        )}
+
+        {pending && (
+          <div className="repository-chat-message assistant pending" role="status" aria-busy="true">
+            <span>Codex</span>
+            <p>
+              <Loader2 className="spin" size={14} />
+              Reading repository context.
+            </p>
+          </div>
+        )}
+
+        {errorMessage && (
+          <div className="repository-chat-error" role="alert">
+            <AlertTriangle size={15} />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+      </div>
+
+      <form
+        className="repository-chat-composer"
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSubmit();
+        }}
+      >
+        <textarea
+          value={draft}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask about this repository"
+          aria-label="Repository chat question"
+          rows={3}
+          disabled={pending}
+        />
+        <button
+          type="submit"
+          className="primary-button repository-chat-send"
+          disabled={!canSend}
+          aria-label="Send repository chat question"
+          title="Send repository chat question"
+        >
+          {pending ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+        </button>
+      </form>
+    </aside>
+  );
+}
+
+function RepositoryChatPanel({
+  projectPath,
+  projectName,
+  onClose,
+  setToast
+}: {
+  projectPath: string;
+  projectName: string;
+  onClose: () => void;
+  setToast: (toast: Toast) => void;
+}): ReactElement {
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<RepositoryChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const messageSequenceRef = useRef(0);
+
+  useShortcutOverlay({
+    id: `repository-chat:${projectPath}`,
+    priority: 15,
+    onEscape: () => {
+      onClose();
+      return true;
+    }
+  });
+
+  const nextMessageId = useCallback((role: RepositoryChatMessage["role"]): string => {
+    messageSequenceRef.current += 1;
+    return `${role}-${messageSequenceRef.current}`;
+  }, []);
+
+  const submit = useCallback((): void => {
+    const question = draft.trim();
+    if (!question || pending) return;
+
+    setMessages((current) => [...current, { id: nextMessageId("user"), role: "user", text: question }]);
+    setDraft("");
+    setPending(true);
+    setErrorMessage(null);
+
+    void getRelayApi()
+      .codex.sendRepositoryChatMessage({ projectPath, message: question, threadId })
+      .then((response) => {
+        setThreadId(response.threadId);
+        setMessages((current) => [...current, { id: nextMessageId("assistant"), role: "assistant", text: response.message }]);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Unable to send repository chat message.";
+        setDraft(question);
+        setErrorMessage(message);
+        setToast({ kind: "error", message });
+      })
+      .finally(() => {
+        setPending(false);
+      });
+  }, [draft, nextMessageId, pending, projectPath, setToast, threadId]);
+
+  return (
+    <RepositoryChatPanelContent
+      projectName={projectName}
+      messages={messages}
+      draft={draft}
+      pending={pending}
+      errorMessage={errorMessage}
+      onDraftChange={setDraft}
+      onSubmit={submit}
+      onClose={onClose}
+      onAnswerCopied={(kind) => setToast(copyToast(kind))}
+      onAnswerCopyError={(error) => setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to copy." })}
+    />
   );
 }
 
@@ -3053,6 +3262,7 @@ function RelayApp(): ReactElement {
   const [toast, setToast] = useState<Toast>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [ticketSuggestionsOpen, setTicketSuggestionsOpen] = useState(false);
+  const [repositoryChatOpen, setRepositoryChatOpen] = useState(false);
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [codexStatus, setCodexStatus] = useState<CodexStatus>(initialCodexStatus);
@@ -3148,6 +3358,7 @@ function RelayApp(): ReactElement {
       setOpenTicketId(null);
       setCreateOpen(false);
       setTicketSuggestionsOpen(false);
+      setRepositoryChatOpen(false);
       setBoard(null);
       setQuery("");
       setSelectedPath(projectPath);
@@ -3184,6 +3395,7 @@ function RelayApp(): ReactElement {
     setOpenTicketId(null);
     setCreateOpen(false);
     setTicketSuggestionsOpen(false);
+    setRepositoryChatOpen(false);
   }, [selectedPath]);
 
   useEffect(() => {
@@ -3244,7 +3456,7 @@ function RelayApp(): ReactElement {
     () => events.filter((event) => event.projectPath === selectedPath && event.ticketId === openTicketId),
     [events, openTicketId, selectedPath]
   );
-  const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !ticketSuggestionsOpen && !openTicketId);
+  const createShortcutEnabled = Boolean(board && selectedPath && !createOpen && !ticketSuggestionsOpen && !repositoryChatOpen && !openTicketId);
 
   useKeyboardShortcut({
     id: "toggle-sidebar",
@@ -3272,6 +3484,7 @@ function RelayApp(): ReactElement {
         "app-shell",
         sidebarCollapsed && "sidebar-collapsed",
         openTicketId && "detail-open",
+        repositoryChatOpen && "chat-open",
         (createOpen || ticketSuggestionsOpen) && "modal-open"
       )}
     >
@@ -3315,9 +3528,11 @@ function RelayApp(): ReactElement {
           onQuery={setQuery}
           onCreate={() => setCreateOpen(true)}
           onGenerateTickets={() => setTicketSuggestionsOpen(true)}
+          onToggleRepositoryChat={() => setRepositoryChatOpen((open) => !open)}
           onOpenTicket={setOpenTicketId}
           onMove={(event) => void moveTicket(event)}
           gitMetadata={gitMetadataByPath[board.project.path]}
+          repositoryChatOpen={repositoryChatOpen}
         />
       ) : (
         <main className="workspace empty-state">
@@ -3342,6 +3557,16 @@ function RelayApp(): ReactElement {
           </button>
         </div>
       </aside>
+
+      {board && selectedPath && repositoryChatOpen && (
+        <RepositoryChatPanel
+          key={selectedPath}
+          projectPath={selectedPath}
+          projectName={board.project.name}
+          onClose={() => setRepositoryChatOpen(false)}
+          setToast={setToast}
+        />
+      )}
 
       {board && selectedPath && createOpen && (
         <CreateTicketModal projectPath={selectedPath} onClose={() => setCreateOpen(false)} onCreated={refreshAll} setToast={setToast} />
