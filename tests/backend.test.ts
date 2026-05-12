@@ -774,10 +774,40 @@ test("new projects include Ready between Todo and In Progress", async () => {
     ["todo", "ready", "in_progress", "needs_clarification", "review", "not_doing", "completed"]
   );
   assert.equal(config.settings.defaultModelReasoningEffort, null);
+  assert.equal(config.settings.defaultTicketEffort, "medium");
   assert.equal(config.settings.codexNetworkAccessEnabled, false);
   assert.equal(config.settings.codexWebSearchMode, "disabled");
   assert.deepEqual(config.settings.codexAdditionalDirectories, []);
   assert.equal(config.settings.agentConcurrency, 1);
+});
+
+test("ticket effort defaults from project settings and can be overridden per ticket", async () => {
+  const projectPath = await createProject();
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    settings: {
+      ...config.settings,
+      defaultTicketEffort: "high"
+    }
+  });
+
+  const defaulted = await createTicket(projectPath, {
+    title: "Default effort ticket",
+    priority: "medium",
+    labels: [],
+    markdown: "# Default effort ticket\n"
+  });
+  const overridden = await createTicket(projectPath, {
+    title: "Override effort ticket",
+    priority: "medium",
+    effort: "xhigh",
+    labels: [],
+    markdown: "# Override effort ticket\n"
+  });
+
+  assert.equal(defaulted.frontMatter.effort, "high");
+  assert.equal(overridden.frontMatter.effort, "xhigh");
 });
 
 test("ticket image attachments save under project attachments with unique sanitized Markdown paths", async () => {
@@ -833,6 +863,7 @@ test("legacy project configs are normalized with ready and review lanes without 
     ["todo", "ready", "in_progress", "needs_clarification", "review", "not_doing", "completed"]
   );
   assert.equal(normalized.settings.defaultModelReasoningEffort, null);
+  assert.equal(normalized.settings.defaultTicketEffort, "medium");
   assert.equal(normalized.settings.codexNetworkAccessEnabled, false);
   assert.equal(normalized.settings.codexWebSearchMode, "disabled");
   assert.deepEqual(normalized.settings.codexAdditionalDirectories, []);
@@ -1137,6 +1168,7 @@ test("codex implementation runs pass configured SDK thread options", async () =>
       ...config.settings,
       defaultModel: "gpt-5.4",
       defaultModelReasoningEffort: "high",
+      defaultTicketEffort: "xhigh",
       defaultApprovalPolicy: "on-failure",
       allowNonGitCodexRuns: true,
       codexNetworkAccessEnabled: true,
@@ -1147,6 +1179,7 @@ test("codex implementation runs pass configured SDK thread options", async () =>
   const ticket = await createTicket(projectPath, {
     title: "Configured SDK options",
     priority: "medium",
+    effort: "low",
     labels: ["codex"],
     markdown: "# Configured SDK options\n"
   });
@@ -1182,7 +1215,8 @@ test("codex implementation runs pass configured SDK thread options", async () =>
   assert.ok(options);
   assert.equal(options.workingDirectory, projectPath);
   assert.equal(options.model, "gpt-5.4");
-  assert.equal(options.modelReasoningEffort, "high");
+  assert.equal(ticket.frontMatter.effort, "low");
+  assert.equal(options.modelReasoningEffort, "low");
   assert.equal(options.approvalPolicy, "on-failure");
   assert.equal(options.sandboxMode, "workspace-write");
   assert.equal(options.skipGitRepoCheck, true);
@@ -1940,7 +1974,7 @@ test("codex run cancellation aborts the stream and cleans up the active run", as
   await waitFor(() => events.some((event) => event.type === "run.started"), "run start before cancellation");
   const duplicatePreflight = await preflightCodexRun({ projectPath, ticketId: ticket.frontMatter.id });
   assert.equal(duplicatePreflight.ok, false);
-  assert.match(duplicatePreflight.errors.join(" "), /active Codex run/);
+  assert.match(duplicatePreflight.errors.join(" "), /active agent run/);
   await cancelCodexRun("run_cancel_cleanup");
 
   assert.equal(capturedSignal?.aborted, true);

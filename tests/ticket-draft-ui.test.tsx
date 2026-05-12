@@ -10,11 +10,12 @@ import {
   RepositoryChatPanelContent,
   TicketCardContent,
   TicketMarkdownTabs,
+  TicketDetailPrimaryClarifications,
   TicketSuggestionsModalContent,
   TicketRunElapsedPill,
   TicketRunStatusPill
 } from "../src/renderer/src/App";
-import { DEFAULT_COLUMNS, type DraftIntakeResult, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
+import { DEFAULT_COLUMNS, type ClarificationQuestion, type DraftIntakeResult, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
 
 const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   schemaVersion: 1,
@@ -24,6 +25,7 @@ const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   status: "in_progress",
   position: 1000,
   priority: "medium",
+  effort: "medium",
   labels: [],
   parentEpicId: null,
   subticketIds: [],
@@ -36,6 +38,22 @@ const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   lastRunStartedAt: "2026-05-12T10:00:00.000Z",
   excerpt: "Runtime card",
   filePath: "/tmp/tkt_elapsed.md",
+  ...patch
+});
+
+const clarificationQuestion = (patch: Partial<ClarificationQuestion> = {}): ClarificationQuestion => ({
+  id: "clar_primary",
+  ticketId: "tkt_elapsed",
+  question: "Which datastore should this use?",
+  answerType: "text",
+  answer: null,
+  createdAt: "2026-05-12T10:00:00.000Z",
+  updatedAt: "2026-05-12T10:00:00.000Z",
+  answeredAt: null,
+  createdBy: "codex",
+  source: "agent_execution",
+  runId: "run_elapsed",
+  codexThreadId: "thread_elapsed",
   ...patch
 });
 
@@ -150,7 +168,7 @@ test("drafting ticket detail loading state hides placeholder draft content", () 
 
   assert.match(markup, /Ticket draft loading state/);
   assert.match(markup, /Drafting ticket/);
-  assert.match(markup, /Codex is preparing the generated ticket content/);
+  assert.match(markup, /The agent is preparing the generated ticket content/);
   assert.doesNotMatch(markup, /Original Idea/);
   assert.doesNotMatch(markup, /Markdown/);
   assert.doesNotMatch(markup, /Preview/);
@@ -199,6 +217,25 @@ test("ticket markdown tabs render source editor without simultaneous preview", (
   assert.doesNotMatch(markup, /<strong>focused<\/strong>/);
 });
 
+test("ticket detail primary clarifications render pending answer composer", () => {
+  const markup = renderToStaticMarkup(
+    <TicketDetailPrimaryClarifications
+      questions={[clarificationQuestion()]}
+      answerDrafts={{ clar_primary: "" }}
+      submittingId={null}
+      onDraftChange={() => undefined}
+      onSubmit={() => undefined}
+    />
+  );
+
+  assert.match(markup, /ticket-detail-primary-clarifications/);
+  assert.match(markup, /Pending Clarifications/);
+  assert.match(markup, /1 pending/);
+  assert.match(markup, /Which datastore should this use\?/);
+  assert.match(markup, /placeholder="Answer"/);
+  assert.match(markup, /Submit Answer/);
+});
+
 const suggestion: TicketSuggestion = {
   title: "Tighten board keyboard focus",
   priority: "medium",
@@ -221,7 +258,7 @@ test("ticket suggestions modal content renders loading, error, and empty states"
   );
   assert.match(loadingMarkup, /role="status"/);
   assert.match(loadingMarkup, /aria-busy="true"/);
-  assert.match(loadingMarkup, /Codex is reviewing the local project and current board/);
+  assert.match(loadingMarkup, /The agent is reviewing the local project and current board/);
   assert.match(loadingMarkup, /spin/);
 
   const errorMarkup = renderToStaticMarkup(
@@ -354,7 +391,7 @@ test("repository chat panel content renders transcript, pending state, and contr
   assert.match(markup, /aria-label="Close repository chat"/);
   assert.match(markup, />You</);
   assert.match(markup, /Where is the board rendered/);
-  assert.match(markup, />Codex</);
+  assert.match(markup, />Agent</);
   assert.match(markup, /BoardView/);
   assert.match(markup, /aria-busy="true"/);
   assert.match(markup, /Reading repository context/);

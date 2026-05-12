@@ -9,6 +9,9 @@ type ClarificationPanelProps = {
   submittingId: string | null;
   onDraftChange: (questionId: string, answer: string) => void;
   onSubmit: (questionId: string) => void;
+  title?: string;
+  summary?: string;
+  className?: string;
 };
 
 export function ClarificationPanel({
@@ -16,21 +19,24 @@ export function ClarificationPanel({
   answerDrafts,
   submittingId,
   onDraftChange,
-  onSubmit
+  onSubmit,
+  title = "Clarifications",
+  summary,
+  className
 }: ClarificationPanelProps): ReactElement | null {
   if (questions.length === 0) return null;
 
   return (
-    <section className="clarification-panel">
+    <section className={["clarification-panel", className].filter(Boolean).join(" ")}>
       <header>
-        <h3>Clarifications</h3>
+        <h3>{title}</h3>
         <span>
-          {questions.filter((question) => question.answer).length}/{questions.length} answered
+          {summary ?? `${questions.filter((question) => question.answer?.trim()).length}/${questions.length} answered`}
         </span>
       </header>
       <div className="clarification-list">
         {questions.map((question) => {
-          const answered = Boolean(question.answer);
+          const answered = Boolean(question.answer?.trim());
           return (
             <article
               className={`clarification-card ${answered ? "answered" : "pending"}`}

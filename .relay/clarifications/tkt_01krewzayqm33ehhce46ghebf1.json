@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krewzayqm33ehhce46ghebf1",
+  "questions": [
+    {
+      "id": "clar_01krex0fg9jj5zy550hdeb7kke",
+      "ticketId": "tkt_01krewzayqm33ehhce46ghebf1",
+      "question": "Should Effort be stored as ticket metadata and used as the default for later implementation runs, or only be a one-time option during ticket drafting?\n\nWhy it matters: This determines whether the ticket schema/storage, detail UI, and run scheduler need to carry Effort through the full ticket lifecycle, rather than only passing it to the draft request.\nRecommended answer: Persist Effort on the ticket. The create-ticket selection should default from `.relay/project.json`, be saved with the ticket, and be used by both draft generation and later implementation runs unless the user changes it.",
+      "answerType": "text",
+      "answer": "stored",
+      "createdAt": "2026-05-12T20:10:47.177Z",
+      "updatedAt": "2026-05-12T20:39:20.464Z",
+      "answeredAt": "2026-05-12T20:39:20.464Z",
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krewzawyvhpphcpga63p0eqr",
+      "codexThreadId": "draft_run_01krewzawyvhpphcpga63p0eqr"
+    },
+    {
+      "id": "clar_01krex0fga2wrk2swpas0axj1f",
+      "ticketId": "tkt_01krewzayqm33ehhce46ghebf1",
+      "question": "Should there be one shared Effort setting for both ticket drafting and implementation, or separate Draft Effort and Implementation Effort controls/defaults?\n\nWhy it matters: Separate controls add UI and config complexity but allow cheaper drafting with deeper implementation. A shared control is simpler and matches the requested cleanup goal.\nRecommended answer: Use one shared Effort value for now: Low, Medium, High, with Medium as the default. Apply it to drafting and implementation wherever the backend supports effort/reasoning configuration.",
+      "answerType": "text",
+      "answer": "when ticket is creted teh user can change / update the default effort, that effort will be set on the ticket and used as drafting effort, once draft is created, the same ticket level effort will be used for the worker agent, the user can also increase or lower the value on the ticket before running the worker, so the worker should pull that value before starting",
+      "createdAt": "2026-05-12T20:10:47.177Z",
+      "updatedAt": "2026-05-12T20:39:12.641Z",
+      "answeredAt": "2026-05-12T20:39:12.641Z",
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krewzawyvhpphcpga63p0eqr",
+      "codexThreadId": "draft_run_01krewzawyvhpphcpga63p0eqr"
+    }
+  ]
+}

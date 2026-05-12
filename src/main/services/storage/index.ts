@@ -83,6 +83,7 @@ export { runsPath } from "./paths";
 const defaultSettings = (): ProjectSettings => ({
   defaultModel: null,
   defaultModelReasoningEffort: null,
+  defaultTicketEffort: "medium",
   defaultApprovalPolicy: "on-request",
   defaultSandboxMode: "workspace-write",
   allowNonGitCodexRuns: false,
@@ -692,7 +693,7 @@ const ticketMarkdownFromPendingDraft = (title: string, idea: string): string => 
 
 ## Drafting State
 
-Codex is drafting this ticket. The generated plan will replace this placeholder when the draft run completes.
+The agent is drafting this ticket. The generated plan will replace this placeholder when the draft run completes.
 
 ## Original Idea
 
@@ -707,7 +708,7 @@ const ticketMarkdownFromDraftFailure = (title: string, idea: string, message: st
 
 ## Drafting State
 
-Codex ticket drafting failed. The original idea is preserved so this ticket can be edited manually or retried later.
+Agent ticket drafting failed. The original idea is preserved so this ticket can be edited manually or retried later.
 
 ## Recoverable Error
 
@@ -731,7 +732,7 @@ const ticketMarkdownFromDraftClarification = (
 
 ## Drafting State
 
-Codex researched this draft but needs user input before it can produce an implementation-ready ticket. Answer the clarification questions below; drafting will resume automatically once every question is answered.
+The agent researched this draft but needs user input before it can produce an implementation-ready ticket. Answer the clarification questions below; drafting will resume automatically once every question is answered.
 
 ## Original Idea
 
@@ -772,6 +773,7 @@ const createSingleTicket = async (projectPath: string, input: TicketCreateInput)
     status,
     position: lastPosition + 1000,
     priority: input.priority,
+    effort: input.effort ?? config.settings.defaultTicketEffort,
     labels: input.labels.map((label) => label.trim()).filter(Boolean),
     parentEpicId: ticketType === "task" ? input.parentEpicId ?? null : null,
     subticketIds: [],
@@ -799,7 +801,7 @@ export const createPendingTicketDraft = async (
 ): Promise<TicketRecord> => {
   const idea = input.idea.trim();
   if (!idea) {
-    throw new Error("Describe the ticket idea before drafting with Codex.");
+    throw new Error("Describe the ticket idea before drafting with the agent.");
   }
 
   const ticketType = input.preferredTicketType ?? "task";
@@ -807,6 +809,7 @@ export const createPendingTicketDraft = async (
   const placeholder = await createSingleTicket(projectPath, {
     title,
     priority: "medium",
+    effort: input.effort,
     labels: [],
     markdown: ticketMarkdownFromPendingDraft(title, idea),
     status: RELAY_TODO_STATUS,
@@ -891,6 +894,7 @@ export const applyTicketDraftToTicket = async (
       await createSubticketRecord(projectPath, updated.frontMatter.id, {
         title: subticket.title,
         priority: subticket.priority,
+        effort: updated.frontMatter.effort,
         labels: subticket.labels,
         markdown: ticketMarkdownFromSubticketDraft(subticket, draft.title)
       });
@@ -1339,6 +1343,7 @@ export const duplicateTicket = async (projectPath: string, ticketId: string): Pr
   return createTicket(projectPath, {
     title: `${source.frontMatter.title} Copy`,
     priority: source.frontMatter.priority,
+    effort: source.frontMatter.effort,
     labels: source.frontMatter.labels,
     markdown: source.markdown,
     status: source.frontMatter.status,

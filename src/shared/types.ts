@@ -19,6 +19,7 @@ export const DEFAULT_COLUMNS: RelayColumn[] = [
 
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type TicketType = "task" | "epic";
+export type TicketEffort = "low" | "medium" | "high" | "xhigh";
 export type DraftScope = "quick_bug" | "task" | "product_feature" | "rewrite" | "epic";
 export type RunStatus =
   | "idle"
@@ -52,6 +53,7 @@ export type RelayColumn = {
 export type ProjectSettings = {
   defaultModel: string | null;
   defaultModelReasoningEffort: null | "minimal" | "low" | "medium" | "high" | "xhigh";
+  defaultTicketEffort: TicketEffort;
   defaultApprovalPolicy: "untrusted" | "on-request" | "on-failure" | "never";
   defaultSandboxMode: "read-only" | "workspace-write" | "danger-full-access";
   allowNonGitCodexRuns: boolean;
@@ -122,6 +124,7 @@ export type TicketFrontMatter = {
   status: string;
   position: number;
   priority: TicketPriority;
+  effort: TicketEffort;
   labels: string[];
   parentEpicId: string | null;
   subticketIds: string[];
@@ -311,6 +314,7 @@ export type DraftIntakeInput = {
   projectPath: string;
   idea: string;
   scopeOverride?: DraftScope;
+  effort?: TicketEffort;
 };
 
 export type DraftIntakeResult = {
@@ -335,6 +339,7 @@ export type AgentTicketUpdateStartResult = {
 export type SubticketCreateInput = {
   title: string;
   priority: TicketPriority;
+  effort?: TicketEffort;
   labels: string[];
   markdown: string;
   status?: string;
@@ -530,6 +535,7 @@ export type CodexRunPreflightResult = {
 export type CreateDraftInput = {
   projectPath: string;
   idea: string;
+  effort?: TicketEffort;
   preferredTicketType?: TicketType;
   ticketId?: string;
   draftScope?: DraftScope;

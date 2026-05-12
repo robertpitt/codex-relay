@@ -30,6 +30,7 @@ import {
   type StartRunInput,
   type TicketCreateInput,
   type TicketDraft,
+  type TicketEffort,
   type TicketDraftSubticket,
   type TicketDraftResearchLimits,
   type TicketDraftErrorCode,
@@ -388,14 +389,20 @@ const projectThreadOptionsContext = async (projectPath: string): Promise<{
   return { config, git };
 };
 
+const ticketEffortToModelReasoningEffort = (effort: TicketEffort): NonNullable<ThreadOptions["modelReasoningEffort"]> =>
+  effort === "xhigh" ? "xhigh" : effort;
+
 const sharedThreadOptionsForProjectContext = (
   projectPath: string,
-  { config, git }: Awaited<ReturnType<typeof projectThreadOptionsContext>>
+  { config, git }: Awaited<ReturnType<typeof projectThreadOptionsContext>>,
+  ticketEffort?: TicketEffort
 ): ThreadOptions => {
   return {
     workingDirectory: projectPath,
     model: config.settings.defaultModel ?? undefined,
-    modelReasoningEffort: config.settings.defaultModelReasoningEffort ?? undefined,
+    modelReasoningEffort: ticketEffort
+      ? ticketEffortToModelReasoningEffort(ticketEffort)
+      : config.settings.defaultModelReasoningEffort ?? undefined,
     approvalPolicy: config.settings.defaultApprovalPolicy,
     sandboxMode: config.settings.defaultSandboxMode,
     skipGitRepoCheck: config.settings.allowNonGitCodexRuns || !git,
@@ -403,16 +410,16 @@ const sharedThreadOptionsForProjectContext = (
   };
 };
 
-const boundedThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => ({
-  ...sharedThreadOptionsForProjectContext(projectPath, await projectThreadOptionsContext(projectPath)),
+const boundedThreadOptionsForProject = async (projectPath: string, ticketEffort?: TicketEffort): Promise<ThreadOptions> => ({
+  ...sharedThreadOptionsForProjectContext(projectPath, await projectThreadOptionsContext(projectPath), ticketEffort),
   networkAccessEnabled: false,
   webSearchMode: "disabled"
 });
 
-const implementationThreadOptionsForProject = async (projectPath: string): Promise<ThreadOptions> => {
+const implementationThreadOptionsForProject = async (projectPath: string, ticketEffort?: TicketEffort): Promise<ThreadOptions> => {
   const context = await projectThreadOptionsContext(projectPath);
   return {
-    ...sharedThreadOptionsForProjectContext(projectPath, context),
+    ...sharedThreadOptionsForProjectContext(projectPath, context, ticketEffort),
     networkAccessEnabled: context.config.settings.codexNetworkAccessEnabled,
     webSearchMode: context.config.settings.codexWebSearchMode
   };
@@ -719,7 +726,7 @@ const normalizeTicketDraftError = (
       "cancelled",
       context.requestId,
       context.durationMs,
-      "Codex ticket drafting was cancelled. Your rough idea is still available.",
+      "Agent ticket drafting was cancelled. Your rough idea is still available.",
       "codex_generation_cancelled",
       { cause: error }
     );
@@ -729,7 +736,7 @@ const normalizeTicketDraftError = (
       "invalid_response",
       context.requestId,
       context.durationMs,
-      "Codex returned an invalid ticket draft. Your rough idea is still available; retry Codex when ready.",
+      "The agent returned an invalid ticket draft. Your rough idea is still available; retry the agent when ready.",
       "invalid_codex_response",
       { cause: error }
     );
@@ -758,7 +765,7 @@ const normalizeTicketSuggestionError = (
       "cancelled",
       context.requestId,
       context.durationMs,
-      "Codex ticket suggestion generation was cancelled.",
+      "Agent ticket suggestion generation was cancelled.",
       "codex_suggestion_generation_cancelled",
       { cause: error }
     );
@@ -768,7 +775,7 @@ const normalizeTicketSuggestionError = (
       "invalid_response",
       context.requestId,
       context.durationMs,
-      "Codex returned invalid ticket suggestions. Retry generation when ready.",
+      "The agent returned invalid ticket suggestions. Retry generation when ready.",
       "invalid_codex_suggestion_response",
       { cause: error }
     );
@@ -1105,7 +1112,7 @@ export const createDraftIntake = async (
 ): Promise<DraftIntakeResult> => {
   const projectPath = pathResolve(input.projectPath);
   const idea = input.idea.trim();
-  if (!idea) throw new Error("Describe the ticket idea before drafting with Codex.");
+  if (!idea) throw new Error("Describe the ticket idea before drafting with the agent.");
 
   const requestId = dependencies.createRequestId?.() ?? newId("din");
   const startedAt = dependencies.nowMs?.() ?? Date.now();
@@ -1138,7 +1145,8 @@ export const createDraftIntake = async (
       );
     }
 
-    const [board, research] = await Promise.all([
+    const [config, board, research] = await Promise.all([
+      readProjectConfig(projectPath),
       readBoard(projectPath),
       researchTicketDraft(
         {
@@ -1156,7 +1164,7 @@ export const createDraftIntake = async (
       )
     ]);
     const codex = dependencies.createCodexClient?.() ?? (await createCodex());
-    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath));
+    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath, input.effort ?? config.settings.defaultTicketEffort));
     const prompt = buildDraftIntakePrompt({ ...input, projectPath, idea }, board, research);
     const turn = await thread.run(prompt, { outputSchema: draftIntakeResultSchemaJson, signal: abortController.signal });
     const parsed = parseSchema(draftIntakeResultSchema, parseJsonResponse(turn.finalResponse));
@@ -1365,7 +1373,7 @@ ${formatBoardTicketsForSuggestionPrompt(board)}`;
 };
 
 const createTicketDraftPromise = async (
-  { projectPath, idea, preferredTicketType, ticketId, draftScope, intakeAnswers, intakeKnownFacts, relatedTicketIds }: CreateDraftInput,
+  { projectPath, idea, effort, preferredTicketType, ticketId, draftScope, intakeAnswers, intakeKnownFacts, relatedTicketIds }: CreateDraftInput,
   dependencies: TicketDraftDependencies = {}
 ): Promise<TicketDraftOutcome> => {
   const requestId = dependencies.createRequestId?.() ?? newId("tdr");
@@ -1406,6 +1414,7 @@ const createTicketDraftPromise = async (
 
     const [config, board] = await Promise.all([readProjectConfig(projectPath), readBoard(projectPath)]);
     const existingDraftTicket = ticketId ? await readTicket(projectPath, ticketId) : null;
+    const effectiveEffort = existingDraftTicket?.frontMatter.effort ?? effort ?? config.settings.defaultTicketEffort;
     const draftClarifications = ticketId ? await readClarificationQuestions(projectPath, ticketId) : [];
     await reportTicketDraftProgress(dependencies, "Running bounded draft research across the project.");
     const research = await researchTicketDraft(
@@ -1435,7 +1444,7 @@ const createTicketDraftPromise = async (
       limits: research.metadata.limits
     });
     const codex = dependencies.createCodexClient?.() ?? (await createCodex());
-    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath));
+    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath, effectiveEffort));
     const ticketTypeGuidance =
       preferredTicketType === "epic"
         ? "The user selected Epic mode. Return ticketType \"epic\" and decompose the work into normal task subtickets."
@@ -1503,13 +1512,13 @@ ${renderResearchForPrompt(research)}
 User idea:
 ${idea}`;
 
-    await reportTicketDraftProgress(dependencies, "Codex is writing the implementation-ready ticket draft. This can take several minutes.");
+    await reportTicketDraftProgress(dependencies, "The agent is writing the implementation-ready ticket draft. This can take several minutes.");
     const progressIntervalMs = dependencies.draftProgressIntervalMs ?? 60_000;
     if (dependencies.onProgress && progressIntervalMs > 0) {
       progressInterval = setInterval(() => {
         void reportTicketDraftProgress(
           dependencies,
-          `Still waiting for Codex to return the structured ticket draft after ${formatDraftWait(durationMs())}.`
+          `Still waiting for the agent to return the structured ticket draft after ${formatDraftWait(durationMs())}.`
         );
       }, progressIntervalMs);
       unrefTimerHandle(progressInterval);
@@ -1519,7 +1528,7 @@ ${idea}`;
       clearInterval(progressInterval);
       progressInterval = null;
     }
-    await reportTicketDraftProgress(dependencies, "Codex returned a draft; validating the structured ticket.");
+    await reportTicketDraftProgress(dependencies, "The agent returned a draft; validating the structured ticket.");
     let parsed: TicketDraftOutcome;
     try {
       const parsedDraft = parseSchema(ticketDraftSchema, parseJsonResponse(turn.finalResponse));
@@ -1529,7 +1538,7 @@ ${idea}`;
         "invalid_response",
         requestId,
         durationMs(),
-        "Codex returned an invalid ticket draft. Your rough idea is still available; retry Codex when ready.",
+        "The agent returned an invalid ticket draft. Your rough idea is still available; retry the agent when ready.",
         "invalid_codex_response",
         { cause: error }
       );
@@ -1583,7 +1592,7 @@ export const createTicketDraft = (
       "clarification_required",
       "unknown",
       0,
-      "Codex needs clarification before it can produce an implementation-ready ticket.",
+      "The agent needs clarification before it can produce an implementation-ready ticket.",
       "draft_clarification_required"
     );
   });
@@ -1663,6 +1672,7 @@ export const startTicketDraftRun = async (
       let draftInput: CreateDraftInput = {
         projectPath,
         idea,
+        effort: ticket.frontMatter.effort,
         preferredTicketType: input.preferredTicketType,
         ticketId: ticket.frontMatter.id,
         draftScope: input.draftScope,
@@ -1677,7 +1687,8 @@ export const startTicketDraftRun = async (
           {
             projectPath,
             idea,
-            scopeOverride: draftIntakeScopeOverrideForCreateInput(input)
+            scopeOverride: draftIntakeScopeOverrideForCreateInput(input),
+            effort: ticket.frontMatter.effort
           },
           draftDependencies
         );
@@ -1917,7 +1928,13 @@ export const maybeResumeTicketDraftAfterClarification = async (
   void (async () => {
     try {
       const outcome = await createTicketDraftOutcome(
-        { projectPath, ticketId, idea, preferredTicketType: draftingTicket.frontMatter.ticketType },
+        {
+          projectPath,
+          ticketId,
+          idea,
+          effort: draftingTicket.frontMatter.effort,
+          preferredTicketType: draftingTicket.frontMatter.ticketType
+        },
         draftDependencies
       );
       if (outcome.status === "needs_clarification") {
@@ -2560,17 +2577,17 @@ const preflightCodexRunInternal = async (
     if (!currentColumn) {
       errors.push(`Ticket status "${ticket.frontMatter.status}" does not exist in this project workflow.`);
     } else if (currentColumn.terminal && ticket.frontMatter.status !== RELAY_NOT_DOING_STATUS && ticket.frontMatter.status !== RELAY_COMPLETED_STATUS) {
-      errors.push(`Move this ticket out of ${currentColumn.name} before starting Codex.`);
+      errors.push(`Move this ticket out of ${currentColumn.name} before starting the agent.`);
     }
 
     if (ticket.frontMatter.status === RELAY_NOT_DOING_STATUS) {
-      errors.push("Move this ticket out of Not Doing before starting Codex.");
+      errors.push("Move this ticket out of Not Doing before starting the agent.");
     }
     if (ticket.frontMatter.status === RELAY_COMPLETED_STATUS) {
-      errors.push("Completed tickets are human accepted. Reopen this ticket before starting Codex.");
+      errors.push("Completed tickets are human accepted. Reopen this ticket before starting the agent.");
     }
     if (ticket.frontMatter.ticketType === "epic") {
-      errors.push("Epics are planning containers. Start Codex from a child task ticket instead.");
+      errors.push("Epics are planning containers. Start the agent from a child task ticket instead.");
     }
 
     const board = await readBoard(projectPath);
@@ -2580,7 +2597,7 @@ const preflightCodexRunInternal = async (
     }
     if (blockerState.activeBlockers.length > 0) {
       errors.push(
-        `Blocked by active blocker(s): ${blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before starting Codex.`
+        `Blocked by active blocker(s): ${blockerState.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before starting the agent.`
       );
     }
     if (blockerState.missingBlockerIds.length > 0) {
@@ -2589,19 +2606,19 @@ const preflightCodexRunInternal = async (
 
     const activeRunId = activeRunIdForTicket(projectPath, ticketId);
     if (activeRunId) {
-      errors.push(`Ticket already has an active Codex run: ${activeRunId}.`);
+      errors.push(`Ticket already has an active agent run: ${activeRunId}.`);
     } else if (ticket.frontMatter.runStatus === "queued" && ticket.frontMatter.lastRunId !== options.allowQueuedRunId) {
-      errors.push("Ticket is already queued for a Codex run.");
+      errors.push("Ticket is already queued for an agent run.");
     } else if (ticket.frontMatter.runStatus === "drafting") {
-      errors.push("Codex is still drafting this ticket. Wait for the draft to finish before starting a run.");
+      errors.push("The agent is still drafting this ticket. Wait for the draft to finish before starting a run.");
     } else if (ticket.frontMatter.runStatus === "running") {
-      errors.push("Ticket is already marked as running. Stop or reconcile the current run before starting Codex again.");
+      errors.push("Ticket is already marked as running. Stop or reconcile the current run before starting the agent again.");
     }
 
     const clarifications = await readClarificationQuestions(projectPath, ticketId);
     unansweredClarificationCount = clarifications.filter((question) => !question.answer?.trim()).length;
     if (unansweredClarificationCount > 0) {
-      errors.push(`Answer ${unansweredClarificationCount} open clarification question(s) before starting Codex.`);
+      errors.push(`Answer ${unansweredClarificationCount} open clarification question(s) before starting the agent.`);
     }
 
     if (!input.freshThread && ticket.frontMatter.codexThreadId && ticket.frontMatter.runStatus === "completed") {
@@ -2671,7 +2688,7 @@ const startQueuedRunNow = async (
     config = await readProjectConfig(projectPath);
     ticket = await readTicket(projectPath, ticketId);
     const clarifications = await readClarificationQuestions(projectPath, ticketId);
-    const options = await implementationThreadOptionsForProject(projectPath);
+    const options = await implementationThreadOptionsForProject(projectPath, ticket.frontMatter.effort);
     existingThreadId = resume && !freshThread ? ticket.frontMatter.codexThreadId : null;
     executionInput = buildExecutionInput(projectPath, ticket.markdown, clarifications);
     status = config.columns.some((column) => column.id === RELAY_IN_PROGRESS_STATUS) ? RELAY_IN_PROGRESS_STATUS : ticket.frontMatter.status;
@@ -2689,7 +2706,7 @@ const startQueuedRunNow = async (
       await updateTicketRunState(projectPath, ticketId, { runStatus: "failed" });
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
-        message: errorMessage(error, "Codex run failed before streaming started."),
+        message: errorMessage(error, "Agent run failed before streaming started."),
         finalStatus: "failed",
         timestamp: nowIso()
       });
@@ -2719,7 +2736,7 @@ const startQueuedRunNow = async (
   const runStartedAt = nowIso();
   try {
     if (abortController.signal.aborted) {
-      throw new Error("Codex run was cancelled before streaming started.");
+      throw new Error("Agent run was cancelled before streaming started.");
     }
     await updateTicketRunState(projectPath, ticketId, {
       runStatus: "running",
@@ -2758,7 +2775,7 @@ const startQueuedRunNow = async (
     try {
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
-        message: errorMessage(error, "Codex run failed before streaming started."),
+        message: errorMessage(error, "Agent run failed before streaming started."),
         finalStatus: abortController.signal.aborted ? "cancelled" : "failed",
         timestamp: nowIso()
       });
@@ -2841,7 +2858,7 @@ const startQueuedRunNow = async (
 
           if (event.type === "turn.completed") {
             const updated = await readTicket(projectPath, ticketId);
-            const handoff = finalResponse || "Codex completed the run without a final text response.";
+            const handoff = finalResponse || "The agent completed the run without a final text response.";
             const clarificationRequest = extractClarificationRequest(handoff);
             if (clarificationRequest.length > 0) {
               const questions = await createClarificationQuestions(projectPath, ticketId, clarificationRequest, {
@@ -2922,7 +2939,7 @@ const startQueuedRunNow = async (
         await updateTicketRunState(projectPath, ticketId, { runStatus: aborted ? "cancelled" : "failed" });
         await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
           type: "run.failed",
-          message: error instanceof Error ? error.message : "Codex run failed.",
+          message: error instanceof Error ? error.message : "Agent run failed.",
           finalStatus: aborted ? "cancelled" : "failed",
           timestamp: nowIso()
         });

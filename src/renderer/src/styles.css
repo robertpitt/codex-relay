@@ -1417,18 +1417,47 @@ kbd {
 
 .create-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--relay-space-3);
   margin-top: var(--relay-space-4);
 }
 
-.create-type-fields {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.create-primary {
+  min-width: 0;
+  display: grid;
+  gap: var(--relay-space-3);
+  margin-top: var(--relay-space-4);
+}
+
+.create-details-field {
+  width: 100%;
+}
+
+.create-details-textarea {
+  width: 100%;
+  min-height: 168px;
+  max-height: min(34dvh, 280px);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.create-options-grid {
+  margin-top: var(--relay-space-3);
+}
+
+.create-manual-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.42fr);
+  gap: var(--relay-space-3);
+  margin-top: var(--relay-space-3);
 }
 
 .draft-actions {
   min-width: 0;
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: var(--relay-space-2);
 }
 
@@ -2376,6 +2405,10 @@ kbd {
 .ticket-detail-sidebar > .clarification-panel,
 .ticket-detail-sidebar > .agent-activity-panel,
 .ticket-detail-sidebar > .danger-row {
+  margin-top: 0;
+}
+
+.ticket-detail-primary > .ticket-detail-primary-clarifications {
   margin-top: 0;
 }
 
@@ -3794,6 +3827,7 @@ kbd {
 
   .modal-grid,
   .create-fields,
+  .create-manual-fields,
   .two-fields {
     grid-template-columns: 1fr;
   }
@@ -3815,6 +3849,7 @@ kbd {
   }
 
   .topbar-actions,
+  .draft-actions,
   .modal-footer,
   .detail-actions,
   .ticket-update-actions,
@@ -3835,6 +3870,7 @@ kbd {
   }
 
   .topbar-actions button,
+  .draft-actions button,
   .modal-footer button,
   .ticket-suggestion-create,
   .detail-actions button,

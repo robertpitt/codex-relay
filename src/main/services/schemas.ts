@@ -37,6 +37,7 @@ import type {
   TicketDraftResearchLimits,
   TicketDraftResearchUrl,
   TicketDraftSubticket,
+  TicketEffort,
   TicketFrontMatter,
   TicketMoveInput,
   TicketPriority,
@@ -142,6 +143,8 @@ export const ticketPrioritySchema: RelaySchema<TicketPriority> = Schema.Literals
 
 export const ticketTypeSchema: RelaySchema<TicketType> = Schema.Literals(["task", "epic"]);
 
+export const ticketEffortSchema: RelaySchema<TicketEffort> = Schema.Literals(["low", "medium", "high", "xhigh"]);
+
 export const draftScopeSchema: RelaySchema<DraftScope> = Schema.Literals([
   "quick_bug",
   "task",
@@ -196,6 +199,7 @@ export const projectSettingsSchema: RelaySchema<ProjectSettings> = Schema.Struct
     Schema.NullOr(Schema.Literals(["minimal", "low", "medium", "high", "xhigh"])),
     () => null
   ),
+  defaultTicketEffort: withDefault(ticketEffortSchema, () => "medium" as const),
   defaultApprovalPolicy: Schema.Literals(["untrusted", "on-request", "on-failure", "never"]),
   defaultSandboxMode: Schema.Literals(["read-only", "workspace-write", "danger-full-access"]),
   allowNonGitCodexRuns: Schema.Boolean,
@@ -225,6 +229,7 @@ export const ticketFrontMatterSchema: RelaySchema<TicketFrontMatter> = passthrou
   status: nonEmptyString,
   position: numberSchema,
   priority: ticketPrioritySchema,
+  effort: withDefault(ticketEffortSchema, () => "medium" as const),
   labels: stringArrayWithDefault(),
   parentEpicId: nullableStringWithDefault(),
   subticketIds: stringArrayWithDefault(),
@@ -383,7 +388,8 @@ export const draftIntakeAnswerSchema: RelaySchema<DraftIntakeAnswer> = passthrou
 export const draftIntakeInputSchema: RelaySchema<DraftIntakeInput> = passthroughStruct({
   projectPath: Schema.String,
   idea: Schema.String,
-  scopeOverride: Schema.optional(draftScopeSchema)
+  scopeOverride: Schema.optional(draftScopeSchema),
+  effort: Schema.optional(ticketEffortSchema)
 });
 
 export const draftIntakeResultSchema: RelaySchema<DraftIntakeResult> = strictStruct({
@@ -422,6 +428,7 @@ export const gitMetadataOptionsSchema: RelaySchema<GitMetadataOptions> = passthr
 const subticketCreateInputFields = {
   title: Schema.String,
   priority: ticketPrioritySchema,
+  effort: Schema.optional(ticketEffortSchema),
   labels: stringArrayWithDefault(),
   markdown: Schema.String,
   status: Schema.optional(Schema.String),
@@ -480,6 +487,7 @@ export const clarificationAnswerInputSchema: RelaySchema<ClarificationAnswerInpu
 export const createDraftInputSchema: RelaySchema<CreateDraftInput> = passthroughStruct({
   projectPath: Schema.String,
   idea: Schema.String,
+  effort: Schema.optional(ticketEffortSchema),
   preferredTicketType: Schema.optional(ticketTypeSchema),
   ticketId: Schema.optional(Schema.String),
   draftScope: Schema.optional(draftScopeSchema),

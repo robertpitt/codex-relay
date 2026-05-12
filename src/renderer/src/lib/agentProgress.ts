@@ -180,17 +180,17 @@ const statusCopy = (
 ): Pick<AgentProgressMetrics, "statusLabel" | "statusDetail" | "statusTone"> => {
   switch (status) {
     case "queued":
-      return { statusLabel: "Queued", statusDetail: "Codex is waiting to start this ticket.", statusTone: "active" };
+      return { statusLabel: "Queued", statusDetail: "The agent is waiting to start this ticket.", statusTone: "active" };
     case "drafting":
-      return { statusLabel: "Drafting", statusDetail: "Codex is preparing a ticket draft.", statusTone: "active" };
+      return { statusLabel: "Drafting", statusDetail: "The agent is preparing a ticket draft.", statusTone: "active" };
     case "draft_failed":
       return { statusLabel: "Draft failed", statusDetail: "The ticket draft run ended with an error.", statusTone: "danger" };
     case "draft_complete":
       return { statusLabel: "Draft ready", statusDetail: "The generated ticket draft is ready.", statusTone: "success" };
     case "running":
-      return { statusLabel: "Active", statusDetail: "Codex is working on this ticket.", statusTone: "active" };
+      return { statusLabel: "Active", statusDetail: "The agent is working on this ticket.", statusTone: "active" };
     case "blocked":
-      return { statusLabel: "Needs input", statusDetail: "Codex is waiting on clarification.", statusTone: "warning" };
+      return { statusLabel: "Needs input", statusDetail: "The agent is waiting on clarification.", statusTone: "warning" };
     case "failed":
       return { statusLabel: "Failed", statusDetail: "The agent session ended with an error.", statusTone: "danger" };
     case "completed":

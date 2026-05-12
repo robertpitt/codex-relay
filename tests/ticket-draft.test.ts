@@ -396,8 +396,17 @@ test("ticket draft prompt includes intake answers and applies lean scope budgets
 
 test("async ticket draft creates a Todo placeholder before Codex completes and applies the draft later", async () => {
   const projectPath = await createProject();
+  const config = await readProjectConfig(projectPath);
+  await writeProjectConfig(projectPath, {
+    ...config,
+    settings: {
+      ...config.settings,
+      defaultTicketEffort: "xhigh"
+    }
+  });
   const { runEventSink, events } = createFakeRunEventSink();
   let resolveDraft: TicketDraftRunResolver | null = null;
+  const capturedThreadOptions: TicketDraftThreadOptions[] = [];
   const dependencies: TicketDraftStartDependencies = {
     getStatus: async () => readyStatus,
     createRunId: () => "run_async_draft",
@@ -409,7 +418,10 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
         () =>
           new Promise((resolve) => {
             resolveDraft = resolve;
-          })
+          }),
+        (options) => {
+          capturedThreadOptions.push(options);
+        }
       )
   };
 
@@ -420,6 +432,7 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
   assert.equal(started.runId, "run_async_draft");
   assert.equal(pending.frontMatter.status, "todo");
   assert.equal(pending.frontMatter.runStatus, "drafting");
+  assert.equal(pending.frontMatter.effort, "xhigh");
   assert.equal(pending.frontMatter.lastRunId, "run_async_draft");
   assert.match(pending.frontMatter.title, /^Draft: Make ticket drafting asynchronous/);
   assert.match(pending.markdown, /Original Idea/);
@@ -429,8 +442,9 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
   assert.equal(events[0]?.type, "run.started");
 
   await waitFor(() => resolveDraft !== null, "Codex draft request to start");
+  assert.equal(capturedThreadOptions[0]?.modelReasoningEffort, "xhigh");
   await waitFor(
-    () => events.some((event) => event.type === "agent.message.completed" && /Codex is writing the implementation-ready ticket draft/.test(event.text)),
+    () => events.some((event) => event.type === "agent.message.completed" && /agent is writing the implementation-ready ticket draft/.test(event.text)),
     "draft progress events"
   );
   assert.ok(events.some((event) => event.type === "agent.message.completed" && /Draft research completed/.test(event.text)));
@@ -556,7 +570,7 @@ test("async ticket draft can be cancelled through the shared run cancellation fl
   };
 
   const started = await startTicketDraftRun({ projectPath, idea: "Cancel this draft" }, dependencies);
-  await waitFor(() => events.some((event) => event.type === "agent.message.completed" && /Codex is writing/.test(event.text)), "draft model wait");
+  await waitFor(() => events.some((event) => event.type === "agent.message.completed" && /agent is writing/.test(event.text)), "draft model wait");
 
   await cancelCodexRun(started.runId);
 

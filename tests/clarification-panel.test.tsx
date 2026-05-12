@@ -46,3 +46,28 @@ test("clarification panel distinguishes unanswered and answered questions", () =
   assert.match(markup, /Codex should explicitly move it when resuming\./);
   assert.match(markup, /1\/2 answered/);
 });
+
+test("clarification panel renders answered questions as non-editable history", () => {
+  const markup = renderToStaticMarkup(
+    <ClarificationPanel
+      questions={[
+        question({
+          id: "clar_answered",
+          question: "Should this be automatic?",
+          answer: "Codex should explicitly move it when resuming.",
+          answeredAt: "2026-05-11T10:05:00.000Z"
+        })
+      ]}
+      answerDrafts={{}}
+      submittingId={null}
+      onDraftChange={() => undefined}
+      onSubmit={() => undefined}
+    />
+  );
+
+  assert.match(markup, /data-status="answered"/);
+  assert.match(markup, /Codex should explicitly move it when resuming\./);
+  assert.match(markup, /1\/1 answered/);
+  assert.doesNotMatch(markup, /<textarea/);
+  assert.doesNotMatch(markup, /Submit Answer/);
+});

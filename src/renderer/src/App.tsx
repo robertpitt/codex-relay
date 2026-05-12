@@ -53,6 +53,7 @@ import type {
   TicketDraft,
   TicketDraftErrorPayload,
   TicketDraftSubticket,
+  TicketEffort,
   TicketPriority,
   TicketReferenceCandidate,
   TicketRecord,
@@ -187,6 +188,7 @@ export const getTicketReferenceMenuLayout = ({
 
 const priorityOptions: TicketPriority[] = ["low", "medium", "high", "urgent"];
 const ticketTypeOptions: TicketType[] = ["task", "epic"];
+const ticketEffortOptions: TicketEffort[] = ["low", "medium", "high", "xhigh"];
 const draftScopeOptions: Array<"auto" | DraftScope> = ["auto", "quick_bug", "task", "product_feature", "rewrite", "epic"];
 
 const draftScopeLabel = (scope: "auto" | DraftScope): string => {
@@ -237,7 +239,7 @@ const runLabel = (status: RunStatus): string => {
     case "failed":
       return "Failed";
     case "completed":
-      return "Codex Done";
+      return "Agent Done";
     case "cancelled":
       return "Cancelled";
     case "drafting":
@@ -290,7 +292,7 @@ export function DraftingTicketDetailLoading({ title }: { title: string }): React
       <Loader2 className="spin" size={22} aria-hidden="true" />
       <div>
         <h3>Drafting ticket</h3>
-        <p>Codex is preparing the generated ticket content for {title}.</p>
+        <p>The agent is preparing the generated ticket content for {title}.</p>
       </div>
     </section>
   );
@@ -474,7 +476,51 @@ export function TicketMarkdownTabs({
   );
 }
 
+type TicketDetailPrimaryClarificationsProps = {
+  questions: ClarificationQuestion[];
+  answerDrafts: Record<string, string>;
+  submittingId: string | null;
+  onDraftChange: (questionId: string, answer: string) => void;
+  onSubmit: (questionId: string) => void;
+};
+
+export function TicketDetailPrimaryClarifications({
+  questions,
+  answerDrafts,
+  submittingId,
+  onDraftChange,
+  onSubmit
+}: TicketDetailPrimaryClarificationsProps): ReactElement | null {
+  if (questions.length === 0) return null;
+
+  return (
+    <ClarificationPanel
+      className="ticket-detail-primary-clarifications"
+      title="Pending Clarifications"
+      summary={`${questions.length} pending`}
+      questions={questions}
+      answerDrafts={answerDrafts}
+      submittingId={submittingId}
+      onDraftChange={onDraftChange}
+      onSubmit={onSubmit}
+    />
+  );
+}
+
 const ticketTypeLabel = (ticketType: TicketType): string => (ticketType === "epic" ? "Epic" : "Task");
+
+const ticketEffortLabel = (effort: TicketEffort): string => {
+  switch (effort) {
+    case "low":
+      return "Low";
+    case "medium":
+      return "Medium";
+    case "high":
+      return "High";
+    case "xhigh":
+      return "Extra High";
+  }
+};
 
 const labelsFromInput = (value: string): string[] =>
   value
@@ -1171,7 +1217,7 @@ export function TicketSuggestionsModalContent({
     return (
       <div className="draft-message ticket-suggestions-status" role="status" aria-busy="true">
         <Loader2 className="spin" size={15} />
-        <span>Codex is reviewing the local project and current board.</span>
+        <span>The agent is reviewing the local project and current board.</span>
       </div>
     );
   }
@@ -1195,7 +1241,7 @@ export function TicketSuggestionsModalContent({
     return (
       <div className="ticket-suggestions-empty" role="status">
         <strong>No suggestions returned</strong>
-        <span>Codex did not find a task-sized ticket that was distinct from the current board.</span>
+        <span>The agent did not find a task-sized ticket that was distinct from the current board.</span>
       </div>
     );
   }
@@ -1317,7 +1363,7 @@ export function RepositoryChatPanelContent({
         ) : (
           messages.map((message) => (
             <article className={clsx("repository-chat-message", message.role)} key={message.id}>
-              <span>{message.role === "user" ? "You" : "Codex"}</span>
+              <span>{message.role === "user" ? "You" : "Agent"}</span>
               {message.role === "assistant" ? (
                 <MarkdownBlock
                   className="repository-chat-answer"
@@ -1335,7 +1381,7 @@ export function RepositoryChatPanelContent({
 
         {pending && (
           <div className="repository-chat-message assistant pending" role="status" aria-busy="true">
-            <span>Codex</span>
+            <span>Agent</span>
             <p>
               <Loader2 className="spin" size={14} />
               Reading repository context.
@@ -1537,7 +1583,7 @@ function TicketSuggestionsModal({
       }
 
       setCreateStates((current) => ({ ...current, [index]: "created" }));
-      setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+      setToast({ kind: "info", message: `Agent draft started for ${result.ticket.frontMatter.title}.` });
       try {
         await onCreated();
       } catch (error) {
@@ -1557,7 +1603,7 @@ function TicketSuggestionsModal({
         <header>
           <div>
             <h2 id="ticket-suggestions-title">Generate Tickets</h2>
-            <p>Codex suggests task-sized drafts from the local project and current board.</p>
+            <p>The agent suggests task-sized drafts from the local project and current board.</p>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close generated ticket suggestions dialog">
             <X size={18} />
@@ -1584,11 +1630,13 @@ function TicketSuggestionsModal({
 
 function CreateTicketModal({
   projectPath,
+  defaultEffort,
   onClose,
   onCreated,
   setToast
 }: {
   projectPath: string;
+  defaultEffort: TicketEffort;
   onClose: () => void;
   onCreated: () => void | Promise<void>;
   setToast: (toast: Toast) => void;
@@ -1598,6 +1646,7 @@ function CreateTicketModal({
   const [draftScopeOverride, setDraftScopeOverride] = useState<"auto" | DraftScope>("auto");
   const [manualTitle, setManualTitle] = useState("");
   const [manualPriority, setManualPriority] = useState<TicketPriority>("medium");
+  const [manualEffort, setManualEffort] = useState<TicketEffort>(defaultEffort);
   const [manualLabels, setManualLabels] = useState("");
   const [draft, setDraft] = useState<TicketDraft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1633,8 +1682,9 @@ function CreateTicketModal({
       ticketType !== "task" ||
       draftScopeOverride !== "auto" ||
       draftIntake !== null ||
-      manualPriority !== "medium",
-    [busy, draft, draftIntake, draftScopeOverride, idea, manualLabels, manualPriority, manualTitle, saving, ticketType]
+      manualPriority !== "medium" ||
+      manualEffort !== defaultEffort,
+    [busy, defaultEffort, draft, draftIntake, draftScopeOverride, idea, manualEffort, manualLabels, manualPriority, manualTitle, saving, ticketType]
   );
   const filteredTicketReferences = useMemo(
     () => filterTicketReferenceCandidates(ticketReferences, ticketReferenceMention?.token.query ?? ""),
@@ -1851,12 +1901,13 @@ function CreateTicketModal({
 
   const startBackgroundDraft = async (ideaSnapshot: string, requestSequence: number): Promise<boolean> => {
     setDraftMessageKind("info");
-    setDraftMessage("Creating a pending ticket and starting Codex in the background.");
+    setDraftMessage("Creating a pending ticket and starting the agent in the background.");
     const scopeOverride = draftScopeOverride === "auto" ? undefined : draftScopeOverride;
     const preferredTicketType = ticketTypeForDraftScope(scopeOverride ?? "task", ticketType);
     const result = await getRelayApi().ticket.createDraft({
       projectPath,
       idea: ideaSnapshot,
+      effort: manualEffort,
       preferredTicketType,
       draftScope: scopeOverride,
       runIntake: true
@@ -1872,7 +1923,7 @@ function CreateTicketModal({
     setBusy(false);
     setTicketReferenceMention(null);
     setDraftFailure(null);
-    setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+    setToast({ kind: "info", message: `Agent draft started for ${result.ticket.frontMatter.title}.` });
     onClose();
     void Promise.resolve(onCreated()).catch((error) => {
       setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
@@ -1886,11 +1937,12 @@ function CreateTicketModal({
     requestSequence: number
   ): Promise<boolean> => {
     setDraftMessageKind("info");
-    setDraftMessage("Creating a pending ticket and starting Codex in the background.");
+    setDraftMessage("Creating a pending ticket and starting the agent in the background.");
     const preferredTicketType = ticketTypeForDraftScope(intake.scope, ticketType);
     const result = await getRelayApi().ticket.createDraft({
       projectPath,
       idea: ideaSnapshot,
+      effort: manualEffort,
       preferredTicketType,
       draftScope: intake.scope,
       intakeAnswers: intakeAnswersForDraft(intake),
@@ -1908,7 +1960,7 @@ function CreateTicketModal({
     setBusy(false);
     setTicketReferenceMention(null);
     setDraftFailure(null);
-    setToast({ kind: "info", message: `Codex draft started for ${result.ticket.frontMatter.title}.` });
+    setToast({ kind: "info", message: `Agent draft started for ${result.ticket.frontMatter.title}.` });
     onClose();
     void Promise.resolve(onCreated()).catch((error) => {
       setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to refresh board." });
@@ -1928,7 +1980,7 @@ function CreateTicketModal({
     setDraftFailure(null);
     setDraftProgress(null);
     setDraftMessageKind("info");
-    setDraftMessage("Creating a pending ticket and starting Codex in the background.");
+    setDraftMessage("Creating a pending ticket and starting the agent in the background.");
     try {
       accepted = await startBackgroundDraft(ideaSnapshot, requestSequence);
     } catch (error) {
@@ -2017,6 +2069,7 @@ ${idea.trim() || "No additional details provided."}
           ? {
               title: draft.title,
               priority: draft.priority,
+              effort: manualEffort,
               labels: draft.labels,
               markdown: draftMarkdown,
               ticketType: draft.ticketType,
@@ -2025,6 +2078,7 @@ ${idea.trim() || "No additional details provided."}
                   ? draft.subtickets.map((subticket) => ({
                       title: subticket.title,
                       priority: subticket.priority,
+                      effort: manualEffort,
                       labels: subticket.labels,
                       markdown: markdownFromSubticketDraft(subticket, draft.title)
                     }))
@@ -2033,6 +2087,7 @@ ${idea.trim() || "No additional details provided."}
           : {
               title,
               priority: manualPriority,
+              effort: manualEffort,
               labels: labelsFromInput(manualLabels),
               markdown: manualMarkdown,
               ticketType
@@ -2067,79 +2122,12 @@ ${idea.trim() || "No additional details provided."}
           </button>
         </header>
 
-        <div className="create-fields">
-          <div className="two-fields create-type-fields">
-            <label className="field">
-              <span>Type</span>
-              <select
-                value={ticketType}
-                onChange={(event) => {
-                  setTicketType(event.target.value as TicketType);
-                  setDraftIntake(null);
-                  setIntakeAnswerDrafts({});
-                  setDraft(null);
-                  setDraftFailure(null);
-                  setDraftMessage(null);
-                }}
-              >
-                {ticketTypeOptions.map((option) => (
-                  <option value={option} key={option}>
-                    {ticketTypeLabel(option)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Draft Mode</span>
-              <select
-                value={draftScopeOverride}
-                onChange={(event) => {
-                  const value = event.target.value as "auto" | DraftScope;
-                  setDraftScopeOverride(value);
-                  if (value === "epic") setTicketType("epic");
-                  setDraftIntake(null);
-                  setIntakeAnswerDrafts({});
-                  setDraft(null);
-                  setDraftFailure(null);
-                  setDraftMessage(null);
-                }}
-              >
-                {draftScopeOptions.map((option) => (
-                  <option value={option} key={option}>
-                    {draftScopeLabel(option)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Priority</span>
-              <select value={manualPriority} onChange={(event) => setManualPriority(event.target.value as TicketPriority)} disabled={Boolean(draft)}>
-                {priorityOptions.map((option) => (
-                  <option key={option}>{option}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span>Title</span>
-            <input
-              value={manualTitle}
-              onChange={(event) => setManualTitle(event.target.value)}
-              placeholder={ticketType === "epic" ? "Epic title" : "Ticket title"}
-              disabled={Boolean(draft)}
-            />
-          </label>
-          <label className="field">
-            <span>Labels</span>
-            <input value={manualLabels} onChange={(event) => setManualLabels(event.target.value)} placeholder="frontend, auth" disabled={Boolean(draft)} />
-          </label>
-        </div>
-
-        <div className="modal-grid">
-          <label className="field">
+        <div className="create-primary">
+          <label className="field create-details-field">
             <span>{draft ? "Original Idea" : "Details"}</span>
             <div className="ticket-reference-editor idea-reference-editor">
               <textarea
+                className="create-details-textarea"
                 ref={ideaEditorRef}
                 value={idea}
                 placeholder={ticketType === "epic" ? "Describe the larger outcome and key subtasks..." : "Describe what you want built..."}
@@ -2169,9 +2157,90 @@ ${idea.trim() || "No additional details provided."}
           <div className="draft-actions">
             <button className="primary-button" onClick={draftTicket} disabled={busy || idea.trim().length === 0}>
               {busy ? <Loader2 className="spin" size={16} /> : draftFailure?.recoverable ? <RefreshCw size={16} /> : <Code2 size={16} />}
-              {busy ? "Starting..." : draftFailure?.recoverable ? "Retry Codex" : draftIntake ? "Restart Intake" : "Draft with Codex"}
+              {busy ? "Starting..." : draftFailure?.recoverable ? "Retry Agent" : draftIntake ? "Restart Intake" : "Draft with Agent"}
             </button>
           </div>
+        </div>
+
+        <div className="create-fields create-options-grid" aria-label="Ticket creation options">
+          <label className="field">
+            <span>Type</span>
+            <select
+              value={ticketType}
+              onChange={(event) => {
+                setTicketType(event.target.value as TicketType);
+                setDraftIntake(null);
+                setIntakeAnswerDrafts({});
+                setDraft(null);
+                setDraftFailure(null);
+                setDraftMessage(null);
+              }}
+            >
+              {ticketTypeOptions.map((option) => (
+                <option value={option} key={option}>
+                  {ticketTypeLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Draft Mode</span>
+            <select
+              value={draftScopeOverride}
+              onChange={(event) => {
+                const value = event.target.value as "auto" | DraftScope;
+                setDraftScopeOverride(value);
+                if (value === "epic") setTicketType("epic");
+                setDraftIntake(null);
+                setIntakeAnswerDrafts({});
+                setDraft(null);
+                setDraftFailure(null);
+                setDraftMessage(null);
+              }}
+            >
+              {draftScopeOptions.map((option) => (
+                <option value={option} key={option}>
+                  {draftScopeLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Priority</span>
+            <select value={manualPriority} onChange={(event) => setManualPriority(event.target.value as TicketPriority)} disabled={Boolean(draft)}>
+              {priorityOptions.map((option) => (
+                <option value={option} key={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Effort</span>
+            <select value={manualEffort} onChange={(event) => setManualEffort(event.target.value as TicketEffort)}>
+              {ticketEffortOptions.map((option) => (
+                <option value={option} key={option}>
+                  {ticketEffortLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="create-manual-fields">
+          <label className="field">
+            <span>Title</span>
+            <input
+              value={manualTitle}
+              onChange={(event) => setManualTitle(event.target.value)}
+              placeholder={ticketType === "epic" ? "Epic title" : "Ticket title"}
+              disabled={Boolean(draft)}
+            />
+          </label>
+          <label className="field">
+            <span>Labels</span>
+            <input value={manualLabels} onChange={(event) => setManualLabels(event.target.value)} placeholder="frontend, auth" disabled={Boolean(draft)} />
+          </label>
         </div>
 
         {draftMessage && <CreateTicketDraftMessage kind={draftMessageKind} message={draftMessage} busy={busy} />}
@@ -2387,6 +2456,7 @@ function TicketDetail({
   const [ticket, setTicket] = useState<TicketRecord | null>(null);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<TicketPriority>("medium");
+  const [effort, setEffort] = useState<TicketEffort>("medium");
   const [status, setStatus] = useState("todo");
   const [labels, setLabels] = useState("");
   const [blockedByIds, setBlockedByIds] = useState<string[]>([]);
@@ -2437,6 +2507,7 @@ function TicketDetail({
       setTicket(record);
       setTitle(record.frontMatter.title);
       setPriority(record.frontMatter.priority);
+      setEffort(record.frontMatter.effort);
       setStatus(record.frontMatter.status);
       setLabels(record.frontMatter.labels.join(", "));
       setBlockedByIds(record.frontMatter.blockedByIds ?? []);
@@ -2453,6 +2524,7 @@ function TicketDetail({
       setPersistedEvents([]);
       setRunSummary(null);
       setBlockedByIds([]);
+      setEffort("medium");
       setDetailError(message);
       setToast({ kind: "error", message });
     }
@@ -2547,7 +2619,7 @@ function TicketDetail({
   const draftInProgress = ticket?.frontMatter.runStatus === "drafting";
   const draftFailed = ticket?.frontMatter.runStatus === "draft_failed";
   const draftFailureMessage = useMemo(
-    () => [...currentRunEvents].reverse().find((event) => event.type === "run.failed")?.message ?? "Codex ticket drafting failed.",
+    () => [...currentRunEvents].reverse().find((event) => event.type === "run.failed")?.message ?? "Agent ticket drafting failed.",
     [currentRunEvents]
   );
   const ticketUpdateEvents = useMemo(
@@ -2599,10 +2671,10 @@ function TicketDetail({
       .filter((item) => item.id !== ticket.frontMatter.id && item.ticketType === "task" && !linkedIds.has(item.id))
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [board.tickets, linkedSubtickets, ticket]);
-  const unansweredClarificationCount = useMemo(
-    () => clarifications.filter((question) => !question.answer?.trim()).length,
-    [clarifications]
-  );
+  const pendingClarifications = useMemo(() => clarifications.filter((question) => !question.answer?.trim()), [clarifications]);
+  const answeredClarifications = useMemo(() => clarifications.filter((question) => Boolean(question.answer?.trim())), [clarifications]);
+  const unansweredClarificationCount = pendingClarifications.length;
+  const sidebarClarifications = pendingClarifications.length > 0 ? answeredClarifications : clarifications;
   const completedStatusAvailable = board.columns.some((column) => column.id === "completed");
   const todoStatusAvailable = board.columns.some((column) => column.id === "todo");
 
@@ -2651,6 +2723,7 @@ function TicketDetail({
       linkSubticketId.length > 0 ||
       title !== ticket.frontMatter.title ||
       priority !== ticket.frontMatter.priority ||
+      effort !== ticket.frontMatter.effort ||
       status !== ticket.frontMatter.status ||
       labels !== ticket.frontMatter.labels.join(", ") ||
       !sameStringArray(blockedByIds, ticket.frontMatter.blockedByIds ?? []) ||
@@ -2662,6 +2735,7 @@ function TicketDetail({
     attachmentDropBusy,
     blockedByIds,
     busy,
+    effort,
     labels,
     linkSubticketId,
     markdown,
@@ -2754,7 +2828,7 @@ function TicketDetail({
   const save = async (): Promise<void> => {
     if (!ticket) return;
     if (draftInProgress) {
-      setToast({ kind: "info", message: "Wait for Codex to finish drafting before editing this ticket." });
+      setToast({ kind: "info", message: "Wait for the agent to finish drafting before editing this ticket." });
       return;
     }
     if (blockerResolution && blockerResolution.selfBlockerIds.length > 0) {
@@ -2772,6 +2846,7 @@ function TicketDetail({
             ...ticket.frontMatter,
             title,
             priority,
+            effort,
             status,
             labels: labelsFromInput(labels),
             blockedByIds
@@ -2830,7 +2905,7 @@ function TicketDetail({
 
   const startRun = async (resume: boolean, freshThread = false): Promise<void> => {
     if (draftInProgress) {
-      setToast({ kind: "info", message: "Wait for Codex to finish drafting before starting a run." });
+      setToast({ kind: "info", message: "Wait for the agent to finish drafting before starting a run." });
       return;
     }
     setBusy(true);
@@ -2839,7 +2914,7 @@ function TicketDetail({
       const preflight = await getRelayApi().codex.preflightRun({ projectPath, ticketId, freshThread });
       setRunPreflight(preflight);
       if (!preflight.ok) {
-        setToast({ kind: "error", message: preflight.errors[0] ?? "Codex run is blocked." });
+        setToast({ kind: "error", message: preflight.errors[0] ?? "Agent run is blocked." });
         return;
       }
       const result = resume
@@ -2848,12 +2923,12 @@ function TicketDetail({
       setRunId(result.runId);
       setToast({
         kind: "info",
-        message: result.state === "queued" ? `Codex run queued: ${result.runId}` : `Codex run started: ${result.runId}`
+        message: result.state === "queued" ? `Agent run queued: ${result.runId}` : `Agent run started: ${result.runId}`
       });
       onChanged();
       await load();
     } catch (error) {
-      setToast({ kind: "error", message: error instanceof Error ? error.message : "Codex run failed to start." });
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Agent run failed to start." });
     } finally {
       setBusy(false);
     }
@@ -2949,6 +3024,7 @@ function TicketDetail({
         ticket: {
           title: childTitle,
           priority: newSubticketPriority,
+          effort,
           labels: labelsFromInput(newSubticketLabels),
           markdown: manualSubticketMarkdown(childTitle, ticket.frontMatter.title)
         }
@@ -3076,7 +3152,7 @@ function TicketDetail({
                 disabled={busy || ticketUpdateActive || draftInProgress || runQueued}
               >
                 {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                {ticket.frontMatter.codexThreadId ? "Resume Codex" : "Start Codex"}
+                {ticket.frontMatter.codexThreadId ? "Resume Agent" : "Start Agent"}
               </button>
               {ticket.frontMatter.codexThreadId && (
                 <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
@@ -3111,7 +3187,7 @@ function TicketDetail({
             {draftInProgress && (
               <div className="ticket-update-error warning" role="status">
                 <Loader2 className="spin" size={16} />
-                <span>Codex is drafting this ticket. The generated plan will appear here when the background draft run completes.</span>
+                <span>The agent is drafting this ticket. The generated plan will appear here when the background draft run completes.</span>
               </div>
             )}
 
@@ -3136,16 +3212,24 @@ function TicketDetail({
                 {unansweredClarificationCount > 0 && (
                   <div className="ticket-update-error" role="alert">
                     <AlertTriangle size={16} />
-                    <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming Codex.</span>
+                    <span>Answer {unansweredClarificationCount} clarification question(s) before starting or resuming the agent.</span>
                   </div>
                 )}
+
+                <TicketDetailPrimaryClarifications
+                  questions={pendingClarifications}
+                  answerDrafts={answerDrafts}
+                  submittingId={submittingAnswerId}
+                  onDraftChange={(questionId, answer) => setAnswerDrafts((current) => ({ ...current, [questionId]: answer }))}
+                  onSubmit={(questionId) => void submitClarificationAnswer(questionId)}
+                />
 
                 {blockerResolution?.isBlocked && (
                   <div className="ticket-update-error warning" role="alert">
                     <AlertTriangle size={16} />
                     <span>
                       Blocked by {blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}. Move blockers to terminal columns before
-                      starting Codex.
+                      starting the agent.
                     </span>
                   </div>
                 )}
@@ -3253,7 +3337,19 @@ function TicketDetail({
                   <span>Priority</span>
                   <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
                     {priorityOptions.map((option) => (
-                      <option key={option}>{option}</option>
+                      <option value={option} key={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Effort</span>
+                  <select value={effort} onChange={(event) => setEffort(event.target.value as TicketEffort)} disabled={draftInProgress}>
+                    {ticketEffortOptions.map((option) => (
+                      <option value={option} key={option}>
+                        {ticketEffortLabel(option)}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -3500,7 +3596,7 @@ function TicketDetail({
             )}
 
             <ClarificationPanel
-              questions={clarifications}
+              questions={sidebarClarifications}
               answerDrafts={answerDrafts}
               submittingId={submittingAnswerId}
               onDraftChange={(questionId, answer) => setAnswerDrafts((current) => ({ ...current, [questionId]: answer }))}
@@ -3893,7 +3989,13 @@ function RelayApp(): ReactElement {
       )}
 
       {board && selectedPath && createOpen && (
-        <CreateTicketModal projectPath={selectedPath} onClose={() => setCreateOpen(false)} onCreated={refreshAll} setToast={setToast} />
+        <CreateTicketModal
+          projectPath={selectedPath}
+          defaultEffort={board.config?.settings.defaultTicketEffort ?? "medium"}
+          onClose={() => setCreateOpen(false)}
+          onCreated={refreshAll}
+          setToast={setToast}
+        />
       )}
 
       {board && selectedPath && ticketSuggestionsOpen && (

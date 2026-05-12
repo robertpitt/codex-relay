@@ -73,6 +73,7 @@ test("ticket front matter decodes Date timestamps, legacy defaults, and passthro
 
   assert.equal(parsed.createdAt, "2026-05-11T09:00:00.000Z");
   assert.equal(parsed.ticketType, "task");
+  assert.equal(parsed.effort, "medium");
   assert.equal(parsed.labels.length, 0);
   assert.equal(parsed.parentEpicId, null);
   assert.equal(parsed.subticketIds.length, 0);
@@ -99,6 +100,7 @@ test("project settings decode legacy configs with conservative SDK thread option
   const config = parseSchema(projectConfigSchema, validProjectConfigInput());
 
   assert.equal(config.settings.defaultModelReasoningEffort, null);
+  assert.equal(config.settings.defaultTicketEffort, "medium");
   assert.equal(config.settings.codexNetworkAccessEnabled, false);
   assert.equal(config.settings.codexWebSearchMode, "disabled");
   assert.deepEqual(config.settings.codexAdditionalDirectories, []);
@@ -116,6 +118,11 @@ test("project settings validate SDK approval, reasoning, and web search enums", 
     assert.equal(config.settings.defaultModelReasoningEffort, reasoningEffort);
   }
 
+  for (const effort of ["low", "medium", "high", "xhigh"]) {
+    const config = parseSchema(projectConfigSchema, validProjectConfigInput({ defaultTicketEffort: effort }));
+    assert.equal(config.settings.defaultTicketEffort, effort);
+  }
+
   for (const webSearchMode of ["disabled", "cached", "live"]) {
     const config = parseSchema(projectConfigSchema, validProjectConfigInput({ codexWebSearchMode: webSearchMode }));
     assert.equal(config.settings.codexWebSearchMode, webSearchMode);
@@ -127,6 +134,10 @@ test("project settings validate SDK approval, reasoning, and web search enums", 
   );
   assert.throws(
     () => parseSchema(projectConfigSchema, validProjectConfigInput({ defaultModelReasoningEffort: "extreme" })),
+    (error) => expectSchemaError(error)
+  );
+  assert.throws(
+    () => parseSchema(projectConfigSchema, validProjectConfigInput({ defaultTicketEffort: "minimal" })),
     (error) => expectSchemaError(error)
   );
   assert.throws(
