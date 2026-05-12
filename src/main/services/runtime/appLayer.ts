@@ -4,8 +4,10 @@ import { RelayIpcLive } from "../../ipc";
 import { RelayWindowLive } from "../../window/RelayWindow";
 import { BackendLoggerLive } from "../logger";
 import { GitServiceLive } from "../git";
+import { BackendKernelLive } from "../kernel";
 import { RegistryStoreLive } from "../registry";
 import { RunEventSinkLive } from "../run-events";
+import { StorageLive } from "../storage";
 import { BackendServicesBaseLive, configureBackendRuntime, disposeBackendRuntime } from ".";
 import { Layer } from "effect";
 import { IoLive } from "../io";
@@ -27,6 +29,8 @@ export const AppLayerLive = Layer.mergeAll(
   BackendLoggerLive,
   GitServiceLive,
   RegistryStoreLive,
+  BackendKernelLive,
+  StorageLive.pipe(Layer.provide(BackendServicesBaseLive)),
   RunEventSinkLive
 );
 

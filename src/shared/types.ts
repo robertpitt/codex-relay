@@ -21,6 +21,7 @@ export type TicketPriority = "low" | "medium" | "high" | "urgent";
 export type TicketType = "task" | "epic";
 export type TicketEffort = "low" | "medium" | "high" | "xhigh";
 export type DraftScope = "quick_bug" | "task" | "product_feature" | "rewrite" | "epic";
+export type TicketAuthoringState = "rough" | "drafting" | "reviewing" | "refining" | "needs_input" | "ready";
 export type RunStatus =
   | "idle"
   | "queued"
@@ -129,23 +130,33 @@ export type TicketFrontMatter = {
   parentEpicId: string | null;
   subticketIds: string[];
   blockedByIds: string[];
+  relatedTicketIds: string[];
   createdAt: string;
   updatedAt: string;
+  authoringState: TicketAuthoringState;
   codexThreadId: string | null;
   runStatus: RunStatus;
   lastRunId: string | null;
   lastRunStartedAt: string | null;
 };
 
+export type TicketChecklistSummary = {
+  total: number;
+  completed: number;
+  open: number;
+};
+
 export type TicketRecord = {
   frontMatter: TicketFrontMatter;
   markdown: string;
   filePath: string;
+  checklist: TicketChecklistSummary;
 };
 
 export type TicketSummary = TicketFrontMatter & {
   excerpt: string;
   filePath: string;
+  checklist: TicketChecklistSummary;
 };
 
 export type TicketReferenceCandidate = {
@@ -293,7 +304,12 @@ export type AgentTicketUpdate = {
   title: string;
   priority: TicketPriority;
   labels: string[];
-  markdown: string;
+  authoringState: Exclude<TicketAuthoringState, "drafting" | "refining">;
+  patch: {
+    summary: string;
+    fullMarkdown?: string | null;
+    appendMarkdown?: string | null;
+  };
   clarificationQuestions: string[];
 };
 
@@ -344,6 +360,8 @@ export type SubticketCreateInput = {
   markdown: string;
   status?: string;
   blockedByIds?: string[];
+  relatedTicketIds?: string[];
+  authoringState?: TicketAuthoringState;
 };
 
 export type TicketCreateInput = SubticketCreateInput & {

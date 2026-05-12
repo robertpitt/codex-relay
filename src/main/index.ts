@@ -7,6 +7,7 @@ import { runBackendEffect } from "./services/runtime";
 import { disposeAppRuntime, installAppRuntime } from "./services/runtime/appLayer";
 import { getLogPath, logError, logInfo } from "./services/logger";
 import { pathDirname } from "./services/io";
+import { JobSupervisor } from "./services/kernel";
 
 const __dirname = pathDirname(fileURLToPath(import.meta.url));
 const windowOptions = relayWindowPaths(__dirname);
@@ -28,6 +29,10 @@ const start = async (): Promise<void> => {
   await logInfo("app", "Relay starting", { logPath: getLogPath() });
   await runBackendEffect(installRelayIpcHandlers());
   await createRelayWindow();
+  const recovered = await runBackendEffect(JobSupervisor.use((supervisor) => supervisor.recoverFromRegistry()));
+  if (recovered.length > 0) {
+    await logInfo("app", "Recovered backend kernel executions", { count: recovered.length });
+  }
 
   await runBackendEffect(
     Effect.gen(function*() {

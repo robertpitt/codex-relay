@@ -364,10 +364,22 @@ const renderMarkdownNode = (
     case "list": {
       const List = block.ordered ? "ol" : "ul";
       return (
-        <List key={keyPrefix}>
-          {block.items.map((item, index) => (
-            <li key={`${keyPrefix}-item-${index}`}>{renderInlineLines(item.split("\n"), `${keyPrefix}-item-${index}`)}</li>
-          ))}
+        <List key={keyPrefix} className={!block.ordered && block.items.some((item) => /^\[[ xX]]\s+/.test(item)) ? "markdown-task-list" : undefined}>
+          {block.items.map((item, index) => {
+            const task = !block.ordered ? item.match(/^\[([ xX])]\s+([\s\S]*)$/) : null;
+            return (
+              <li key={`${keyPrefix}-item-${index}`} className={task ? "markdown-task-list-item" : undefined}>
+                {task ? (
+                  <label>
+                    <input type="checkbox" checked={task[1].toLowerCase() === "x"} readOnly />
+                    <span>{renderInlineLines(task[2].split("\n"), `${keyPrefix}-item-${index}`)}</span>
+                  </label>
+                ) : (
+                  renderInlineLines(item.split("\n"), `${keyPrefix}-item-${index}`)
+                )}
+              </li>
+            );
+          })}
         </List>
       );
     }

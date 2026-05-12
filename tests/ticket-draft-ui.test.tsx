@@ -12,6 +12,8 @@ import {
   TicketMarkdownTabs,
   TicketDetailPrimaryClarifications,
   TicketSuggestionsModalContent,
+  TicketAuthoringStatePill,
+  TicketChecklistPill,
   TicketRunElapsedPill,
   TicketRunStatusPill
 } from "../src/renderer/src/App";
@@ -30,14 +32,17 @@ const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   parentEpicId: null,
   subticketIds: [],
   blockedByIds: [],
+  relatedTicketIds: [],
   createdAt: "2026-05-12T10:00:00.000Z",
   updatedAt: "2026-05-12T10:00:00.000Z",
+  authoringState: "ready",
   codexThreadId: null,
   runStatus: "running",
   lastRunId: "run_elapsed",
   lastRunStartedAt: "2026-05-12T10:00:00.000Z",
   excerpt: "Runtime card",
   filePath: "/tmp/tkt_elapsed.md",
+  checklist: { total: 0, completed: 0, open: 0 },
   ...patch
 });
 
@@ -103,6 +108,32 @@ test("drafting ticket status pill renders an active spinner indicator", () => {
   assert.match(markup, /run-pill drafting/);
   assert.match(markup, /spin run-pill-icon/);
   assert.match(markup, /Drafting/);
+});
+
+test("ticket authoring and checklist metadata render as compact pills", () => {
+  const authoringMarkup = renderToStaticMarkup(<TicketAuthoringStatePill state="reviewing" />);
+  assert.match(authoringMarkup, /authoring-pill reviewing/);
+  assert.match(authoringMarkup, /Reviewing/);
+
+  const checklistMarkup = renderToStaticMarkup(<TicketChecklistPill completed={2} total={5} />);
+  assert.match(checklistMarkup, /checklist-pill/);
+  assert.match(checklistMarkup, /2\/5/);
+
+  const cardMarkup = renderToStaticMarkup(
+    <TicketCardContent
+      ticket={ticketSummary({
+        status: "todo",
+        runStatus: "idle",
+        authoringState: "reviewing",
+        checklist: { total: 5, completed: 2, open: 3 }
+      })}
+      allTickets={[]}
+      columns={DEFAULT_COLUMNS}
+      now={Date.parse("2026-05-12T10:01:05.000Z")}
+    />
+  );
+  assert.match(cardMarkup, /authoring-pill reviewing/);
+  assert.match(cardMarkup, /checklist-pill/);
 });
 
 test("in-progress running ticket elapsed pill renders compact runtime", () => {

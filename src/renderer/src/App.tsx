@@ -49,6 +49,7 @@ import type {
   RendererRunEvent,
   RunSummary,
   RunStatus,
+  TicketAuthoringState,
   TicketAttachmentSaveResult,
   TicketDraft,
   TicketDraftErrorPayload,
@@ -259,6 +260,44 @@ export function TicketRunStatusPill({ status }: { status: RunStatus }): ReactEle
   return (
     <span className={clsx("run-pill", status)} title={`Agent status: ${label}`} aria-label={`Agent status: ${label}`}>
       {status === "drafting" && <Loader2 className="spin run-pill-icon" size={12} aria-hidden="true" />}
+      <span>{label}</span>
+    </span>
+  );
+}
+
+const authoringLabel = (state: TicketAuthoringState): string => {
+  switch (state) {
+    case "drafting":
+      return "Drafting";
+    case "reviewing":
+      return "Reviewing";
+    case "refining":
+      return "Refining";
+    case "needs_input":
+      return "Needs Input";
+    case "ready":
+      return "Ready";
+    case "rough":
+    default:
+      return "Rough";
+  }
+};
+
+export function TicketAuthoringStatePill({ state }: { state: TicketAuthoringState }): ReactElement {
+  const label = authoringLabel(state);
+  return (
+    <span className={clsx("authoring-pill", state)} title={`Authoring state: ${label}`} aria-label={`Authoring state: ${label}`}>
+      {state === "drafting" || state === "refining" ? <Loader2 className="spin run-pill-icon" size={12} aria-hidden="true" /> : null}
+      <span>{label}</span>
+    </span>
+  );
+}
+
+export function TicketChecklistPill({ completed, total }: { completed: number; total: number }): ReactElement {
+  const label = `${completed}/${total}`;
+  return (
+    <span className="checklist-pill" title={`Checklist progress: ${label}`} aria-label={`Checklist progress: ${label}`}>
+      <Check size={12} aria-hidden="true" />
       <span>{label}</span>
     </span>
   );
@@ -880,6 +919,8 @@ export function TicketCardContent({
   const hiddenLabelText = hiddenLabels.join(", ");
   const showPriority = ticket.priority === "high" || ticket.priority === "urgent";
   const showRunStatus = ticket.runStatus !== "idle";
+  const showAuthoringState = ticket.authoringState !== "rough" && ticket.runStatus === "idle";
+  const showChecklist = ticket.checklist.total > 0;
   const elapsedLabel = activeRunElapsedLabel(ticket, now);
   const showRelationship = ticket.ticketType === "epic" || Boolean(ticket.parentEpicId);
   const blockerState = useMemo(() => resolveTicketBlockers(ticket, allTickets, columns), [allTickets, columns, ticket]);
@@ -889,7 +930,7 @@ export function TicketCardContent({
     <>
       <div className="card-title">{ticket.title}</div>
       <p className="card-excerpt">{ticket.excerpt || "No details yet."}</p>
-      {(showRelationship || showPriority || showRunStatus || showBlockerState || elapsedLabel) && (
+      {(showRelationship || showPriority || showRunStatus || showAuthoringState || showChecklist || showBlockerState || elapsedLabel) && (
         <div className="card-meta">
           {ticket.ticketType === "epic" && (
             <span className="ticket-type-pill epic" title="Epic ticket" aria-label="Epic ticket">
@@ -917,6 +958,8 @@ export function TicketCardContent({
             </span>
           )}
           {showRunStatus && <TicketRunStatusPill status={ticket.runStatus} />}
+          {showAuthoringState && <TicketAuthoringStatePill state={ticket.authoringState} />}
+          {showChecklist && <TicketChecklistPill completed={ticket.checklist.completed} total={ticket.checklist.total} />}
           {elapsedLabel && <TicketRunElapsedPill label={elapsedLabel} />}
         </div>
       )}
@@ -2628,6 +2671,11 @@ function TicketDetail({
   );
   const ticketUpdateActive = isAgentSessionActive(ticketUpdateStatus) || ticketUpdateCancelling;
   const runQueued = ticket?.frontMatter.runStatus === "queued";
+  const detailAuthoringState: TicketAuthoringState | null = ticket
+    ? ticketUpdateActive
+      ? "refining"
+      : ticket.frontMatter.authoringState
+    : null;
   const linkedSubtickets = useMemo(() => {
     if (!ticket || ticket.frontMatter.ticketType !== "epic") return [];
     const byId = new Map(board.tickets.map((item) => [item.id, item]));
@@ -2656,6 +2704,11 @@ function TicketDetail({
     () => (ticket ? resolveTicketBlockers({ id: ticket.frontMatter.id, blockedByIds }, board.tickets, board.columns) : null),
     [blockedByIds, board.columns, board.tickets, ticket]
   );
+  const relatedTickets = useMemo(() => {
+    if (!ticket || ticket.frontMatter.relatedTicketIds.length === 0) return [];
+    const byId = new Map(board.tickets.map((item) => [item.id, item]));
+    return ticket.frontMatter.relatedTicketIds.map((id) => ({ id, ticket: byId.get(id) ?? null }));
+  }, [board.tickets, ticket]);
   const blockerCandidates = useMemo(() => {
     if (!ticket) return [];
     return board.tickets
@@ -2676,7 +2729,7 @@ function TicketDetail({
   const unansweredClarificationCount = pendingClarifications.length;
   const sidebarClarifications = pendingClarifications.length > 0 ? answeredClarifications : clarifications;
   const completedStatusAvailable = board.columns.some((column) => column.id === "completed");
-  const todoStatusAvailable = board.columns.some((column) => column.id === "todo");
+  const ticketIsCompleted = ticket?.frontMatter.status === "completed";
 
   useEffect(() => {
     if (!ticketUpdateRunId || ticketUpdateEndedAt) return;
@@ -2691,7 +2744,7 @@ function TicketDetail({
       setTicketUpdateStatus("completed");
       setTicketUpdateError(null);
       setTicketUpdateRequest("");
-      setToast({ kind: "success", message: "Ticket updated by agent." });
+      setToast({ kind: "success", message: "Ticket refined by agent." });
       onChanged();
       void load();
       return;
@@ -2949,6 +3002,44 @@ function TicketDetail({
     }
   };
 
+  const createFollowUpDraft = async (): Promise<void> => {
+    if (!ticket) return;
+    const request = ticketUpdateRequest.trim();
+    if (!request) {
+      setTicketUpdateError("Describe the follow-up issue or improvement before drafting a related ticket.");
+      ticketUpdateInputRef.current?.focus();
+      return;
+    }
+
+    setBusy(true);
+    setTicketUpdateError(null);
+    try {
+      const result = await getRelayApi().ticket.createDraft({
+        projectPath,
+        idea: `Create a follow-up ticket related to ${ticket.frontMatter.id} (${ticket.frontMatter.title}).\n\nFollow-up request:\n${request}`,
+        preferredTicketType: "task",
+        relatedTicketIds: [ticket.frontMatter.id],
+        runIntake: true
+      });
+      if (!result.ok) {
+        setTicketUpdateError(result.error.message);
+        setToast({ kind: "error", message: result.error.message });
+        return;
+      }
+
+      setTicketUpdateRequest("");
+      setToast({ kind: "info", message: `Agent draft started for ${result.ticket.frontMatter.title}.` });
+      onChanged();
+      onOpenTicket(result.ticket.frontMatter.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to draft a follow-up ticket.";
+      setTicketUpdateError(message);
+      setToast({ kind: "error", message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const focusLabelsInput = (): void => {
     labelsInputRef.current?.scrollIntoView({ block: "center" });
     window.requestAnimationFrame(() => labelsInputRef.current?.focus());
@@ -3125,6 +3216,8 @@ function TicketDetail({
           <div className="ticket-detail-modal-title">
             <div className="detail-status-row">
               <TicketRunStatusPill status={ticket.frontMatter.runStatus} />
+              {detailAuthoringState && <TicketAuthoringStatePill state={detailAuthoringState} />}
+              {ticket.checklist.total > 0 && <TicketChecklistPill completed={ticket.checklist.completed} total={ticket.checklist.total} />}
               {blockerResolution?.isBlocked && (
                 <span className="ticket-blocker-pill active" title={blockerResolution.activeBlockers.map(resolvedBlockerLabel).join("; ")}>
                   Blocked
@@ -3152,7 +3245,7 @@ function TicketDetail({
                 disabled={busy || ticketUpdateActive || draftInProgress || runQueued}
               >
                 {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                {ticket.frontMatter.codexThreadId ? "Resume Agent" : "Start Agent"}
+                {ticket.frontMatter.codexThreadId ? "Resume Implementation" : "Implement"}
               </button>
               {ticket.frontMatter.codexThreadId && (
                 <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
@@ -3170,12 +3263,6 @@ function TicketDetail({
                 <button onClick={() => void moveTicketTo("completed", "Ticket accepted.")} disabled={busy || ticketUpdateActive || draftInProgress}>
                   <Check size={16} />
                   Mark Accepted
-                </button>
-              )}
-              {ticket.frontMatter.status === "completed" && todoStatusAvailable && (
-                <button onClick={() => void moveTicketTo("todo", "Ticket reopened.")} disabled={busy || ticketUpdateActive || draftInProgress}>
-                  <RefreshCw size={16} />
-                  Reopen
                 </button>
               )}
               <button onClick={save} disabled={busy || ticketUpdateActive || draftInProgress}>
@@ -3260,16 +3347,20 @@ function TicketDetail({
 
                 <section className="ticket-update-panel">
                   <header>
-                    <h3>Agent Ticket Update</h3>
-                    <span className={clsx("run-pill", ticketUpdateStatus)}>{runLabel(ticketUpdateStatus)}</span>
+                    <h3>{ticketIsCompleted ? "Follow-up Ticket" : "Refine Ticket"}</h3>
+                    {!ticketIsCompleted && <span className={clsx("run-pill", ticketUpdateStatus)}>{runLabel(ticketUpdateStatus)}</span>}
                   </header>
                   <label className="field">
-                    <span>Change Request</span>
+                    <span>{ticketIsCompleted ? "Follow-up Request" : "Change Request"}</span>
                     <textarea
                       ref={ticketUpdateInputRef}
                       className="ticket-update-input"
                       value={ticketUpdateRequest}
-                      placeholder="Add acceptance criteria, revise requirements, capture new context..."
+                      placeholder={
+                        ticketIsCompleted
+                          ? "Describe the bug, regression, follow-up improvement, or new requirement..."
+                          : "Ask the agent to add requirements, do more research, append checklist items, remove stale sections..."
+                      }
                       disabled={ticketUpdateActive || draftInProgress}
                       onChange={(event) => {
                         setTicketUpdateRequest(event.target.value);
@@ -3278,14 +3369,25 @@ function TicketDetail({
                     />
                   </label>
                   <div className="ticket-update-actions">
-                    <button
-                      className="primary-button"
-                      onClick={() => void startTicketUpdate()}
-                      disabled={ticketUpdateActive || draftInProgress || ticketUpdateRequest.trim().length === 0}
-                    >
-                      {ticketUpdateActive ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-                      Update Ticket
-                    </button>
+                    {ticketIsCompleted ? (
+                      <button
+                        className="primary-button"
+                        onClick={() => void createFollowUpDraft()}
+                        disabled={busy || draftInProgress || ticketUpdateRequest.trim().length === 0}
+                      >
+                        {busy ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                        Draft Follow-up
+                      </button>
+                    ) : (
+                      <button
+                        className="primary-button"
+                        onClick={() => void startTicketUpdate()}
+                        disabled={ticketUpdateActive || draftInProgress || ticketUpdateRequest.trim().length === 0}
+                      >
+                        {ticketUpdateActive ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+                        Refine Ticket
+                      </button>
+                    )}
                     {ticketUpdateActive && ticketUpdateRunId && (
                       <button onClick={() => void cancelTicketUpdate()} disabled={ticketUpdateCancelling}>
                         {ticketUpdateCancelling ? <Loader2 className="spin" size={16} /> : <X size={16} />}
@@ -3509,6 +3611,32 @@ function TicketDetail({
                   {parentEpicBlockers && parentEpicBlockers.warnings.length > 0 && <span className="ticket-blocker-pill warning">Blocker Warning</span>}
                   <em className={clsx("priority", parentEpic.priority)}>{parentEpic.priority}</em>
                 </button>
+              </section>
+            )}
+
+            {relatedTickets.length > 0 && (
+              <section className="epic-link-panel">
+                <header>
+                  <h3>Related Tickets</h3>
+                </header>
+                <div className="subticket-list">
+                  {relatedTickets.map(({ id, ticket: related }) =>
+                    related ? (
+                      <button className="subticket-row related-ticket-row" onClick={() => onOpenTicket(related.id)} key={id}>
+                        <strong>{related.title}</strong>
+                        <span>{statusName(board.columns, related.status)}</span>
+                        {related.checklist.total > 0 && <TicketChecklistPill completed={related.checklist.completed} total={related.checklist.total} />}
+                        <em className={clsx("priority", related.priority)}>{related.priority}</em>
+                      </button>
+                    ) : (
+                      <div className="subticket-row related-ticket-row missing" key={id}>
+                        <strong>{id}</strong>
+                        <span>Missing related ticket</span>
+                        <em className="ticket-blocker-pill warning">Missing</em>
+                      </div>
+                    )
+                  )}
+                </div>
               </section>
             )}
 

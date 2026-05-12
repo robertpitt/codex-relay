@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { CodexOptions, Input, ThreadOptions } from "@openai/codex-sdk";
@@ -23,6 +23,15 @@ import {
 } from "../src/main/services/codex";
 import { resolveAvailableCodexCli, runCodexVersion, type CodexCliCandidate } from "../src/main/services/codex/cli";
 import { CommandExecutor } from "../src/main/services/io";
+import {
+  BackendKernelLive,
+  JobLedger,
+  JobLedgerLive,
+  JobSupervisor,
+  KernelRunRegistry,
+  KernelRunRegistryLive,
+  RELAY_EXTERNAL_JOB_WORKFLOW_NAME
+} from "../src/main/services/kernel";
 import {
   BackendClock,
   BackendConfig,
@@ -48,6 +57,8 @@ import {
   readProjectConfig,
   readTicket,
   saveTicketAttachment,
+  Storage,
+  StorageLive,
   summarizeProject,
   transitionTicketStatus,
   writeTicket,
@@ -143,6 +154,167 @@ const validDraftJson = (title: string): string =>
     assumptions: [],
     implementationNotes: ["Keep the change focused."]
   });
+
+test("job ledger persists snapshots, event logs, and ignores corrupt event lines", async () => {
+  const projectPath = await createProject();
+  const executionId = "exec_kernel_ledger";
+  const submitInput = {
+    executionId,
+    workflowName: RELAY_EXTERNAL_JOB_WORKFLOW_NAME,
+    commandType: "worker.dispatch" as const,
+    projectPath,
+    idempotencyKey: "worker:test",
+    runId: "run_kernel_ledger",
+    ticketId: "tkt_kernel",
+    payload: { workerType: "local", runId: "run_kernel_ledger" },
+    metadata: { test: true }
+  };
+
+  const submitted = await runBackendEffect(
+    Effect.provide(JobLedger.use((ledger) => ledger.recordSubmitted(submitInput)), JobLedgerLive)
+  );
+  assert.equal(submitted.status, "submitted");
+
+  const duplicate = await runBackendEffect(
+    Effect.provide(JobLedger.use((ledger) => ledger.recordSubmitted(submitInput)), JobLedgerLive)
+  );
+  assert.equal(duplicate.createdAt, submitted.createdAt);
+
+  const running = await runBackendEffect(
+    Effect.provide(
+      JobLedger.use((ledger) => ledger.transition({ projectPath, executionId, status: "running", message: "Started." })),
+      JobLedgerLive
+    )
+  );
+  assert.equal(running.status, "running");
+  assert.equal(running.attempts, 1);
+
+  const snapshotPath = path.join(projectPath, ".relay", "kernel", "jobs", executionId, "snapshot.json");
+  const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { status: string; runId: string };
+  assert.equal(snapshot.status, "running");
+  assert.equal(snapshot.runId, "run_kernel_ledger");
+
+  await appendFile(path.join(projectPath, ".relay", "kernel", "jobs", executionId, "events.jsonl"), "{not json}\n");
+  const events = await runBackendEffect(
+    Effect.provide(JobLedger.use((ledger) => ledger.readEvents(projectPath, executionId)), JobLedgerLive)
+  );
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["job.submitted", "job.running", "job.corrupt_event_ignored"]
+  );
+});
+
+test("job supervisor submits typed workflow jobs and exposes durable status transitions", async () => {
+  const projectPath = await createProject();
+  const handle = await runBackendEffect(
+    Effect.provide(
+      JobSupervisor.use((supervisor) =>
+        supervisor.submitCodexImplementation(
+          { projectPath, ticketId: "tkt_kernel_supervisor" },
+          { runId: "run_kernel_supervisor", resume: false }
+        )
+      ),
+      BackendKernelLive
+    )
+  );
+
+  assert.equal(handle.workflowName, RELAY_EXTERNAL_JOB_WORKFLOW_NAME);
+  assert.equal(handle.commandType, "codex.implementation");
+  assert.equal(handle.status, "queued");
+
+  const completed = await runBackendEffect(
+    Effect.provide(
+      JobSupervisor.use((supervisor) =>
+        supervisor.markRunStatus(projectPath, "run_kernel_supervisor", "completed", {
+          result: { ok: true },
+          message: "Done."
+        })
+      ),
+      BackendKernelLive
+    )
+  );
+  assert.equal(completed?.status, "completed");
+
+  const polled = await runBackendEffect(
+    Effect.provide(JobSupervisor.use((supervisor) => supervisor.poll(projectPath, handle.executionId)), BackendKernelLive)
+  );
+  assert.equal(polled?.status, "completed");
+  assert.deepEqual(polled?.result, { ok: true });
+});
+
+test("kernel run registry owns live Codex lifecycle state", async () => {
+  const projectPath = path.resolve(await createProject());
+  const implementationAbort = new AbortController();
+  const draftAbort = new AbortController();
+  const updateAbort = new AbortController();
+
+  await runBackendEffect(
+    Effect.provide(
+      KernelRunRegistry.use((registry) =>
+        Effect.gen(function*() {
+          yield* registry.enqueueImplementation("run_registry_impl", {
+            input: { projectPath, ticketId: "tkt_registry_impl" },
+            resume: false,
+            dependencies: { source: "test" }
+          });
+          const queued = yield* registry.getQueuedImplementation("run_registry_impl");
+          assert.equal(queued?.input.ticketId, "tkt_registry_impl");
+          assert.deepEqual(queued?.dependencies, { source: "test" });
+
+          yield* registry.markImplementationStarting("run_registry_impl", { projectPath, ticketId: "tkt_registry_impl" });
+          assert.equal(yield* registry.activeImplementationRunCount(projectPath), 1);
+          assert.equal(yield* registry.isImplementationActiveOrStarting("run_registry_impl"), true);
+
+          yield* registry.registerImplementationActive("run_registry_impl", {
+            abortController: implementationAbort,
+            projectPath,
+            ticketId: "tkt_registry_impl"
+          });
+          assert.equal(yield* registry.activeRunIdForTicket(projectPath, "tkt_registry_impl"), "run_registry_impl");
+          assert.equal(yield* registry.getQueuedImplementation("run_registry_impl"), null);
+          assert.equal(yield* registry.activeImplementationRunCount(projectPath), 1);
+
+          yield* registry.registerDraft("run_registry_draft", {
+            abortController: draftAbort,
+            projectPath,
+            ticketId: "tkt_registry_draft"
+          });
+          assert.equal(yield* registry.activeRunIdForTicket(projectPath, "tkt_registry_draft"), "run_registry_draft");
+
+          const firstUpdate = yield* registry.beginTicketUpdate("run_registry_update", `${projectPath}:tkt_registry_update`, {
+            abortController: updateAbort,
+            projectPath,
+            ticketId: "tkt_registry_update"
+          });
+          assert.deepEqual(firstUpdate, { started: true });
+          assert.equal((yield* registry.getTicketUpdate("run_registry_update"))?.ticketId, "tkt_registry_update");
+          const duplicateUpdate = yield* registry.beginTicketUpdate("run_registry_update_duplicate", `${projectPath}:tkt_registry_update`, {
+            abortController: new AbortController(),
+            projectPath,
+            ticketId: "tkt_registry_update"
+          });
+          assert.deepEqual(duplicateUpdate, { started: false, existingRunId: "run_registry_update" });
+
+          assert.equal(yield* registry.claimProjectSchedulerLoop(projectPath), true);
+          assert.equal(yield* registry.claimProjectSchedulerLoop(projectPath), false);
+          yield* registry.wakeProjectScheduler(projectPath);
+          yield* registry.takeProjectSchedulerWake(projectPath);
+          yield* registry.releaseProjectSchedulerLoop(projectPath);
+          assert.equal(yield* registry.claimProjectSchedulerLoop(projectPath), true);
+          yield* registry.releaseProjectSchedulerLoop(projectPath);
+
+          yield* registry.completeImplementation("run_registry_impl");
+          yield* registry.completeDraft("run_registry_draft");
+          yield* registry.completeTicketUpdate("run_registry_update");
+          assert.equal(yield* registry.activeImplementationRunCount(projectPath), 0);
+          assert.equal(yield* registry.activeRunIdForTicket(projectPath, "tkt_registry_impl"), null);
+          assert.equal(yield* registry.getTicketUpdate("run_registry_update"), null);
+        })
+      ),
+      KernelRunRegistryLive
+    )
+  );
+});
 
 type RepositoryChatRunResult = Awaited<ReturnType<RepositoryChatThread["run"]>>;
 
@@ -274,6 +446,34 @@ test("repository chat resumes an existing thread without mutating board state", 
   assert.deepEqual(boardAfter, boardBefore);
 });
 
+test("repository chat rejects and aborts when the Codex turn never settles", async () => {
+  const projectPath = await createProject();
+  let runSignal: AbortSignal | undefined;
+  const dependencies = {
+    getStatus: async () => readyCodexStatus,
+    createRequestId: () => "rch_timeout",
+    chatTimeoutMs: 5,
+    createCodexClient: (): RepositoryChatCodexClient => ({
+      startThread: () => ({
+        id: "thread_repository_chat_timeout",
+        run: async (_input, turnOptions): Promise<RepositoryChatRunResult> => {
+          runSignal = turnOptions?.signal;
+          return new Promise<RepositoryChatRunResult>(() => undefined);
+        }
+      }),
+      resumeThread: () => {
+        throw new Error("resumeThread should not be used for a timeout regression.");
+      }
+    })
+  };
+
+  await assert.rejects(
+    sendRepositoryChatMessage({ projectPath, message: "Will this hang?" }, dependencies),
+    /Repository chat timed out after 5ms\./
+  );
+  assert.equal(runSignal?.aborted, true);
+});
+
 test("backend Effect runtime provides shared services", async () => {
   const timestamp = await runBackendEffect(
     Effect.gen(function*() {
@@ -305,8 +505,34 @@ test("backend config reads explicit RELAY millisecond overrides", async () => {
   assert.deepEqual(config, {
     gitMetadataCacheTtlMs: 1_111,
     gitCommandTimeoutMs: 2_222,
-    codexStatusTimeoutMs: 3_333
+    codexStatusTimeoutMs: 3_333,
+    storageAdapter: "filesystem"
   });
+});
+
+test("storage service uses the configured filesystem adapter", async () => {
+  const projectPath = await createProject();
+  const ticket = await createTicket(projectPath, {
+    title: "Exercise storage service",
+    priority: "medium",
+    labels: ["storage"],
+    markdown: "# Exercise storage service\n\nRead through the configured storage adapter.",
+    status: "todo"
+  });
+
+  const board = await runBackendEffect(
+    Effect.provide(
+      Effect.gen(function*() {
+        const storage = yield* Storage;
+        assert.equal(storage.adapter, "filesystem");
+        return yield* storage.getBoard(projectPath);
+      }),
+      StorageLive.pipe(Layer.provide(Layer.succeed(BackendConfig)({ ...BackendConfigDefaults, storageAdapter: "filesystem" })))
+    )
+  );
+
+  assert.equal(board.tickets.length, 1);
+  assert.equal(board.tickets[0]?.id, ticket.frontMatter.id);
 });
 
 test("Codex CLI status command uses BackendConfig timeout", async () => {

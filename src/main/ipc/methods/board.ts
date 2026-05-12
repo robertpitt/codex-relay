@@ -1,5 +1,4 @@
-import { readBoard } from "../../services/storage";
-import { fromPromise } from "../../services/runtime";
+import { Storage } from "../../services/storage";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
 import { ipcArgs, ipcResult, ipcString } from "../schema";
@@ -9,6 +8,6 @@ export const boardIpcMethods = [
     channel: relayIpcChannels.boardRead,
     payload: ipcArgs([ipcString]),
     result: ipcResult(),
-    handler: (_event, projectPath) => fromPromise(() => readBoard(projectPath))
+    handler: (_event, projectPath) => Storage.use((storage) => storage.getBoard(projectPath))
   })
 ] satisfies ReadonlyArray<AnyRelayIpcMethod>;

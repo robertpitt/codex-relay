@@ -1053,6 +1053,8 @@ kbd {
 .priority,
 .run-pill,
 .run-elapsed-pill,
+.authoring-pill,
+.checklist-pill,
 .ticket-type-pill,
 .ticket-blocker-pill,
 .labels span {
@@ -1073,12 +1075,16 @@ kbd {
 }
 
 .run-pill,
-.run-elapsed-pill {
+.run-elapsed-pill,
+.authoring-pill,
+.checklist-pill {
   gap: 5px;
 }
 
 .run-pill span,
-.run-elapsed-pill span {
+.run-elapsed-pill span,
+.authoring-pill span,
+.checklist-pill span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1206,6 +1212,30 @@ kbd {
 .run-pill.draft_failed {
   background: var(--relay-danger-muted);
   color: var(--relay-danger-text);
+}
+
+.authoring-pill.drafting,
+.authoring-pill.refining,
+.authoring-pill.needs_input {
+  background: var(--relay-warning-muted);
+  color: var(--relay-warning-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--relay-warning) 18%, transparent);
+}
+
+.authoring-pill.reviewing {
+  background: var(--relay-info-muted);
+  color: var(--relay-info-text);
+}
+
+.authoring-pill.ready,
+.checklist-pill {
+  background: var(--relay-success-muted);
+  color: var(--relay-success-text);
+}
+
+.authoring-pill.rough {
+  background: rgb(255 255 255 / 5.5%);
+  color: var(--relay-text-muted);
 }
 
 .labels {
@@ -2016,6 +2046,29 @@ kbd {
   padding-left: 22px;
 }
 
+.markdown-content .markdown-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.markdown-task-list-item {
+  display: block;
+}
+
+.markdown-task-list-item > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.markdown-task-list-item input {
+  width: 15px;
+  height: 15px;
+  margin: 4px 0 0;
+  accent-color: var(--relay-primary);
+}
+
 .markdown-content li + li {
   margin-top: 4px;
 }
@@ -2700,6 +2753,15 @@ kbd {
 .subticket-row.parent {
   margin: 0 var(--relay-space-3) var(--relay-space-3);
   width: calc(100% - var(--relay-space-3) * 2);
+}
+
+.subticket-row.related-ticket-row {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+}
+
+.subticket-row.related-ticket-row.missing {
+  cursor: default;
+  opacity: 0.78;
 }
 
 .subticket-row strong {

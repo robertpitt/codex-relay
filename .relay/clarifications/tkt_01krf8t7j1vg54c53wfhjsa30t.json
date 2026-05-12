@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krf8t7j1vg54c53wfhjsa30t",
+  "questions": [
+    {
+      "id": "clar_01krf8txmxfswh6b77j0ta0y8j",
+      "ticketId": "tkt_01krf8t7j1vg54c53wfhjsa30t",
+      "question": "How should the floating bar submit a ticket idea?\n\nWhy it matters: The dialog removal leaves no obvious primary action, and implementation needs a clear trigger for creating the draft without conflicting with multi-line text entry.\nRecommended answer: Use a compact icon submit button inside the floating bar plus Cmd+Enter/Ctrl+Enter as keyboard shortcuts; Enter inserts a newline in the textarea.",
+      "answerType": "text",
+      "answer": null,
+      "createdAt": "2026-05-12T23:37:27.965Z",
+      "updatedAt": "2026-05-12T23:37:27.965Z",
+      "answeredAt": null,
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krf8t7gapss0h9vajv3zhcyn",
+      "codexThreadId": "draft_run_01krf8t7gapss0h9vajv3zhcyn"
+    },
+    {
+      "id": "clar_01krf8txmxrd5sm7tqxb070q2z",
+      "ticketId": "tkt_01krf8t7j1vg54c53wfhjsa30t",
+      "question": "What should the new \"Mode\" control choose between?\n\nWhy it matters: Type, Priority, and Effort likely map to existing ticket metadata, but Mode is ambiguous and could mean draft mode, implementation mode, or ticket scope.\nRecommended answer: Mode selects the drafting scope: Quick bug, Task, Product feature, Rewrite/refactor, and Epic, defaulting to Task.",
+      "answerType": "text",
+      "answer": null,
+      "createdAt": "2026-05-12T23:37:27.965Z",
+      "updatedAt": "2026-05-12T23:37:27.965Z",
+      "answeredAt": null,
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krf8t7gapss0h9vajv3zhcyn",
+      "codexThreadId": "draft_run_01krf8t7gapss0h9vajv3zhcyn"
+    }
+  ]
+}

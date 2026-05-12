@@ -502,8 +502,8 @@ Scope:
 
 - Migrate the long-running Codex run lifecycle after runtime, storage, and draft services are stable.
 - Make cancellation, cleanup, event emission, and active run tracking explicit.
-- Follow the decision in `docs/effect-workflow-lifecycle-evaluation.md`: do not use `effect/unstable/workflow` as the production ticket lifecycle engine in this phase.
-- Keep board columns plus ticket `runStatus` as the authoritative product lifecycle model while extracting Relay-native internals.
+- Follow the decision in `docs/effect-workflow-lifecycle-evaluation.md`: production Workflow usage must stay behind `src/main/services/kernel/` and use Relay's durable `JobLedger`.
+- Keep board columns plus ticket `runStatus` as user-visible product lifecycle while moving backend execution state into the kernel ledger.
 
 Files to inspect/change:
 
@@ -515,20 +515,19 @@ Files to inspect/change:
 - `tests/backend.test.ts`
 - `tests/ticket-update.test.ts`
 - New candidates:
-  - `src/main/services/agentRunRegistry.ts`
-  - `src/main/services/runEventSink.ts`
+  - `src/main/services/kernel/`
   - `src/main/services/agentExecutionService.ts`
   - `src/main/services/ticketUpdateService.ts`
 
 Expected code patterns:
 
-- `AgentRunRegistry` wraps current `activeImplementationRuns`, `activeDraftRuns`, `queuedRunIntents`, `startingRuns`, `projectSchedulers`, `activeTicketUpdateRuns`, and `activeTicketUpdateRunsByTicket`.
+- `JobSupervisor` and future kernel registries wrap current `activeImplementationRuns`, `activeDraftRuns`, `queuedRunIntents`, `startingRuns`, `projectSchedulers`, `activeTicketUpdateRuns`, and `activeTicketUpdateRunsByTicket`.
 - A small lifecycle policy service owns pure decisions for preflight eligibility, queue reconciliation, target status selection, cancellation destination, clarification blocking, and completion transitions.
 - `RunEventSink` owns JSONL append and renderer emission.
 - Use `Effect.acquireRelease` or `Effect.ensuring` to guarantee map cleanup and status finalization.
 - Keep `AbortController` until SDK cancellation is verified against Effect interruption.
 - Convert stream event processing after a fake async event-stream test harness exists.
-- Do not introduce `WorkflowEngine`, `Workflow.make`, activities, durable deferreds, or durable clocks into production lifecycle code until a future ticket defines durable persistence and cancellation parity.
+- Do not use `WorkflowEngine.layerMemory` in production. Activities, durable deferreds, and durable clocks remain out of scope until Relay defines durable stores for each.
 
 Validation commands:
 
@@ -544,7 +543,7 @@ Acceptance checks:
 - Renderer event shapes match `RendererRunEvent`.
 - Active run maps are always cleaned up.
 - Cancelling a run still marks `runStatus` as `cancelled`.
-- Production `src/main` and `src/preload` code still does not import `effect/unstable/workflow` or `effect/unstable/workflow/*`.
+- Production `effect/unstable/workflow` imports stay restricted to `src/main/services/kernel/`.
 - Manual board moves, manual ticket edits, Ready queueing, queued cancellation, active cancellation, run start, clarification blocking, completion to Review, human acceptance, and reopen follow the lifecycle map in `docs/effect-workflow-lifecycle-evaluation.md`.
 
 Rollback:
@@ -556,7 +555,7 @@ Risks:
 
 - This is the highest-risk phase. Event ordering, cancellation, and persisted run state are user-visible.
 - The Codex SDK may require AbortSignal behavior that is not naturally identical to Effect interruption.
-- Adopting unstable Workflow APIs before durable `.relay` execution storage exists would create a second lifecycle authority and could diverge from board status plus `runStatus`.
+- Workflow APIs are intentionally wrapped by the kernel. The remaining risk is divergence between kernel execution status and visible ticket `runStatus` while the old Codex maps are being retired.
 
 ### Phase 6: AI Provider and Tooling Evaluation
 

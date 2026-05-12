@@ -19,6 +19,7 @@ export type BackendConfigService = {
   readonly gitMetadataCacheTtlMs: number;
   readonly gitCommandTimeoutMs: number;
   readonly codexStatusTimeoutMs: number;
+  readonly storageAdapter: "filesystem";
 };
 
 export const BackendConfig = Context.Service<BackendConfigService>("relay/BackendConfig");
@@ -26,7 +27,8 @@ export const BackendConfig = Context.Service<BackendConfigService>("relay/Backen
 export const BackendConfigDefaults = {
   gitMetadataCacheTtlMs: 3_000,
   gitCommandTimeoutMs: 5_000,
-  codexStatusTimeoutMs: 5_000
+  codexStatusTimeoutMs: 5_000,
+  storageAdapter: "filesystem"
 } satisfies BackendConfigService;
 
 export const BackendConfigSpec = Config.all({
@@ -38,6 +40,9 @@ export const BackendConfigSpec = Config.all({
   ),
   codexStatusTimeoutMs: Config.int("RELAY_CODEX_STATUS_TIMEOUT_MS").pipe(
     Config.withDefault(BackendConfigDefaults.codexStatusTimeoutMs)
+  ),
+  storageAdapter: Config.literals(["filesystem"], "RELAY_STORAGE_ADAPTER").pipe(
+    Config.withDefault(BackendConfigDefaults.storageAdapter)
   )
 });
 

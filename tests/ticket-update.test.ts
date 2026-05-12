@@ -84,7 +84,11 @@ const updateJson = (patch: Partial<AgentTicketUpdate> = {}): string =>
     title: "Agent revised ticket",
     priority: "high",
     labels: ["agent", "updated"],
-    markdown: "# Agent revised ticket\n\n## Context\n\nExpanded context from the user request.\n",
+    authoringState: "reviewing",
+    patch: {
+      summary: "Expanded the existing ticket with release targeting context.",
+      appendMarkdown: "## Context\n\nExpanded context from the user request.\n\n## Follow-up Checklist\n\n- [ ] Confirm release target\n"
+    },
     clarificationQuestions: ["Which release should this target?"],
     ...patch
   });
@@ -153,8 +157,12 @@ test("ticket update agent applies validated structured output and preserves unre
   assert.equal(updated.frontMatter.lastRunId, original.frontMatter.lastRunId);
   assert.equal(updated.frontMatter.title, "Agent revised ticket");
   assert.equal(updated.frontMatter.priority, "high");
+  assert.equal(updated.frontMatter.authoringState, "needs_input");
   assert.deepEqual(updated.frontMatter.labels, ["agent", "updated"]);
+  assert.match(updated.markdown, /Original body/);
+  assert.match(updated.markdown, /Agent Refinement/);
   assert.match(updated.markdown, /Expanded context/);
+  assert.deepEqual(updated.checklist, { total: 1, completed: 0, open: 1 });
 
   const clarifications = await readClarificationQuestions(projectPath, ticket.frontMatter.id);
   assert.equal(clarifications.length, 1);

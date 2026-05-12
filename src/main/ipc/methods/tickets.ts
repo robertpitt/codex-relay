@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import type { TicketDraftStartResult, TicketSuggestionsGenerateResult } from "../../../shared/types";
 import {
   cancelTicketUpdateRun,
@@ -11,7 +12,7 @@ import {
 } from "../../services/codex";
 import { pathResolve } from "../../services/io";
 import { logError, logWarn } from "../../services/logger";
-import { fromPromise } from "../../services/runtime";
+import { fromPromise, fromSync } from "../../services/runtime";
 import {
   agentTicketUpdateInputSchema,
   clarificationAnswerInputSchema,
@@ -25,24 +26,7 @@ import {
   ticketMoveInputSchema,
   ticketSaveInputSchema
 } from "../../services/schemas";
-import {
-  answerClarificationQuestion,
-  createSubticket,
-  createTicket,
-  deleteTicket,
-  duplicateTicket,
-  isTicketNotFoundError,
-  listTicketReferenceCandidates,
-  linkSubticket,
-  moveTicket,
-  readBoard,
-  readClarificationQuestions,
-  readTicket,
-  revealTicketFile,
-  saveTicketAttachment,
-  saveTicket,
-  unlinkSubticket
-} from "../../services/storage";
+import { isTicketNotFoundError, Storage } from "../../services/storage";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
 import { ipcArgs, ipcObject, ipcResult, ipcString, ipcVoid } from "../schema";
@@ -84,22 +68,33 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketCreateManual,
     payload: ipcArgs([ipcString, ipcObject]),
     result: ipcResult(),
-    handler: (_event, projectPath, input) => fromPromise(() => createTicket(projectPath, parseSchema(ticketCreateInputSchema, input)))
+    handler: (_event, projectPath, input) =>
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(ticketCreateInputSchema, input));
+        const storage = yield* Storage;
+        return yield* storage.createTicket(projectPath, parsed);
+      })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketCreateSubticket,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => createSubticket(parseSchema(epicSubticketCreateInputSchema, input)))
+    handler: (_event, input) =>
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(epicSubticketCreateInputSchema, input));
+        const storage = yield* Storage;
+        return yield* storage.createSubticket(parsed);
+      })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketLinkSubticket,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(() => {
-        const parsed = parseSchema(epicSubticketLinkInputSchema, input);
-        return linkSubticket(parsed.projectPath, parsed.epicId, parsed.ticketId);
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(epicSubticketLinkInputSchema, input));
+        const storage = yield* Storage;
+        return yield* storage.linkSubticket(parsed.projectPath, parsed.epicId, parsed.ticketId);
       })
   }),
   defineRelayIpcMethod({
@@ -107,9 +102,10 @@ export const ticketIpcMethods = [
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(() => {
-        const parsed = parseSchema(epicSubticketLinkInputSchema, input);
-        return unlinkSubticket(parsed.projectPath, parsed.epicId, parsed.ticketId);
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(epicSubticketLinkInputSchema, input));
+        const storage = yield* Storage;
+        return yield* storage.unlinkSubticket(parsed.projectPath, parsed.epicId, parsed.ticketId);
       })
   }),
   defineRelayIpcMethod({
@@ -128,71 +124,84 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketReferences,
     payload: ipcArgs([ipcString]),
     result: ipcResult(),
-    handler: (_event, projectPath: string) => fromPromise(() => listTicketReferenceCandidates(projectPath))
+    handler: (_event, projectPath: string) => Storage.use((storage) => storage.listTicketReferenceCandidates(projectPath))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketRead,
     payload: ipcArgs([ipcString, ipcString]),
     result: ipcResult(),
     handler: (_event, projectPath: string, ticketId: string) =>
-      fromPromise(async () => {
+      Effect.gen(function*() {
         const resolvedProjectPath = pathResolve(projectPath);
-        try {
-          return await readTicket(resolvedProjectPath, ticketId);
-        } catch (error) {
-          const meta = { projectPath: resolvedProjectPath, ticketId };
-          if (isTicketNotFoundError(error)) {
-            await logWarn("ticket:read", "ticket file missing", { ...meta, filePath: error.filePath });
-          } else {
-            await logError("ticket:read", "ticket read failed", error, meta);
-          }
-          throw error;
-        }
-      })
+        const storage = yield* Storage;
+        return yield* storage.getTicket(resolvedProjectPath, ticketId);
+      }).pipe(
+        Effect.catch((error: unknown) =>
+          Effect.gen(function*() {
+            const resolvedProjectPath = pathResolve(projectPath);
+            const meta = { projectPath: resolvedProjectPath, ticketId };
+            if (isTicketNotFoundError(error)) {
+              yield* fromPromise(() => logWarn("ticket:read", "ticket file missing", { ...meta, filePath: error.filePath }));
+            } else {
+              yield* fromPromise(() => logError("ticket:read", "ticket read failed", error, meta));
+            }
+            return yield* Effect.fail(error);
+          })
+        )
+      )
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketSave,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(async () => {
-        const parsed = parseSchema(ticketSaveInputSchema, input);
-        const saved = await saveTicket(parsed);
-        return reconcileTicketQueueState(parsed.projectPath, saved.frontMatter.id);
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(ticketSaveInputSchema, input));
+        const storage = yield* Storage;
+        const saved = yield* storage.saveTicket(parsed);
+        return yield* fromPromise(() => reconcileTicketQueueState(parsed.projectPath, saved.frontMatter.id));
       })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketSaveAttachment,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
-    handler: (_event, input) => fromPromise(() => saveTicketAttachment(parseSchema(ticketAttachmentSaveInputSchema, input)))
+    handler: (_event, input) =>
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(ticketAttachmentSaveInputSchema, input));
+        const storage = yield* Storage;
+        return yield* storage.saveTicketAttachment(parsed);
+      })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketMove,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(async () => {
-        const parsed = parseSchema(ticketMoveInputSchema, input);
-        await moveTicket(parsed);
-        await reconcileTicketQueueState(parsed.projectPath, parsed.ticketId);
-        return readBoard(parsed.projectPath);
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(ticketMoveInputSchema, input));
+        const storage = yield* Storage;
+        yield* storage.moveTicket(parsed);
+        yield* fromPromise(() => reconcileTicketQueueState(parsed.projectPath, parsed.ticketId));
+        return yield* storage.getBoard(parsed.projectPath);
       })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketClarifications,
     payload: ipcArgs([ipcString, ipcString]),
     result: ipcResult(),
-    handler: (_event, projectPath: string, ticketId: string) => fromPromise(() => readClarificationQuestions(projectPath, ticketId))
+    handler: (_event, projectPath: string, ticketId: string) =>
+      Storage.use((storage) => storage.getClarificationQuestions(projectPath, ticketId))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketAnswerClarification,
     payload: ipcArgs([ipcObject]),
     result: ipcResult(),
     handler: (_event, input) =>
-      fromPromise(async () => {
-        const parsed = parseSchema(clarificationAnswerInputSchema, input);
-        const answer = await answerClarificationQuestion(parsed.projectPath, parsed.ticketId, parsed.questionId, parsed.answer);
+      Effect.gen(function*() {
+        const parsed = yield* fromSync(() => parseSchema(clarificationAnswerInputSchema, input));
+        const storage = yield* Storage;
+        const answer = yield* storage.answerClarificationQuestion(parsed.projectPath, parsed.ticketId, parsed.questionId, parsed.answer);
         void maybeResumeTicketDraftAfterClarification(parsed.projectPath, parsed.ticketId).catch((error) =>
           logError("codex:draft", "auto-resume after clarification failed", error, {
             projectPath: parsed.projectPath,
@@ -207,18 +216,18 @@ export const ticketIpcMethods = [
     channel: relayIpcChannels.ticketDelete,
     payload: ipcArgs([ipcString, ipcString]),
     result: ipcResult(),
-    handler: (_event, projectPath: string, ticketId: string) => fromPromise(() => deleteTicket(projectPath, ticketId))
+    handler: (_event, projectPath: string, ticketId: string) => Storage.use((storage) => storage.deleteTicket(projectPath, ticketId))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketDuplicate,
     payload: ipcArgs([ipcString, ipcString]),
     result: ipcResult(),
-    handler: (_event, projectPath: string, ticketId: string) => fromPromise(() => duplicateTicket(projectPath, ticketId))
+    handler: (_event, projectPath: string, ticketId: string) => Storage.use((storage) => storage.duplicateTicket(projectPath, ticketId))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.ticketRevealFile,
     payload: ipcArgs([ipcString, ipcString]),
     result: ipcVoid,
-    handler: (_event, projectPath: string, ticketId: string) => fromPromise(() => revealTicketFile(projectPath, ticketId))
+    handler: (_event, projectPath: string, ticketId: string) => Storage.use((storage) => storage.revealTicketFile(projectPath, ticketId))
   })
 ] satisfies ReadonlyArray<AnyRelayIpcMethod>;

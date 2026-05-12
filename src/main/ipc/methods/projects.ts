@@ -6,23 +6,26 @@ import { readCachedGitMetadata } from "../../services/git";
 import { readRegistry, removeProjectPath, upsertProjectPath } from "../../services/registry";
 import { fromPromise } from "../../services/runtime";
 import { gitMetadataOptionsSchema, parseSchema } from "../../services/schemas";
-import { initializeProject, summarizeProject } from "../../services/storage";
+import { Storage } from "../../services/storage";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
 import { emptyArgs, ipcArgs, ipcOptionalUnknown, ipcResult, ipcString, ipcVoid } from "../schema";
 
-const projectSummariesFromRegistry = async (): Promise<Awaited<ReturnType<typeof summarizeProject>>[]> => {
-  const registry = await readRegistry();
-  return Promise.all(
-    [...registry.projects]
-      .sort((a, b) => a.sidebarPosition - b.sidebarPosition)
-      .map((project) => summarizeProject(project.path, project.lastOpenedAt))
-  );
-};
+const projectSummariesFromRegistry = () =>
+  Effect.gen(function*() {
+    const registry = yield* fromPromise(() => readRegistry());
+    const storage = yield* Storage;
+    return yield* Effect.all(
+      [...registry.projects]
+        .sort((a, b) => a.sidebarPosition - b.sidebarPosition)
+        .map((project) => storage.getProjectSummary(project.path, project.lastOpenedAt))
+    );
+  });
 
 const addProjectFolder = () =>
   Effect.gen(function*() {
     const electronDialog = yield* ElectronDialog;
+    const storage = yield* Storage;
     const result = yield* electronDialog.showOpenDialog({
       title: "Add Relay Project",
       properties: ["openDirectory", "createDirectory"]
@@ -30,7 +33,7 @@ const addProjectFolder = () =>
     if (result.canceled || result.filePaths.length === 0) return null;
 
     const projectPath = pathResolve(result.filePaths[0]);
-    const summary = yield* fromPromise(() => summarizeProject(projectPath));
+    const summary = yield* storage.getProjectSummary(projectPath);
     let initialized = false;
 
     if (!summary.relayInitialized) {
@@ -44,13 +47,13 @@ const addProjectFolder = () =>
         detail: projectPath
       });
       if (confirm.response !== 0) return null;
-      yield* fromPromise(() => initializeProject(projectPath));
+      yield* storage.initializeProject(projectPath);
       initialized = true;
     }
 
     yield* fromPromise(() => upsertProjectPath(projectPath));
     return {
-      project: yield* fromPromise(() => summarizeProject(projectPath, new Date().toISOString())),
+      project: yield* storage.getProjectSummary(projectPath, new Date().toISOString()),
       initialized
     };
   });
@@ -60,7 +63,7 @@ export const projectIpcMethods = [
     channel: relayIpcChannels.projectsList,
     payload: emptyArgs(),
     result: ipcResult(),
-    handler: () => fromPromise(() => projectSummariesFromRegistry())
+    handler: () => projectSummariesFromRegistry()
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.projectsAddFolder,
@@ -73,16 +76,16 @@ export const projectIpcMethods = [
     payload: ipcArgs([ipcString]),
     result: ipcResult(),
     handler: (_event, projectPath) =>
-      fromPromise(async () => {
-        await removeProjectPath(projectPath);
-        return projectSummariesFromRegistry();
+      Effect.gen(function*() {
+        yield* fromPromise(() => removeProjectPath(projectPath));
+        return yield* projectSummariesFromRegistry();
       })
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.projectsRead,
     payload: ipcArgs([ipcString]),
     result: ipcResult(),
-    handler: (_event, projectPath) => fromPromise(() => summarizeProject(projectPath))
+    handler: (_event, projectPath) => Storage.use((storage) => storage.getProjectSummary(projectPath))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.projectsGitMetadata,

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "executionId": "f752d5af9be8c515f44221f3f09e3c63",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krf4dc76d5ff5b7v3feawnpc:run_01krf4dc5ex8wv1me4zm8x1edf",
+  "status": "completed",
+  "attempts": 1,
+  "createdAt": "2026-05-12T22:20:09.835Z",
+  "updatedAt": "2026-05-12T22:21:06.827Z",
+  "runId": "run_01krf4dc5ex8wv1me4zm8x1edf",
+  "ticketId": "tkt_01krf4dc76d5ff5b7v3feawnpc",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "lets create ticket to improve the README to be more attractive to developers, I dont want too much verbosity as it's off putting, we should start with a noteice to say this is a working prototype that requires codex, and provide a simple 3 step setup process so they can see how quickly it qould be to experiment, such as Clone, Install, Dev",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "runIntake": true,
+    "runId": "run_01krf4dc5ex8wv1me4zm8x1edf",
+    "ticketId": "tkt_01krf4dc76d5ff5b7v3feawnpc"
+  },
+  "message": "Ticket draft completed.",
+  "result": {
+    "ticketId": "tkt_01krf4dc76d5ff5b7v3feawnpc",
+    "title": "Improve README for concise developer onboarding"
+  }
+}

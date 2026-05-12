@@ -41,6 +41,8 @@ Paragraph with **bold**, *emphasis*, \`inline code\`, and [a link](https://examp
 
 - Alpha
 - Beta
+- [ ] Open checklist item
+- [x] Completed checklist item
 
 1. First
 2. Second
@@ -62,7 +64,10 @@ const answer = 42;
   assert.match(markup, /<em>emphasis<\/em>/);
   assert.match(markup, /<code>inline code<\/code>/);
   assert.match(markup, /href="https:\/\/example\.com"/);
-  assert.match(markup, /<ul>/);
+  assert.match(markup, /<ul class="markdown-task-list">/);
+  assert.match(markup, /markdown-task-list/);
+  assert.match(markup, /type="checkbox"/);
+  assert.match(markup, /checked=""/);
   assert.match(markup, /<ol>/);
   assert.match(markup, /<blockquote>/);
   assert.match(markup, /<pre><code class="language-ts">const answer = 42;<\/code><\/pre>/);

@@ -5,6 +5,14 @@ export const projectRelayPath = (projectPath: string): string => pathJoin(resolv
 export const projectConfigPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "project.json");
 export const ticketsPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "tickets");
 export const runsPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "runs");
+export const kernelPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "kernel");
+export const kernelJobsPath = (projectPath: string): string => pathJoin(kernelPath(projectPath), "jobs");
+export const kernelJobPath = (projectPath: string, executionId: string): string => pathJoin(kernelJobsPath(projectPath), executionId);
+export const kernelJobSnapshotPath = (projectPath: string, executionId: string): string =>
+  pathJoin(kernelJobPath(projectPath, executionId), "snapshot.json");
+export const kernelJobEventsPath = (projectPath: string, executionId: string): string =>
+  pathJoin(kernelJobPath(projectPath, executionId), "events.jsonl");
+export const kernelAuditLogPath = (projectPath: string): string => pathJoin(kernelPath(projectPath), "audit.jsonl");
 export const auditLogPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "audit.jsonl");
 export const clarificationsPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "clarifications");
 export const trashPath = (projectPath: string): string => pathJoin(projectRelayPath(projectPath), "trash");

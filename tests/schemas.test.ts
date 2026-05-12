@@ -78,6 +78,8 @@ test("ticket front matter decodes Date timestamps, legacy defaults, and passthro
   assert.equal(parsed.parentEpicId, null);
   assert.equal(parsed.subticketIds.length, 0);
   assert.equal(parsed.blockedByIds.length, 0);
+  assert.equal(parsed.relatedTicketIds.length, 0);
+  assert.equal(parsed.authoringState, "rough");
   assert.equal(parsed.codexThreadId, null);
   assert.equal(parsed.lastRunId, null);
   assert.equal(parsed.lastRunStartedAt, null);
@@ -177,7 +179,11 @@ test("schemas preserve passthrough roots, strip default object extras, and rejec
         title: "Strict update",
         priority: "high",
         labels: [],
-        markdown: "Updated markdown.",
+        authoringState: "reviewing",
+        patch: {
+          summary: "Updated ticket body.",
+          appendMarkdown: "Updated markdown."
+        },
         clarificationQuestions: [],
         extra: "rejected"
       }),

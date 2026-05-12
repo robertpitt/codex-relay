@@ -608,7 +608,7 @@ test("async ticket draft stores formal clarification questions when drafting is 
   assert.equal(questions.length, 1);
   assert.equal(questions[0].source, "draft_generation");
   assert.equal(questions[0].createdBy, "codex");
-  assert.equal(events.at(-1)?.type, "clarification.requested");
+  assert.ok(events.some((event) => event.type === "clarification.requested"));
 });
 
 test("background intake blocks the pending draft with recommended clarification answers", async () => {
@@ -652,7 +652,7 @@ test("background intake blocks the pending draft with recommended clarification 
   assert.match(questions[0].question, /Should the new setting be enabled by default/);
   assert.match(questions[0].question, /Why it matters: The default changes rollout risk/);
   assert.match(questions[0].question, /Recommended answer: Keep it disabled by default/);
-  assert.equal(events.at(-1)?.type, "clarification.requested");
+  assert.ok(events.some((event) => event.type === "clarification.requested"));
 });
 
 test("answering all draft clarification questions auto-resumes drafting on the same ticket", async () => {

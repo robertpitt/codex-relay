@@ -29,6 +29,8 @@ import type {
   RunStatus,
   StartRunInput,
   TicketAttachmentSaveInput,
+  TicketAuthoringState,
+  TicketChecklistSummary,
   SubticketCreateInput,
   TicketCreateInput,
   TicketDraft,
@@ -153,6 +155,15 @@ export const draftScopeSchema: RelaySchema<DraftScope> = Schema.Literals([
   "epic"
 ]);
 
+export const ticketAuthoringStateSchema: RelaySchema<TicketAuthoringState> = Schema.Literals([
+  "rough",
+  "drafting",
+  "reviewing",
+  "refining",
+  "needs_input",
+  "ready"
+]);
+
 export const runStatusSchema: RelaySchema<RunStatus> = Schema.Literals([
   "idle",
   "queued",
@@ -234,18 +245,27 @@ export const ticketFrontMatterSchema: RelaySchema<TicketFrontMatter> = passthrou
   parentEpicId: nullableStringWithDefault(),
   subticketIds: stringArrayWithDefault(),
   blockedByIds: stringArrayWithDefault(),
+  relatedTicketIds: stringArrayWithDefault(),
   createdAt: isoString,
   updatedAt: isoString,
+  authoringState: withDefault(ticketAuthoringStateSchema, () => "rough" as const),
   codexThreadId: nullableStringWithDefault(),
   runStatus: runStatusSchema,
   lastRunId: nullableStringWithDefault(),
   lastRunStartedAt: nullableStringWithDefault()
 });
 
+export const ticketChecklistSummarySchema: RelaySchema<TicketChecklistSummary> = Schema.Struct({
+  total: withDefault(numberSchema, () => 0),
+  completed: withDefault(numberSchema, () => 0),
+  open: withDefault(numberSchema, () => 0)
+});
+
 export const ticketRecordSchema: RelaySchema<TicketRecord> = Schema.Struct({
   frontMatter: ticketFrontMatterSchema,
   markdown: Schema.String,
-  filePath: Schema.String
+  filePath: Schema.String,
+  checklist: withDefault(ticketChecklistSummarySchema, () => ({ total: 0, completed: 0, open: 0 }))
 });
 
 export const appRegistrySchema: RelaySchema<AppRegistry> = passthroughStruct({
@@ -366,7 +386,12 @@ export const agentTicketUpdateSchema: RelaySchema<AgentTicketUpdate> = strictStr
   title: nonEmptyString,
   priority: ticketPrioritySchema,
   labels: stringArrayWithDefault(),
-  markdown: nonEmptyString,
+  authoringState: Schema.Literals(["rough", "reviewing", "needs_input", "ready"]),
+  patch: strictStruct({
+    summary: nonEmptyString,
+    fullMarkdown: Schema.optional(Schema.NullOr(Schema.String)),
+    appendMarkdown: Schema.optional(Schema.NullOr(Schema.String))
+  }),
   clarificationQuestions: stringArrayWithDefault()
 });
 
@@ -432,7 +457,9 @@ const subticketCreateInputFields = {
   labels: stringArrayWithDefault(),
   markdown: Schema.String,
   status: Schema.optional(Schema.String),
-  blockedByIds: Schema.optional(mutableArray(Schema.String))
+  blockedByIds: Schema.optional(mutableArray(Schema.String)),
+  relatedTicketIds: Schema.optional(mutableArray(Schema.String)),
+  authoringState: Schema.optional(ticketAuthoringStateSchema)
 } as const;
 
 export const subticketCreateInputSchema: RelaySchema<SubticketCreateInput> = passthroughStruct(subticketCreateInputFields);
