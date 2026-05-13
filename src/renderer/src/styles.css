@@ -2705,39 +2705,55 @@ kbd {
   flex-wrap: wrap;
 }
 
-.detail-title-field {
-  margin-top: var(--relay-space-3);
-}
-
-.detail-title-field input {
-  min-height: 46px;
-  font-size: 24px;
-  font-weight: 590;
-  line-height: 1.15;
-}
-
-.ticket-detail-metadata-strip {
+.ticket-detail-title {
   min-width: 0;
-  margin-top: var(--relay-space-3);
-  display: grid;
-  grid-template-columns: minmax(132px, 0.9fr) minmax(112px, 0.7fr) minmax(112px, 0.7fr) minmax(180px, 1.4fr);
-  gap: var(--relay-space-2);
-  align-items: end;
+  width: min(100%, 72ch);
+  color: var(--relay-text);
+  cursor: text;
 }
 
-.compact-metadata-field {
+.ticket-detail-title:focus-visible {
+  outline: none;
+  border-radius: var(--relay-radius-sm);
+  box-shadow: var(--relay-focus-ring);
+}
+
+.ticket-detail-title.editing {
+  width: 100%;
+  margin-top: var(--relay-space-2);
+}
+
+.ticket-detail-title input {
+  width: min(100%, 72ch);
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--relay-radius-sm);
+  background: rgb(0 0 0 / 16%);
+  color: var(--relay-text);
+  padding: 7px 10px;
+  font: inherit;
+  line-height: inherit;
+}
+
+.ticket-detail-metadata {
+  padding-bottom: var(--relay-space-3);
+  border-bottom: 1px solid rgb(255 255 255 / 6%);
+}
+
+.sidebar-metadata-field {
   gap: 4px;
 }
 
-.compact-metadata-field span {
+.sidebar-metadata-field span {
   color: var(--relay-text-subtle);
   font-size: var(--relay-text-xs);
   text-transform: uppercase;
 }
 
-.compact-metadata-field select,
-.compact-metadata-field input {
-  min-height: 32px;
+.sidebar-metadata-field select,
+.sidebar-metadata-field input {
+  min-height: 34px;
   border-radius: var(--relay-radius-sm);
   background: rgb(0 0 0 / 14%);
 }
@@ -4063,14 +4079,6 @@ kbd {
     padding-right: 0;
   }
 
-  .ticket-detail-metadata-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .labels-metadata-field {
-    grid-column: 1 / -1;
-  }
-
   .ticket-detail-sidebar {
     padding-top: var(--relay-space-2);
     padding-bottom: 0;
@@ -4290,15 +4298,7 @@ kbd {
     grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
   }
 
-  .ticket-detail-metadata-strip {
-    grid-template-columns: 1fr;
-  }
-
-  .labels-metadata-field {
-    grid-column: auto;
-  }
-
-  .detail-title-field input {
+  .ticket-detail-title {
     font-size: 20px;
   }
 

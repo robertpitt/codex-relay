@@ -2881,6 +2881,7 @@ function TicketDetail({
   const [ticketUpdateLogViewerOpen, setTicketUpdateLogViewerOpen] = useState(false);
   const [attachmentDropActive, setAttachmentDropActive] = useState(false);
   const [attachmentDropBusy, setAttachmentDropBusy] = useState(false);
+  const [titleEditing, setTitleEditing] = useState(false);
   const [addTicketsOpen, setAddTicketsOpen] = useState(false);
   const [blockerPanelOpen, setBlockerPanelOpen] = useState(false);
   const [newSubticketTitle, setNewSubticketTitle] = useState("");
@@ -2890,6 +2891,7 @@ function TicketDetail({
   const [subticketBusy, setSubticketBusy] = useState(false);
   const ticketUpdateInputRef = useRef<HTMLTextAreaElement | null>(null);
   const markdownEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
   const labelsInputRef = useRef<HTMLInputElement | null>(null);
   const subticketsPanelRef = useRef<HTMLElement | null>(null);
 
@@ -2941,6 +2943,7 @@ function TicketDetail({
     setTicketUpdateLogViewerOpen(false);
     setAttachmentDropActive(false);
     setAttachmentDropBusy(false);
+    setTitleEditing(false);
     setRunPreflight(null);
     setRunSummary(null);
     setAddTicketsOpen(false);
@@ -3398,6 +3401,40 @@ function TicketDetail({
     window.requestAnimationFrame(() => labelsInputRef.current?.focus());
   };
 
+  const startTitleEditing = (): void => {
+    if (draftInProgress) return;
+    setTitleEditing(true);
+  };
+
+  const handleTitleDisplayKeyDown = (event: KeyboardEvent<HTMLHeadingElement>): void => {
+    if (event.key !== "Enter" && event.key !== "F2") return;
+    event.preventDefault();
+    startTitleEditing();
+  };
+
+  const handleTitleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      setTitleEditing(false);
+      event.currentTarget.blur();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setTitleEditing(false);
+      event.currentTarget.blur();
+    }
+  };
+
+  useEffect(() => {
+    if (!titleEditing) return;
+    window.requestAnimationFrame(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    });
+  }, [titleEditing]);
+
   const toggleSubticketPanel = (): void => {
     const nextOpen = !addTicketsOpen;
     setAddTicketsOpen(nextOpen);
@@ -3560,6 +3597,7 @@ function TicketDetail({
   }
 
   const detailDialogTitleId = `ticket-detail-title-${ticket.frontMatter.id}`;
+  const detailMetadataTitleId = `ticket-detail-metadata-title-${ticket.frontMatter.id}`;
 
   return (
     <>
@@ -3577,49 +3615,28 @@ function TicketDetail({
                 </span>
               )}
             </div>
-            <h2 id={detailDialogTitleId} className="sr-only">
-              {title || ticket.frontMatter.title}
+            <h2
+              id={detailDialogTitleId}
+              className={clsx("ticket-detail-title", titleEditing && "editing")}
+              tabIndex={draftInProgress || titleEditing ? undefined : 0}
+              onDoubleClick={startTitleEditing}
+              onKeyDown={handleTitleDisplayKeyDown}
+              title={draftInProgress ? undefined : "Double-click, press Enter, or press F2 to edit title"}
+            >
+              {titleEditing ? (
+                <input
+                  ref={titleInputRef}
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  onBlur={() => setTitleEditing(false)}
+                  onKeyDown={handleTitleInputKeyDown}
+                  disabled={draftInProgress}
+                  aria-label="Ticket title"
+                />
+              ) : (
+                title || ticket.frontMatter.title
+              )}
             </h2>
-            <label className="field detail-title-field">
-              <span>Title</span>
-              <input value={title} onChange={(event) => setTitle(event.target.value)} disabled={draftInProgress} />
-            </label>
-            <div className="ticket-detail-metadata-strip" aria-label="Editable ticket metadata">
-              <label className="field compact-metadata-field">
-                <span>Status</span>
-                <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
-                  {board.columns.map((column) => (
-                    <option value={column.id} key={column.id}>
-                      {column.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field compact-metadata-field">
-                <span>Priority</span>
-                <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
-                  {priorityOptions.map((option) => (
-                    <option value={option} key={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field compact-metadata-field">
-                <span>Effort</span>
-                <select value={effort} onChange={(event) => setEffort(event.target.value as TicketEffort)} disabled={draftInProgress}>
-                  {ticketEffortOptions.map((option) => (
-                    <option value={option} key={option}>
-                      {ticketEffortLabel(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field compact-metadata-field labels-metadata-field">
-                <span>Labels</span>
-                <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
-              </label>
-            </div>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close ticket detail">
             <X size={18} />
@@ -3809,6 +3826,48 @@ function TicketDetail({
           </main>
 
           <aside className="ticket-detail-sidebar" aria-label="Ticket metadata and activity">
+            <section className="ticket-detail-section ticket-detail-metadata" aria-labelledby={detailMetadataTitleId}>
+              <header>
+                <h3 id={detailMetadataTitleId}>Ticket Details</h3>
+              </header>
+              <div className="ticket-detail-fields">
+                <label className="field sidebar-metadata-field">
+                  <span>Status</span>
+                  <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
+                    {board.columns.map((column) => (
+                      <option value={column.id} key={column.id}>
+                        {column.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field sidebar-metadata-field">
+                  <span>Priority</span>
+                  <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
+                    {priorityOptions.map((option) => (
+                      <option value={option} key={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field sidebar-metadata-field">
+                  <span>Effort</span>
+                  <select value={effort} onChange={(event) => setEffort(event.target.value as TicketEffort)} disabled={draftInProgress}>
+                    {ticketEffortOptions.map((option) => (
+                      <option value={option} key={option}>
+                        {ticketEffortLabel(option)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field sidebar-metadata-field">
+                  <span>Labels</span>
+                  <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
+                </label>
+              </div>
+            </section>
+
             <details className="ticket-detail-section ticket-detail-support" aria-label="Ticket support actions">
               <summary>
                 <span>Support</span>

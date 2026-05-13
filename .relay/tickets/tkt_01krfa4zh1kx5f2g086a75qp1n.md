@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krfa4zh1kx5f2g086a75qp1n
 title: Refine ticket detail header title and sidebar metadata layout
 ticketType: task
-status: in_progress
-position: 1000
+status: completed
+position: 67000
 priority: medium
 effort: medium
 labels:
@@ -19,10 +19,10 @@ blockedByIds: []
 relatedTicketIds:
   - tkt_01krf9fc4rxb5qx31pe8jgwf3j
 createdAt: '2026-05-13T00:00:26.145Z'
-updatedAt: '2026-05-13T00:03:11.949Z'
+updatedAt: '2026-05-13T00:08:06.466Z'
 authoringState: ready
 codexThreadId: 019e1ea5-0590-7de0-92d3-479c35fb093b
-runStatus: running
+runStatus: completed
 lastRunId: run_01krfaa0ysgyh6vkmcx4btgrzt
 lastRunStartedAt: '2026-05-13T00:03:11.723Z'
 ---
@@ -84,5 +84,36 @@ Replace the always-visible boxed Title input in the ticket detail header with a 
 - Avoid broad extraction of `TicketDetail` solely for tests unless the implementation naturally benefits from it; the UI is currently a local component in `App.tsx`.
 
 ## Codex Handoff
+
+### 5/13/2026, 1:06:10 AM
+
+**Summary**
+Implemented the ticket detail layout change: the header now uses a plain visible `h2` as the dialog `aria-labelledby` target, with inline title editing via double-click, `Enter`, or `F2`. Status, Priority, Effort, and Labels now live in a new top-of-sidebar `Ticket Details` section using the existing state, disabled conditions, label ref, and save/dirty semantics.
+
+**Files Changed**
+- [src/renderer/src/App.tsx](/Users/robertpitt/Projects/relay/src/renderer/src/App.tsx:2884)
+- [src/renderer/src/styles.css](/Users/robertpitt/Projects/relay/src/renderer/src/styles.css:2708)
+
+**Commands Run**
+- `sed` / `nl` inspections of `App.tsx` and `styles.css`
+- `grep` for existing labels/title/sidebar selectors
+- `git status --short`
+- `git diff -- src/renderer/src/App.tsx src/renderer/src/styles.css`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+
+**Tests**
+- `npm run typecheck`: passed
+- `npm test`: passed, 153/153 tests
+- `npm run build`: passed
+- Manual Electron UI validation was not run in this session.
+
+**Subagent Usage**
+None used.
+
+**Remaining Risks / Follow-Up**
+Manual app validation is still needed for the exact desktop and narrow-width visual behavior, especially title wrapping/edit focus and sidebar control ergonomics.
+
 
 No Codex run has been started.
