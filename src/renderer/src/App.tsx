@@ -42,6 +42,7 @@ import type {
   DraftIntakeResult,
   DraftScope,
   GitMetadata,
+  ProjectEditorId,
   ProjectSummary,
   RelayApi,
   RelayColumn,
@@ -518,6 +519,8 @@ export function TicketDetailPrimaryClarifications({
   return (
     <ClarificationPanel
       className="ticket-detail-primary-clarifications"
+      variant="primary"
+      ariaLabel="Pending clarification questions"
       title="Pending Clarifications"
       summary={`${questions.length} pending`}
       questions={questions}
@@ -660,6 +663,52 @@ const generateTicketSuggestionsOnce = (projectPath: string): ReturnType<RelayApi
   ticketSuggestionRequests.set(projectPath, request);
   return request;
 };
+
+export const openProjectInEditorFromHeader = async (
+  projectPath: string,
+  editorId: ProjectEditorId,
+  setToast: (toast: Toast) => void
+): Promise<void> => {
+  try {
+    const result = await getRelayApi().projects.openInEditor({ projectPath, editorId });
+    if (!result.ok) {
+      setToast({ kind: "error", message: result.message });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Relay could not open this project in the selected editor.";
+    setToast({ kind: "error", message });
+  }
+};
+
+export function ProjectEditorDropdown({
+  projectPath,
+  onOpen
+}: {
+  projectPath: string;
+  onOpen: (projectPath: string, editorId: ProjectEditorId) => void;
+}): ReactElement {
+  return (
+    <label className="project-editor-dropdown">
+      <Code2 size={14} aria-hidden="true" />
+      <span className="sr-only">Open project in editor</span>
+      <select
+        aria-label="Open project in editor"
+        value=""
+        onChange={(event) => {
+          const editorId = event.currentTarget.value as ProjectEditorId;
+          if (editorId) onOpen(projectPath, editorId);
+          event.currentTarget.value = "";
+        }}
+      >
+        <option value="" disabled>
+          Open in editor
+        </option>
+        <option value="vscode">VS Code</option>
+        <option value="cursor">Cursor</option>
+      </select>
+    </label>
+  );
+}
 
 export function ProjectSidebar({
   projects,
@@ -1008,7 +1057,8 @@ function BoardView({
   onOpenTicket,
   onMove,
   gitMetadata,
-  repositoryChatOpen
+  repositoryChatOpen,
+  setToast
 }: {
   board: BoardSnapshot;
   query: string;
@@ -1020,6 +1070,7 @@ function BoardView({
   onMove: (event: DragEndEvent) => void;
   gitMetadata: GitMetadata | undefined;
   repositoryChatOpen: boolean;
+  setToast: (toast: Toast) => void;
 }): ReactElement {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const boardRef = useRef<HTMLDivElement | null>(null);
@@ -1119,9 +1170,10 @@ function BoardView({
             {board.project.name}
           </h1>
           <div className="project-header-meta">
-            <p className="project-header-path" title={board.project.path}>
-              {board.project.path}
-            </p>
+            <ProjectEditorDropdown
+              projectPath={board.project.path}
+              onOpen={(projectPath, editorId) => void openProjectInEditorFromHeader(projectPath, editorId, setToast)}
+            />
             <GitMetadataPill metadata={gitMetadata ?? loadingGitMetadata()} />
           </div>
         </div>
@@ -3312,6 +3364,9 @@ function TicketDetail({
             )}
 
             <ClarificationPanel
+              className="ticket-detail-sidebar-clarifications"
+              variant="sidebar"
+              ariaLabel="Clarification history"
               questions={sidebarClarifications}
               answerDrafts={answerDrafts}
               submittingId={submittingAnswerId}
@@ -3667,6 +3722,7 @@ function RelayApp(): ReactElement {
           onMove={(event) => void moveTicket(event)}
           gitMetadata={gitMetadataByPath[board.project.path]}
           repositoryChatOpen={repositoryChatOpen}
+          setToast={setToast}
         />
       ) : (
         <main className="workspace empty-state">

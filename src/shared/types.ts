@@ -115,6 +115,22 @@ export type GitMetadataOptions = {
   force?: boolean;
 };
 
+export type ProjectEditorId = "vscode" | "cursor";
+
+export type ProjectOpenInEditorInput = {
+  projectPath: string;
+  editorId: ProjectEditorId;
+};
+
+export type ProjectOpenInEditorResult =
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type TicketFrontMatter = {
   schemaVersion: number;
   id: string;
@@ -602,6 +618,7 @@ export type RelayApi = {
     read: (projectPath: string) => Promise<ProjectSummary>;
     gitMetadata: (projectPath: string, options?: GitMetadataOptions) => Promise<GitMetadata>;
     revealInFinder: (projectPath: string) => Promise<void>;
+    openInEditor: (input: ProjectOpenInEditorInput) => Promise<ProjectOpenInEditorResult>;
   };
   board: {
     read: (projectPath: string) => Promise<BoardSnapshot>;

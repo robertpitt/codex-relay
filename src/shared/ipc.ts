@@ -16,6 +16,8 @@ import type {
   EpicSubticketUnlinkInput,
   GitMetadata,
   GitMetadataOptions,
+  ProjectOpenInEditorInput,
+  ProjectOpenInEditorResult,
   ProjectSummary,
   RelayApprovalDecision,
   RepositoryChatInput,
@@ -41,6 +43,7 @@ export type RelayIpcContract = {
   "projects:read": { args: [projectPath: string]; result: ProjectSummary };
   "projects:gitMetadata": { args: [projectPath: string, options?: GitMetadataOptions]; result: GitMetadata };
   "projects:revealInFinder": { args: [projectPath: string]; result: void };
+  "projects:openInEditor": { args: [input: ProjectOpenInEditorInput]; result: ProjectOpenInEditorResult };
   "board:read": { args: [projectPath: string]; result: BoardSnapshot };
   "ticket:intakeDraft": { args: [input: DraftIntakeInput]; result: DraftIntakeResult };
   "ticket:createDraft": { args: [input: CreateDraftInput]; result: TicketDraftStartResult };
@@ -83,6 +86,7 @@ export const relayIpcChannels = {
   projectsRead: "projects:read",
   projectsGitMetadata: "projects:gitMetadata",
   projectsRevealInFinder: "projects:revealInFinder",
+  projectsOpenInEditor: "projects:openInEditor",
   boardRead: "board:read",
   ticketIntakeDraft: "ticket:intakeDraft",
   ticketCreateDraft: "ticket:createDraft",

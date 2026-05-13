@@ -23,6 +23,12 @@
       "position": 3000,
       "terminal": false
     },
+   {
+      "id": "for_amitava",
+      "name": "Waiting for Amitava",
+      "position": 3000,
+      "terminal": false
+    },
     {
       "id": "completed",
       "name": "Completed",

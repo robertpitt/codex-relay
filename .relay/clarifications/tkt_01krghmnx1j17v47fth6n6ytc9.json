@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krghmnx1j17v47fth6n6ytc9",
+  "questions": [
+    {
+      "id": "clar_01krghntaynwj15satrqj4f4d1",
+      "ticketId": "tkt_01krghmnx1j17v47fth6n6ytc9",
+      "question": "Which sample color should this test ticket mention?",
+      "answerType": "text",
+      "answer": null,
+      "createdAt": "2026-05-13T11:31:12.350Z",
+      "updatedAt": "2026-05-13T11:31:12.350Z",
+      "answeredAt": null,
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krghmntw7vet9teg2yqxp5jr",
+      "codexThreadId": "draft_run_01krghmntw7vet9teg2yqxp5jr"
+    },
+    {
+      "id": "clar_01krghntaydfjc5tkmgq5qasdw",
+      "ticketId": "tkt_01krghmnx1j17v47fth6n6ytc9",
+      "question": "Which placeholder animal name should appear in the example answer?",
+      "answerType": "text",
+      "answer": null,
+      "createdAt": "2026-05-13T11:31:12.350Z",
+      "updatedAt": "2026-05-13T11:31:12.350Z",
+      "answeredAt": null,
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krghmntw7vet9teg2yqxp5jr",
+      "codexThreadId": "draft_run_01krghmntw7vet9teg2yqxp5jr"
+    }
+  ]
+}

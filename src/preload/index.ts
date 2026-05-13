@@ -9,6 +9,7 @@ import type {
   EpicSubticketLinkInput,
   EpicSubticketUnlinkInput,
   GitMetadataOptions,
+  ProjectOpenInEditorInput,
   RelayApi,
   RelayApprovalDecision,
   RepositoryChatInput,
@@ -32,7 +33,8 @@ const api: RelayApi = {
     removeFromSidebar: (projectPath: string) => invoke(relayIpcChannels.projectsRemoveFromSidebar, projectPath),
     read: (projectPath: string) => invoke(relayIpcChannels.projectsRead, projectPath),
     gitMetadata: (projectPath: string, options?: GitMetadataOptions) => invoke(relayIpcChannels.projectsGitMetadata, projectPath, options),
-    revealInFinder: (projectPath: string) => invoke(relayIpcChannels.projectsRevealInFinder, projectPath)
+    revealInFinder: (projectPath: string) => invoke(relayIpcChannels.projectsRevealInFinder, projectPath),
+    openInEditor: (input: ProjectOpenInEditorInput) => invoke(relayIpcChannels.projectsOpenInEditor, input)
   },
   board: {
     read: (projectPath: string) => invoke(relayIpcChannels.boardRead, projectPath)

@@ -680,10 +680,41 @@ kbd {
   margin-top: 4px;
 }
 
-.project-header-meta p {
-  flex: 1 1 240px;
+.project-editor-dropdown {
+  flex: 0 1 auto;
   min-width: 0;
-  margin-top: 0;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--relay-border) 70%, transparent);
+  border-radius: var(--relay-radius-sm);
+  background: rgb(255 255 255 / 4.5%);
+  color: var(--relay-text-subtle);
+  padding: 0 8px;
+  box-shadow: var(--relay-inset-highlight);
+}
+
+.project-editor-dropdown:focus-within {
+  box-shadow:
+    var(--relay-focus-ring),
+    var(--relay-inset-highlight);
+}
+
+.project-editor-dropdown select {
+  min-height: 26px;
+  max-width: 160px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0 2px 0 0;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.project-editor-dropdown select:focus-visible {
+  box-shadow: none;
 }
 
 .topbar-actions {
@@ -3121,9 +3152,14 @@ kbd {
   box-shadow:
     var(--relay-inset-highlight),
     inset 0 0 0 1px rgb(255 255 255 / 5%);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .clarification-panel header {
+  flex: 0 0 auto;
   min-height: 40px;
   border-bottom: 0;
   padding: 9px 11px;
@@ -3134,23 +3170,35 @@ kbd {
 }
 
 .clarification-panel h3 {
+  min-width: 0;
   margin: 0;
   font-size: var(--relay-text-base);
   font-weight: 560;
+  overflow-wrap: anywhere;
 }
 
 .clarification-panel header span {
+  flex: 0 0 auto;
   color: var(--relay-text-subtle);
   font-size: var(--relay-text-sm);
+  white-space: nowrap;
 }
 
 .clarification-list {
   display: grid;
   gap: var(--relay-space-2);
   padding: var(--relay-space-3);
+  min-width: 0;
+  min-height: 0;
+  max-height: min(38vh, 360px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .clarification-card {
+  min-width: 0;
   border: 0;
   border-radius: var(--relay-radius-md);
   background: var(--relay-surface-2);
@@ -3173,9 +3221,11 @@ kbd {
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--relay-space-2);
   align-items: flex-start;
+  min-width: 0;
 }
 
 .clarification-question svg {
+  flex: 0 0 auto;
   margin-top: 2px;
   color: var(--relay-primary-text);
 }
@@ -3183,6 +3233,14 @@ kbd {
 .clarification-question .markdown-block,
 .clarification-answer .markdown-block {
   min-width: 0;
+  max-width: 100%;
+}
+
+.clarification-card .markdown-content,
+.clarification-card .markdown-table-wrap,
+.clarification-card .markdown-code-block {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .clarification-question p,
@@ -3196,6 +3254,7 @@ kbd {
   margin-top: 10px;
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .clarification-answer > span {
@@ -3208,14 +3267,57 @@ kbd {
   display: grid;
   gap: var(--relay-space-2);
   margin-top: 10px;
+  min-width: 0;
 }
 
 .clarification-form textarea {
   min-height: 84px;
+  min-width: 0;
+  resize: vertical;
 }
 
 .clarification-form button {
   justify-self: end;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+}
+
+.clarification-panel-primary .clarification-list {
+  max-height: min(46vh, 520px);
+  padding: var(--relay-space-3);
+}
+
+.clarification-panel-primary .clarification-card {
+  padding: 14px;
+}
+
+.clarification-panel-sidebar header {
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
+.clarification-panel-sidebar h3 {
+  font-size: var(--relay-text-sm);
+}
+
+.clarification-panel-sidebar .clarification-list {
+  max-height: min(34vh, 300px);
+  gap: 8px;
+  padding: 10px;
+}
+
+.clarification-panel-sidebar .clarification-card {
+  padding: 10px;
+}
+
+.clarification-panel-sidebar .clarification-question p,
+.clarification-panel-sidebar .clarification-answer p {
+  line-height: 1.35;
+}
+
+.clarification-panel-sidebar .clarification-form textarea {
+  min-height: 68px;
 }
 
 .ticket-update-panel {

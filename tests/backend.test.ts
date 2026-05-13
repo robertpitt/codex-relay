@@ -548,7 +548,10 @@ test("Codex CLI status command uses BackendConfig timeout", async () => {
           Effect.sync(() => {
             captured.push({ command, args, timeoutMs: options.timeoutMs });
             return { stdout: "codex-cli 0.130.0\n", stderr: "" };
-          })
+          }),
+        spawnDetached: () => {
+          throw new Error("spawnDetached is not used in this test.");
+        }
       })
     )
   );

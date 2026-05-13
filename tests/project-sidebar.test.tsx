@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProjectSidebar } from "../src/renderer/src/App";
-import type { ProjectSummary } from "../src/shared/types";
+import { openProjectInEditorFromHeader, ProjectEditorDropdown, ProjectSidebar } from "../src/renderer/src/App";
+import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectSummary, RelayApi } from "../src/shared/types";
 
 const projectPath = "/tmp/relay-sidebar-project";
 
@@ -121,4 +121,70 @@ test("expanded project sidebar keeps long labels, counts, and active indicators 
   assert.match(markup, /project-folder-active/);
   assert.match(markup, /project-swimlane-active/);
   assert.match(markup, /class="project-swimlane-count" aria-hidden="true">123<\/span>/);
+});
+
+test("project header editor dropdown replaces raw path subtitle", () => {
+  const markup = renderToStaticMarkup(<ProjectEditorDropdown projectPath={projectPath} onOpen={() => undefined} />);
+
+  assert.match(markup, /aria-label="Open project in editor"/);
+  assert.match(markup, /Open in editor/);
+  assert.match(markup, /VS Code/);
+  assert.match(markup, /Cursor/);
+  assert.doesNotMatch(markup, new RegExp(projectPath));
+  assert.doesNotMatch(markup, /project-header-path/);
+});
+
+test("project header open-in-editor handler sends editor id and active project path", async () => {
+  const calls: ProjectOpenInEditorInput[] = [];
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    relay: {
+      projects: {
+        openInEditor: async (input: ProjectOpenInEditorInput) => {
+          calls.push(input);
+          return { ok: true };
+        }
+      }
+    } as Partial<RelayApi>
+  };
+
+  try {
+    const toasts: unknown[] = [];
+    const setToast = (toast: unknown): void => {
+      toasts.push(toast);
+    };
+    await openProjectInEditorFromHeader(projectPath, "vscode", setToast);
+    await openProjectInEditorFromHeader(projectPath, "cursor", setToast);
+
+    assert.deepEqual(calls, [
+      { projectPath, editorId: "vscode" },
+      { projectPath, editorId: "cursor" }
+    ]);
+    assert.deepEqual(toasts, []);
+  } finally {
+    (globalThis as { window?: unknown }).window = previousWindow;
+  }
+});
+
+test("project header open-in-editor handler shows returned failures as toast errors", async () => {
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    relay: {
+      projects: {
+        openInEditor: async (_input: ProjectOpenInEditorInput) => ({
+          ok: false,
+          message: "Relay could not open this project in Cursor."
+        })
+      }
+    } as Partial<RelayApi>
+  };
+
+  try {
+    const toasts: unknown[] = [];
+    await openProjectInEditorFromHeader(projectPath, "cursor" satisfies ProjectEditorId, (toast) => toasts.push(toast));
+
+    assert.deepEqual(toasts, [{ kind: "error", message: "Relay could not open this project in Cursor." }]);
+  } finally {
+    (globalThis as { window?: unknown }).window = previousWindow;
+  }
 });

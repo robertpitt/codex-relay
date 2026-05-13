@@ -1,7 +1,7 @@
 import { Effect } from "effect";
-import type { AddProjectResult } from "../../../shared/types";
+import type { AddProjectResult, ProjectEditorId, ProjectOpenInEditorInput, ProjectOpenInEditorResult } from "../../../shared/types";
 import { ElectronDialog, ElectronShell } from "../../electron";
-import { pathResolve } from "../../services/io";
+import { CommandExecutor, pathResolve } from "../../services/io";
 import { readCachedGitMetadata } from "../../services/git";
 import { readRegistry, removeProjectPath, upsertProjectPath } from "../../services/registry";
 import { fromPromise } from "../../services/runtime";
@@ -9,7 +9,77 @@ import { gitMetadataOptionsSchema, parseSchema } from "../../services/schemas";
 import { Storage } from "../../services/storage";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
-import { emptyArgs, ipcArgs, ipcOptionalUnknown, ipcResult, ipcString, ipcVoid } from "../schema";
+import { emptyArgs, ipcArgs, ipcObject, ipcOptionalUnknown, ipcResult, ipcString, ipcVoid } from "../schema";
+
+type SpawnedEditorProcess = {
+  once: {
+    (event: "spawn", listener: () => void): SpawnedEditorProcess;
+    (event: "error", listener: (error: Error) => void): SpawnedEditorProcess;
+  };
+  unref: () => unknown;
+};
+
+type SpawnEditorProcess = (command: string, args: readonly string[]) => SpawnedEditorProcess;
+
+export const projectEditorCommands: Record<ProjectEditorId, string> = {
+  vscode: "code",
+  cursor: "cursor"
+};
+
+const projectEditorLabels: Record<ProjectEditorId, string> = {
+  vscode: "VS Code",
+  cursor: "Cursor"
+};
+
+const isProjectEditorId = (value: unknown): value is ProjectEditorId =>
+  typeof value === "string" && Object.prototype.hasOwnProperty.call(projectEditorCommands, value);
+
+export const openProjectInEditor = async (
+  input: ProjectOpenInEditorInput,
+  spawnEditorProcess: SpawnEditorProcess
+): Promise<ProjectOpenInEditorResult> => {
+  const projectPath = typeof input.projectPath === "string" ? input.projectPath.trim() : "";
+  if (!projectPath) {
+    return { ok: false, message: "Relay could not open the project because the project path is empty." };
+  }
+  if (!isProjectEditorId(input.editorId)) {
+    return { ok: false, message: "Relay could not open the project because the selected editor is not supported." };
+  }
+
+  const command = projectEditorCommands[input.editorId];
+  const editorLabel = projectEditorLabels[input.editorId];
+
+  try {
+    const child = spawnEditorProcess(command, [projectPath]);
+    return await new Promise<ProjectOpenInEditorResult>((resolve) => {
+      let settled = false;
+      const settle = (result: ProjectOpenInEditorResult): void => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
+      child.once("spawn", () => {
+        child.unref();
+        settle({ ok: true });
+      });
+      child.once("error", (error) => {
+        settle({
+          ok: false,
+          message: `Relay could not open this project in ${editorLabel}. Make sure the \`${command}\` command is available on your PATH. ${
+            error.message
+          }`
+        });
+      });
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown launch error.";
+    return {
+      ok: false,
+      message: `Relay could not open this project in ${editorLabel}. Make sure the \`${command}\` command is available on your PATH. ${detail}`
+    };
+  }
+};
 
 const projectSummariesFromRegistry = () =>
   Effect.gen(function*() {
@@ -99,5 +169,14 @@ export const projectIpcMethods = [
     payload: ipcArgs([ipcString]),
     result: ipcVoid,
     handler: (_event, projectPath) => ElectronShell.use((electronShell) => electronShell.openPath(projectPath))
+  }),
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.projectsOpenInEditor,
+    payload: ipcArgs([ipcObject]),
+    result: ipcResult(),
+    handler: (_event, input) =>
+      CommandExecutor.use((executor) =>
+        fromPromise(() => openProjectInEditor(input as ProjectOpenInEditorInput, executor.spawnDetached))
+      )
   })
 ] satisfies ReadonlyArray<AnyRelayIpcMethod>;

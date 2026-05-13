@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { Effect, Schema } from "effect";
 import { makeRelayIpcService, type AnyRelayIpcMethod } from "../src/main/ipc/RelayIpc";
 import { relayIpcMethods } from "../src/main/ipc/methods";
+import { openProjectInEditor } from "../src/main/ipc/methods/projects";
 import { ipcArgs, ipcString } from "../src/main/ipc/schema";
 import type { ElectronIpcInvokeHandler, ElectronIpcService } from "../src/main/electron";
 import { relayIpcChannels, type RelayIpcChannel } from "../src/shared/ipc";
@@ -85,4 +88,40 @@ test("RelayIpc rejects invalid payloads before domain handlers run", async () =>
   await Effect.runPromise(relayIpc.handle(method));
   await assert.rejects(() => handlers.get(method.channel)?.({}, 123) as Promise<unknown>);
   assert.equal(called, false);
+});
+
+test("project open-in-editor maps editor ids to commands and returns success after spawn", async () => {
+  const calls: Array<{ command: string; args: readonly string[] }> = [];
+  const spawnEditorProcess = (command: string, args: readonly string[]): ChildProcess => {
+    calls.push({ command, args });
+    const child = new EventEmitter() as ChildProcess;
+    child.unref = () => child;
+    queueMicrotask(() => child.emit("spawn"));
+    return child;
+  };
+
+  assert.deepEqual(await openProjectInEditor({ projectPath: "/tmp/relay", editorId: "vscode" }, spawnEditorProcess), { ok: true });
+  assert.deepEqual(await openProjectInEditor({ projectPath: "/tmp/relay", editorId: "cursor" }, spawnEditorProcess), { ok: true });
+  assert.deepEqual(calls, [
+    { command: "code", args: ["/tmp/relay"] },
+    { command: "cursor", args: ["/tmp/relay"] }
+  ]);
+});
+
+test("project open-in-editor returns failure result when spawn reports an error", async () => {
+  const spawnEditorProcess = (_command: string, _args: readonly string[]): ChildProcess => {
+    const child = new EventEmitter() as ChildProcess;
+    child.unref = () => child;
+    queueMicrotask(() => child.emit("error", new Error("spawn code ENOENT")));
+    return child;
+  };
+
+  const result = await openProjectInEditor({ projectPath: "/tmp/relay", editorId: "vscode" }, spawnEditorProcess);
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.message, /VS Code/);
+    assert.match(result.message, /`code` command/);
+    assert.match(result.message, /spawn code ENOENT/);
+  }
 });

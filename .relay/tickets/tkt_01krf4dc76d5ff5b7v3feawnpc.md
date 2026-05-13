@@ -14,8 +14,10 @@ labels:
 parentEpicId: null
 subticketIds: []
 blockedByIds: []
+relatedTicketIds: []
 createdAt: '2026-05-12T22:20:09.830Z'
-updatedAt: '2026-05-12T22:23:46.532Z'
+updatedAt: '2026-05-13T11:29:30.789Z'
+authoringState: reviewing
 codexThreadId: 019e1e47-fcf5-7a73-b5ee-033459018c2f
 runStatus: completed
 lastRunId: run_01krf4fyp3bkgg008x6nhmc5ye

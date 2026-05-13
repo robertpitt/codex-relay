@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { Context, Effect, Layer } from "effect";
 
@@ -17,6 +18,7 @@ export type CommandOptions = {
 
 export type CommandExecutorService = {
   readonly execFile: (command: string, args: readonly string[], options?: CommandOptions) => Effect.Effect<CommandResult, unknown>;
+  readonly spawnDetached: (command: string, args: readonly string[]) => ChildProcess;
 };
 
 export const CommandExecutor = Context.Service<CommandExecutorService>("relay/CommandExecutor");
@@ -35,5 +37,6 @@ export const CommandExecutorLive = Layer.succeed(CommandExecutor)({
           stderr: result.stderr
         })),
       catch: (error) => error
-    })
+    }),
+  spawnDetached: (command, args) => spawn(command, [...args], { detached: true, stdio: "ignore" })
 });
