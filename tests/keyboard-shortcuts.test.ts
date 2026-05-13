@@ -119,8 +119,8 @@ test("Escape handlers can preserve unsaved overlay input without falling through
   assert.equal(closed, false);
 });
 
-test("Create Ticket shortcut opens from non-typing contexts", () => {
-  let openCount = 0;
+test("draft ticket shortcut focuses composer from non-typing contexts", () => {
+  let focusCount = 0;
   const event = keyboardEvent({ key: " ", code: "Space", metaKey: true });
 
   const handled = handleKeyboardShortcutKeyDown(
@@ -132,7 +132,7 @@ test("Create Ticket shortcut opens from non-typing contexts", () => {
         priority: 10,
         matcher: isCreateTicketShortcut,
         handler: () => {
-          openCount += 1;
+          focusCount += 1;
           return true;
         }
       }
@@ -141,7 +141,7 @@ test("Create Ticket shortcut opens from non-typing contexts", () => {
   );
 
   assert.equal(handled, true);
-  assert.equal(openCount, 1);
+  assert.equal(focusCount, 1);
   assert.equal(isCreateTicketShortcut(keyboardEvent({ key: " ", code: "Space", ctrlKey: true })), true);
 });
 
@@ -219,7 +219,7 @@ test("Sidebar toggle shortcut dispatch ignores text entry targets by default", (
   assert.equal(buttonEvent.stopped, true);
 });
 
-test("Create Ticket shortcut and ticket navigation ignore text entry targets", () => {
+test("draft ticket shortcut and ticket navigation ignore text entry targets", () => {
   const typingTargets = [
     target({ tagName: "INPUT", type: "text" }),
     target({ tagName: "TEXTAREA" }),
@@ -229,7 +229,7 @@ test("Create Ticket shortcut and ticket navigation ignore text entry targets", (
   ];
 
   for (const typingTarget of typingTargets) {
-    let createOpened = false;
+    let composerFocused = false;
     let navigated = false;
     const createEvent = keyboardEvent({ key: " ", code: "Space", metaKey: true, target: typingTarget });
     const navigationEvent = keyboardEvent({ key: "j", target: typingTarget });
@@ -243,7 +243,7 @@ test("Create Ticket shortcut and ticket navigation ignore text entry targets", (
           priority: 10,
           matcher: isCreateTicketShortcut,
           handler: () => {
-            createOpened = true;
+            composerFocused = true;
             return true;
           }
         }
@@ -267,7 +267,7 @@ test("Create Ticket shortcut and ticket navigation ignore text entry targets", (
       []
     );
 
-    assert.equal(createOpened, false);
+    assert.equal(composerFocused, false);
     assert.equal(navigated, false);
     assert.equal(createEvent.prevented, false);
     assert.equal(navigationEvent.prevented, false);

@@ -1445,44 +1445,6 @@ kbd {
   align-items: end;
 }
 
-.create-fields {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--relay-space-3);
-  margin-top: var(--relay-space-4);
-}
-
-.create-primary {
-  min-width: 0;
-  display: grid;
-  gap: var(--relay-space-3);
-  margin-top: var(--relay-space-4);
-}
-
-.create-details-field {
-  width: 100%;
-}
-
-.create-details-textarea {
-  width: 100%;
-  min-height: 168px;
-  max-height: min(34dvh, 280px);
-  resize: vertical;
-  line-height: 1.5;
-}
-
-.create-options-grid {
-  margin-top: var(--relay-space-3);
-}
-
-.create-manual-fields {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.42fr);
-  gap: var(--relay-space-3);
-  margin-top: var(--relay-space-3);
-}
-
 .draft-actions {
   min-width: 0;
   display: flex;
@@ -1867,89 +1829,6 @@ kbd {
   font-weight: 560;
 }
 
-.editor-stack {
-  min-width: 0;
-  display: grid;
-  gap: var(--relay-space-3);
-  margin-top: var(--relay-space-4);
-}
-
-.draft-meta {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--relay-space-2);
-  flex-wrap: wrap;
-}
-
-.draft-meta .labels {
-  margin: 0;
-}
-
-.draft-plan-editor {
-  min-width: 0;
-  display: grid;
-  gap: var(--relay-space-3);
-  border-radius: var(--relay-radius-md);
-  background: rgb(255 255 255 / 3%);
-  padding: var(--relay-space-3);
-  box-shadow:
-    var(--relay-inset-highlight),
-    inset 0 0 0 1px rgb(255 255 255 / 4%);
-}
-
-.draft-plan-textarea {
-  max-width: 100%;
-  min-height: 92px;
-  resize: vertical;
-}
-
-.draft-subtickets {
-  min-width: 0;
-  display: grid;
-  gap: var(--relay-space-2);
-}
-
-.draft-subtickets h3 {
-  margin: 0;
-  font-size: var(--relay-text-base);
-  font-weight: 560;
-}
-
-.draft-subtickets > p {
-  margin: 0;
-  color: var(--relay-text-muted);
-}
-
-.draft-subticket {
-  min-width: 0;
-  display: grid;
-  gap: var(--relay-space-2);
-  border-radius: var(--relay-radius-md);
-  background: rgb(255 255 255 / 3.5%);
-  padding: var(--relay-space-3);
-  box-shadow:
-    var(--relay-inset-highlight),
-    inset 0 0 0 1px rgb(255 255 255 / 4%);
-}
-
-.draft-subticket > div:first-child {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--relay-space-2);
-}
-
-.draft-subticket strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.draft-subticket > div:first-child span {
-  color: var(--relay-text-muted);
-  font-size: var(--relay-text-sm);
-}
-
 .two-fields {
   min-width: 0;
   display: grid;
@@ -2330,10 +2209,6 @@ kbd {
   gap: var(--relay-space-2);
 }
 
-.create-modal .modal-footer {
-  margin-top: var(--relay-space-4);
-}
-
 .ticket-suggestions-modal .modal-footer {
   margin-top: var(--relay-space-4);
 }
@@ -2560,6 +2435,21 @@ kbd {
   flex-direction: column;
   gap: var(--relay-space-3);
   padding-right: 2px;
+}
+
+.ticket-detail-primary.markdown-preview-expanded {
+  overflow: hidden;
+}
+
+.ticket-detail-primary.markdown-preview-expanded .ticket-markdown-tabs.preview-expanded,
+.ticket-detail-primary.markdown-preview-expanded .ticket-markdown-preview-panel.expanded {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ticket-detail-primary.markdown-preview-expanded .ticket-update-panel {
+  flex: 0 0 auto;
+  margin-top: var(--relay-space-1);
 }
 
 .ticket-detail-sidebar {
@@ -4079,6 +3969,10 @@ kbd {
     padding-right: 0;
   }
 
+  .ticket-detail-primary.markdown-preview-expanded {
+    overflow: visible;
+  }
+
   .ticket-detail-sidebar {
     padding-top: var(--relay-space-2);
     padding-bottom: 0;
@@ -4207,8 +4101,6 @@ kbd {
   }
 
   .modal-grid,
-  .create-fields,
-  .create-manual-fields,
   .two-fields {
     grid-template-columns: 1fr;
   }

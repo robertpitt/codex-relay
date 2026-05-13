@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   activeRunElapsedLabel,
@@ -235,6 +236,20 @@ test("ticket markdown tabs render expanded preview mode", () => {
   assert.match(markup, /Ticket body/);
   assert.doesNotMatch(markup, /detail-markdown/);
   assert.doesNotMatch(markup, /<textarea/);
+});
+
+test("expanded ticket markdown preview is contained above the update composer", () => {
+  const styles = readFileSync("src/renderer/src/styles.css", "utf8");
+
+  assert.match(styles, /\.ticket-detail-primary\.markdown-preview-expanded\s*{[^}]*overflow:\s*hidden;/s);
+  assert.match(
+    styles,
+    /\.ticket-detail-primary\.markdown-preview-expanded \.ticket-markdown-tabs\.preview-expanded,\s*\.ticket-detail-primary\.markdown-preview-expanded \.ticket-markdown-preview-panel\.expanded\s*{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;/s
+  );
+  assert.match(
+    styles,
+    /\.ticket-detail-primary\.markdown-preview-expanded \.ticket-update-panel\s*{[^}]*flex:\s*0 0 auto;/s
+  );
 });
 
 test("ticket markdown tabs render source editor without simultaneous preview", () => {

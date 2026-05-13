@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "executionId": "a44723120d462cc5b3e63d20368491aa",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krfc1avn3hhbrwczwwybg5b5:run_01krfc1aswbrx07dtj4zg3a6jt",
+  "status": "completed",
+  "attempts": 1,
+  "createdAt": "2026-05-13T00:33:23.831Z",
+  "updatedAt": "2026-05-13T00:34:27.008Z",
+  "runId": "run_01krfc1aswbrx07dtj4zg3a6jt",
+  "ticketId": "tkt_01krfc1avn3hhbrwczwwybg5b5",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Delete the unused legacy CreateTicketModal path and obsolete manual modal-only code while keeping shared tested helpers that are still used.",
+    "preferredTicketType": "task",
+    "runIntake": true,
+    "runId": "run_01krfc1aswbrx07dtj4zg3a6jt",
+    "ticketId": "tkt_01krfc1avn3hhbrwczwwybg5b5"
+  },
+  "message": "Ticket draft completed.",
+  "result": {
+    "ticketId": "tkt_01krfc1avn3hhbrwczwwybg5b5",
+    "title": "Delete unused legacy CreateTicketModal path"
+  }
+}
