@@ -3584,6 +3584,42 @@ function TicketDetail({
               <span>Title</span>
               <input value={title} onChange={(event) => setTitle(event.target.value)} disabled={draftInProgress} />
             </label>
+            <div className="ticket-detail-metadata-strip" aria-label="Editable ticket metadata">
+              <label className="field compact-metadata-field">
+                <span>Status</span>
+                <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
+                  {board.columns.map((column) => (
+                    <option value={column.id} key={column.id}>
+                      {column.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field compact-metadata-field">
+                <span>Priority</span>
+                <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
+                  {priorityOptions.map((option) => (
+                    <option value={option} key={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field compact-metadata-field">
+                <span>Effort</span>
+                <select value={effort} onChange={(event) => setEffort(event.target.value as TicketEffort)} disabled={draftInProgress}>
+                  {ticketEffortOptions.map((option) => (
+                    <option value={option} key={option}>
+                      {ticketEffortLabel(option)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field compact-metadata-field labels-metadata-field">
+                <span>Labels</span>
+                <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
+              </label>
+            </div>
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close ticket detail">
             <X size={18} />
@@ -3598,12 +3634,12 @@ function TicketDetail({
                 disabled={busy || ticketUpdateActive || draftInProgress || runQueued}
               >
                 {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-                {ticket.frontMatter.codexThreadId ? "Resume Implementation" : "Implement"}
+                {ticket.frontMatter.codexThreadId ? "Resume AI Agent" : "Start AI Agent"}
               </button>
               {ticket.frontMatter.codexThreadId && (
                 <button onClick={() => startRun(false, true)} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
                   {busy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-                  Start Fresh Thread
+                  Start New Agent Thread
                 </button>
               )}
               {runId && (ticket.frontMatter.runStatus === "queued" || ticket.frontMatter.runStatus === "running" || draftInProgress) && (
@@ -3773,46 +3809,17 @@ function TicketDetail({
           </main>
 
           <aside className="ticket-detail-sidebar" aria-label="Ticket metadata and activity">
-            <section className="ticket-detail-section ticket-detail-metadata" aria-label="Ticket details">
-              <header>
-                <h3>Details</h3>
-              </header>
-              <div className="ticket-detail-fields">
-                <label className="field">
-                  <span>Status</span>
-                  <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={draftInProgress}>
-                    {board.columns.map((column) => (
-                      <option value={column.id} key={column.id}>
-                        {column.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Priority</span>
-                  <select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)} disabled={draftInProgress}>
-                    {priorityOptions.map((option) => (
-                      <option value={option} key={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Effort</span>
-                  <select value={effort} onChange={(event) => setEffort(event.target.value as TicketEffort)} disabled={draftInProgress}>
-                    {ticketEffortOptions.map((option) => (
-                      <option value={option} key={option}>
-                        {ticketEffortLabel(option)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Labels</span>
-                  <input ref={labelsInputRef} value={labels} onChange={(event) => setLabels(event.target.value)} disabled={draftInProgress} />
-                </label>
-              </div>
+            <details className="ticket-detail-section ticket-detail-support" aria-label="Ticket support actions">
+              <summary>
+                <span>Support</span>
+                <small>
+                  {blockerResolution?.isBlocked
+                    ? "Blocked"
+                    : blockerCount === 0
+                      ? "No blockers"
+                      : `${blockerCount} blocker${blockerCount === 1 ? "" : "s"}`}
+                </small>
+              </summary>
               <div className="ticket-detail-actions-row" role="group" aria-label="Ticket detail actions">
                 <button
                   className={clsx("compact-action-button", blockerPanelOpen && "active")}
@@ -3876,7 +3883,7 @@ function TicketDetail({
                         : "Selected blockers are not currently active."}
                 </p>
               </div>
-            </section>
+            </details>
 
             {blockerPanelOpen && (
               <section className="epic-link-panel blocker-panel" id="ticket-blocker-manager">

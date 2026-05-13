@@ -27,6 +27,7 @@ type AgentProgressSummaryProps = {
   startedAt?: string | null;
   endedAt?: string | null;
   metricsAvailable?: boolean;
+  compact?: boolean;
   now?: number;
 };
 
@@ -168,6 +169,7 @@ export function AgentProgressSummary({
   startedAt,
   endedAt,
   metricsAvailable,
+  compact = false,
   now
 }: AgentProgressSummaryProps): ReactElement {
   const active = isAgentSessionActive(status);
@@ -178,7 +180,7 @@ export function AgentProgressSummary({
   );
 
   return (
-    <div className={clsx("agent-progress", progress.statusTone)} data-status={status}>
+    <div className={clsx("agent-progress", progress.statusTone, compact && "compact")} data-status={status}>
       <div className="agent-progress-main">
         <span className="agent-progress-icon">
           <Activity size={16} />
@@ -189,29 +191,94 @@ export function AgentProgressSummary({
         </div>
       </div>
 
-      <div className="agent-metrics" aria-label="Agent progress metrics">
-        <div className="agent-metric">
-          <Clock size={15} />
-          <span>{active ? "Elapsed" : "Duration"}</span>
-          <strong>{progress.elapsedLabel}</strong>
-        </div>
-        <div className="agent-metric">
-          <Files size={15} />
-          <span>Files Edited</span>
-          <strong>{metricValue(progress.filesEdited)}</strong>
-        </div>
-        <div className="agent-metric">
-          <Globe2 size={15} />
-          <span>Web Searches</span>
-          <strong>{metricValue(progress.webSearches)}</strong>
-        </div>
-      </div>
+      {!compact && (
+        <>
+          <div className="agent-metrics" aria-label="Agent progress metrics">
+            <div className="agent-metric">
+              <Clock size={15} />
+              <span>{active ? "Elapsed" : "Duration"}</span>
+              <strong>{progress.elapsedLabel}</strong>
+            </div>
+            <div className="agent-metric">
+              <Files size={15} />
+              <span>Files Edited</span>
+              <strong>{metricValue(progress.filesEdited)}</strong>
+            </div>
+            <div className="agent-metric">
+              <Globe2 size={15} />
+              <span>Web Searches</span>
+              <strong>{metricValue(progress.webSearches)}</strong>
+            </div>
+          </div>
 
-      <div className="agent-progress-foot">
-        <span>{progress.totalEvents > 0 ? `${progress.totalEvents} event${progress.totalEvents === 1 ? "" : "s"}` : "No events recorded"}</span>
-        {progress.lastEventAt && <span>Last update {formatTimestamp(progress.lastEventAt)}</span>}
-      </div>
+          <div className="agent-progress-foot">
+            <span>{progress.totalEvents > 0 ? `${progress.totalEvents} event${progress.totalEvents === 1 ? "" : "s"}` : "No events recorded"}</span>
+            {progress.lastEventAt && <span>Last update {formatTimestamp(progress.lastEventAt)}</span>}
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+const latestThreadIdFromEvents = (events: RendererRunEvent[]): string | null => {
+  for (const event of [...sortAgentEvents(events)].reverse()) {
+    if (event.type === "run.started") return event.threadId;
+  }
+  return null;
+};
+
+const recentActivityText = (event: RendererRunEvent): string => (event.type === "run.started" ? "Run started" : agentEventText(event));
+
+function AgentDiagnosticsDetails({
+  events,
+  runId,
+  status,
+  runSummary,
+  logLoading,
+  logError
+}: {
+  events: RendererRunEvent[];
+  runId: string | null;
+  status: RunStatus;
+  runSummary: RunSummary | null;
+  logLoading: boolean;
+  logError: string | null;
+}): ReactElement {
+  const latestThreadId = runSummary?.threadId ?? latestThreadIdFromEvents(events);
+
+  return (
+    <details className="agent-diagnostics">
+      <summary>Diagnostics</summary>
+      {runSummary ? (
+        <AgentRunSummaryDetails summary={runSummary} />
+      ) : (
+        <div className="agent-run-summary" aria-label="Agent diagnostics">
+          <div className="agent-run-facts">
+            <div>
+              <span>Status</span>
+              <strong>{formatStatus(status)}</strong>
+            </div>
+            <div>
+              <span>Run</span>
+              <code title={runId ?? undefined}>{formatIdentifier(runId)}</code>
+            </div>
+            <div>
+              <span>Thread</span>
+              <code title={latestThreadId ?? undefined}>{formatIdentifier(latestThreadId)}</code>
+            </div>
+            <div>
+              <span>Events</span>
+              <strong>{events.length}</strong>
+            </div>
+            <div>
+              <span>Saved Logs</span>
+              <strong>{logLoading ? "Loading" : logError ? "Error" : "Ready"}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+    </details>
   );
 }
 
@@ -264,9 +331,8 @@ export function AgentActivityPanel({
         startedAt={runSummary?.startedAt}
         endedAt={runSummary?.endedAt}
         metricsAvailable={Boolean(runSummary) || events.length > 0}
+        compact
       />
-
-      {runSummary && <AgentRunSummaryDetails summary={runSummary} />}
 
       <div className="agent-recent">
         <div className="agent-recent-title">
@@ -286,12 +352,14 @@ export function AgentActivityPanel({
               <div className={clsx("agent-recent-row", agentEventTone(event))} key={`${event.runId}-${event.timestamp}-${event.type}-${index}`}>
                 <span>{formatTimestamp(event.timestamp)}</span>
                 <strong>{agentEventLabel(event)}</strong>
-                <p>{agentEventText(event)}</p>
+                <p>{recentActivityText(event)}</p>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      <AgentDiagnosticsDetails events={events} runId={runId} status={status} runSummary={runSummary} logLoading={logLoading} logError={logError} />
     </section>
   );
 }

@@ -5,10 +5,10 @@
   "commandType": "codex.implementation",
   "projectPath": "/Users/robertpitt/Projects/relay",
   "idempotencyKey": "codex.implementation:/Users/robertpitt/Projects/relay:tkt_01krf9fc4rxb5qx31pe8jgwf3j:run_01krf9nnxnf37h7j18p00w9hwr",
-  "status": "running",
+  "status": "completed",
   "attempts": 1,
   "createdAt": "2026-05-12T23:52:04.790Z",
-  "updatedAt": "2026-05-12T23:52:05.080Z",
+  "updatedAt": "2026-05-12T23:57:53.165Z",
   "runId": "run_01krf9nnxnf37h7j18p00w9hwr",
   "ticketId": "tkt_01krf9fc4rxb5qx31pe8jgwf3j",
   "payload": {
@@ -21,5 +21,9 @@
   "metadata": {
     "resume": false
   },
-  "message": "Codex implementation run started."
+  "message": "Codex implementation completed.",
+  "result": {
+    "ticketId": "tkt_01krf9fc4rxb5qx31pe8jgwf3j",
+    "threadId": "019e1e9a-d98d-7791-a617-e70d82668e6a"
+  }
 }

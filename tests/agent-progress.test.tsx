@@ -84,9 +84,12 @@ test("agent activity panel exposes a dedicated log entry point", () => {
   assert.match(markup, /Agent Activity/);
   assert.match(markup, /Open Logs/);
   assert.match(markup, /Recent Activity/);
+  assert.match(markup, /Run/);
+  assert.match(markup, /Run started/);
+  assert.doesNotMatch(markup, /Run started \(thread_1\)/);
 });
 
-test("agent activity panel renders run summary timing and token usage", () => {
+test("agent activity panel keeps run summary timing and token usage behind diagnostics disclosure", () => {
   const markup = renderToStaticMarkup(
     <AgentActivityPanel
       events={[
@@ -121,14 +124,18 @@ test("agent activity panel renders run summary timing and token usage", () => {
     />
   );
 
+  assert.match(markup, /<details class="agent-diagnostics"><summary>Diagnostics<\/summary>/);
+  assert.doesNotMatch(markup, /<details class="agent-diagnostics" open="">/);
   assert.match(markup, /Latest run summary/);
   assert.match(markup, /Duration/);
   assert.match(markup, /01:05/);
   assert.match(markup, /Token Usage/);
   assert.match(markup, /1,500/);
+  assert.match(markup, /Thread/);
+  assert.match(markup, /thread_1/);
 });
 
-test("agent activity panel marks token usage unavailable when absent", () => {
+test("agent activity panel marks token usage unavailable inside diagnostics when absent", () => {
   const markup = renderToStaticMarkup(
     <AgentActivityPanel
       events={[event({ type: "run.failed", message: "The operation was aborted.", timestamp: "2026-05-11T10:00:30.000Z" })]}
@@ -155,6 +162,7 @@ test("agent activity panel marks token usage unavailable when absent", () => {
   );
 
   assert.match(markup, /Cancelled/);
+  assert.match(markup, /<details class="agent-diagnostics"><summary>Diagnostics<\/summary>/);
   assert.match(markup, /Token Usage/);
   assert.match(markup, /Unavailable from this run log/);
 });

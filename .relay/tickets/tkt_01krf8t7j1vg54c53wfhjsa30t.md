@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krf8t7j1vg54c53wfhjsa30t
 title: Replace Create Ticket modal with floating ticket input bar
 ticketType: task
-status: review
-position: 1000
+status: completed
+position: 65000
 priority: high
 effort: medium
 labels:
@@ -16,7 +16,7 @@ subticketIds: []
 blockedByIds: []
 relatedTicketIds: []
 createdAt: '2026-05-12T23:37:05.345Z'
-updatedAt: '2026-05-12T23:48:20.786Z'
+updatedAt: '2026-05-12T23:52:42.558Z'
 authoringState: ready
 codexThreadId: 019e1e91-4d0b-7a62-9b6e-edd766b2db59
 runStatus: completed

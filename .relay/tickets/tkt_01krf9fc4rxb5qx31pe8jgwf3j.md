@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krf9fc4rxb5qx31pe8jgwf3j
 title: Reduce density and improve View Ticket dialog hierarchy
 ticketType: task
-status: in_progress
-position: 1000
+status: completed
+position: 66000
 priority: medium
 effort: high
 labels:
@@ -18,10 +18,10 @@ subticketIds: []
 blockedByIds: []
 relatedTicketIds: []
 createdAt: '2026-05-12T23:48:38.168Z'
-updatedAt: '2026-05-12T23:52:05.320Z'
+updatedAt: '2026-05-13T00:00:16.531Z'
 authoringState: ready
 codexThreadId: 019e1e9a-d98d-7791-a617-e70d82668e6a
-runStatus: running
+runStatus: completed
 lastRunId: run_01krf9nnxnf37h7j18p00w9hwr
 lastRunStartedAt: '2026-05-12T23:52:05.077Z'
 ---
@@ -83,5 +83,41 @@ Rename the primary implementation CTA to explicit agent-oriented copy: use `Resu
 - There is an existing Todo ticket, `tkt_01krf8jqh84mj5kxmhxb1f4wjx`, for expanded Markdown preview being obscured by the update composer. Do not fold that bug into this ticket unless a layout adjustment here naturally fixes it without extra scope.
 
 ## Codex Handoff
+
+### 5/13/2026, 12:57:52 AM
+
+Implemented the View Ticket dialog presentation pass.
+
+**Summary**
+- Renamed primary run CTA to `Start AI Agent` / `Resume AI Agent`; fresh-thread action is now `Start New Agent Thread`.
+- Moved Status, Priority, Effort, and Labels into a compact editable metadata strip under the title, using the existing state/save flow.
+- Replaced the stacked sidebar metadata form with a lighter collapsible Support section for blockers/subtasks/tag focus.
+- Tuned ticket Markdown preview styling for stronger contrast, larger reading text, clearer heading spacing, and better code/table/checklist scanning.
+- Simplified Agent Activity default view to status plus recent activity, with thread IDs, event counts, token usage, and run summary inside a collapsed Diagnostics disclosure.
+
+**Files Changed**
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/components/AgentActivity.tsx`
+- `src/renderer/src/styles.css`
+- `tests/agent-progress.test.tsx`
+
+**Commands Run**
+- `git status --short`, `git diff`, `grep`, `sed` inspection commands
+- `npm run typecheck`
+- `npm test`
+- `git diff --check`
+
+**Tests**
+- `npm run typecheck`: passed
+- `npm test`: passed, 153 tests
+- `git diff --check`: passed
+- Test output included an existing esbuild warning about `import.meta` with CJS output.
+
+**Subagent Usage**
+- none used
+
+**Remaining Risks / Follow-up**
+- Manual Electron UI validation was not run in-app, so the requested normal/existing-thread/running/clarification/epic ticket walkthrough remains the main residual check. Existing unrelated `.relay` artifact changes were left untouched.
+
 
 No Codex run has been started.
