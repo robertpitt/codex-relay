@@ -2,6 +2,7 @@
   "name": "relay",
   "version": "0.1.0",
   "description": "Local-first Codex-driven kanban desktop app.",
+  "license": "MIT",
   "main": "./out/main/index.js",
   "type": "module",
   "private": true,

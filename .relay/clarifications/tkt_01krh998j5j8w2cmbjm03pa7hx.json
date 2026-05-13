@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krh998j5j8w2cmbjm03pa7hx",
+  "questions": [
+    {
+      "id": "clar_01krh9a0e35a3y0e8vzp1s4w4m",
+      "ticketId": "tkt_01krh998j5j8w2cmbjm03pa7hx",
+      "question": "Which first migration slice should this task require: board + ticket detail + floating ticket input, or only the shared component/query foundation with one small example usage?\n\nWhy it matters: A task-sized ticket cannot safely centralize every component and replace every IPC call across the entire renderer; the draft needs a concrete completion boundary.\nRecommended answer: Migrate the board, ticket detail modal, and floating ticket input enough to prove the shared components and TanStack Query IPC hooks in real production surfaces, leaving full-app rollout follow-ups.",
+      "answerType": "text",
+      "answer": "Do both tanstack react query and the. components updates, make the ticket cover both areas as one whole end to end task with final goals",
+      "createdAt": "2026-05-13T18:24:11.203Z",
+      "updatedAt": "2026-05-13T18:26:51.737Z",
+      "answeredAt": "2026-05-13T18:26:51.737Z",
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krh998gh9t7mehcdt3fngj8b",
+      "codexThreadId": "draft_run_01krh998gh9t7mehcdt3fngj8b"
+    }
+  ]
+}

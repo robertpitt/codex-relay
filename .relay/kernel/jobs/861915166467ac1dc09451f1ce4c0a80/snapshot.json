@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "executionId": "861915166467ac1dc09451f1ce4c0a80",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krh998j5j8w2cmbjm03pa7hx:run_01krh9ex6xqx3agv80nz4za0jz",
+  "status": "completed",
+  "attempts": 1,
+  "createdAt": "2026-05-13T18:26:51.742Z",
+  "updatedAt": "2026-05-13T18:29:18.531Z",
+  "runId": "run_01krh9ex6xqx3agv80nz4za0jz",
+  "ticketId": "tkt_01krh998j5j8w2cmbjm03pa7hx",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "ticketId": "tkt_01krh998j5j8w2cmbjm03pa7hx",
+    "idea": "Lets look at the rendered codebase and lets raise the code to a higher standard, Im looking for extreamly well defined and documented components within a components directory, I want to use tanstack query as a layer between the ipc calls and the react so that there is a sensible state management layer for the data\n\nI just want to raise the bar as this application is becoming something production capable so I want to ensure that we create these common components like inputs, cards, buttons, dropdowns as super clean and centralised comonent that is used everywhere for consistency",
+    "effort": "high",
+    "runId": "run_01krh9ex6xqx3agv80nz4za0jz"
+  },
+  "message": "Ticket draft completed.",
+  "result": {
+    "ticketId": "tkt_01krh998j5j8w2cmbjm03pa7hx",
+    "title": "Centralize renderer UI primitives and move IPC data state to TanStack Query"
+  }
+}

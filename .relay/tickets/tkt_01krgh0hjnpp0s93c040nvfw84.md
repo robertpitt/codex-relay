@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krgh0hjnpp0s93c040nvfw84
 title: Clean Up Repository README
 ticketType: task
-status: todo
-position: 19000
+status: completed
+position: 71000
 priority: medium
 effort: medium
 labels:
@@ -16,12 +16,12 @@ subticketIds: []
 blockedByIds: []
 relatedTicketIds: []
 createdAt: '2026-05-13T11:19:35.253Z'
-updatedAt: '2026-05-13T11:20:38.083Z'
-authoringState: reviewing
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krgh0hgjx5y3r80wvq275vta
-lastRunStartedAt: null
+updatedAt: '2026-05-13T18:47:01.940Z'
+authoringState: ready
+codexThreadId: 019e22a7-4a76-7d72-a3c7-f4e401f9a59d
+runStatus: completed
+lastRunId: run_01krhad4c5cx2f8jg2zrexzzzp
+lastRunStartedAt: '2026-05-13T18:44:09.333Z'
 ---
 # Clean Up Repository README
 
@@ -80,5 +80,37 @@ Update README.md only unless a broken reference requires a minimal adjacent fix.
 - There is an existing Todo placeholder draft with a near-identical idea; this ticket should replace that placeholder rather than creating an additional duplicate if the ticketing workflow supports replacement.
 
 ## Codex Handoff
+
+### 5/13/2026, 7:45:46 PM
+
+**Summary**
+Updated [README.md](/Users/robertpitt/Projects/relay/README.md) as a focused documentation cleanup: condensed the intro, clarified the install-to-`npm run dev` path, tightened Codex requirements, preserved showcase images, and made operational sections easier to scan.
+
+**Files Changed**
+- [README.md](/Users/robertpitt/Projects/relay/README.md)
+
+**Commands Run**
+- `sed -n '1,340p' README.md`
+- `node -e "const p=require('./package.json'); console.log(JSON.stringify(p.scripts,null,2))"`
+- `find ...` checks for referenced files/directories
+- `git diff -- README.md`
+- Node script comparing README command table against `package.json` scripts
+- `git status --short`
+- `pwd`
+
+**Tests Run**
+- Automated tests not run because this was README-only documentation work.
+- Manual verification passed:
+  - Read final README top to bottom.
+  - Confirmed referenced paths exist: `assets/front.png`, `assets/front-2.png`, `assets/ticket.png`, `package.json`, `package-lock.json`, `SPEC.md`, `src/`, `tests/`.
+  - Confirmed documented commands match `package.json` scripts with no missing or extra scripts.
+
+**Subagent Usage**
+- none used
+
+**Remaining Risks / Follow-Up**
+- No README-specific risks found.
+- The worktree contains other pre-existing/unrelated changes outside `README.md`; I did not modify or revert them.
+
 
 No Codex run has been started.

@@ -61,7 +61,6 @@ export const makeRelayIpcService = (
 export const RelayIpcLive = Layer.effect(
   RelayIpc,
   Effect.gen(function*() {
-    const electronIpc = yield* ElectronIpc;
-    return makeRelayIpcService(electronIpc);
+    return makeRelayIpcService(yield* ElectronIpc);
   })
 );

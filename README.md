@@ -1,31 +1,19 @@
 # Relay
 
-Relay is a working prototype for local software work management. It depends on Codex for agent-backed drafting and execution, so install and authenticate Codex before using those flows.
+Relay is a local-first Electron desktop app for managing software work as kanban cards in local project folders. It is built with React, TypeScript, and `@openai/codex-sdk`, and stores each project's board data in a project-local `.relay/` directory.
 
-Relay is a local-first Electron desktop app for managing software work as kanban cards and running Codex from those cards. It is built with React, TypeScript, and `@openai/codex-sdk`.
+Manual board and ticket management works without Codex. Agent-backed ticket drafting and execution require the Codex CLI on `PATH` plus Codex authentication or an API key.
 
 ## Quick Start
-
-### Clone
 
 ```sh
 git clone <repo-url>
 cd relay
-```
-
-### Install
-
-```sh
 npm install
-```
-
-### Dev
-
-```sh
 npm run dev
 ```
 
-Optional Codex check for agent-backed drafting or execution:
+For Codex-backed drafting or execution, also verify Codex before starting those flows:
 
 ```sh
 codex --version
@@ -40,36 +28,34 @@ codex login
 
 ![Relay ticket detail view](assets/ticket.png)
 
-## What Relay Does
+## Prerequisites
 
-Relay is designed for one developer working across local project folders. Each project stores its board state in a project-local `.relay/` directory, keeping tickets and run history portable with the codebase.
+- Node.js 18 or newer.
+- npm, using the committed `package-lock.json` workflow.
+- Git, strongly recommended. Relay can manage boards for non-Git folders, but Codex execution is disabled by default for non-Git projects.
+- Codex CLI and authentication only for agent-backed drafting or execution.
+
+Local development does not require a database server, container stack, hosted issue tracker, or `.env` file.
+
+## First Project
+
+After `npm run dev` opens the app:
+
+1. Click `Add Project`.
+2. Choose a local project folder.
+3. Confirm initialization when Relay asks to create `.relay/`.
+4. Create a manual ticket, or use Codex to draft one if Codex is configured.
+5. Open a ticket and start or resume a Codex run when needed.
+
+Relay is designed for one developer working across local project folders. Removing a project from the sidebar removes it from Relay's app registry only; it does not delete the folder or its `.relay/` data.
+
+## What Relay Does
 
 Relay has three runtime pieces:
 
 - `src/main/`: Electron main process for IPC handlers, filesystem access, project initialization, app registry storage, logging, run events, and Codex SDK lifecycle.
 - `src/preload/`: typed `window.relay` bridge exposed to the renderer through Electron IPC.
 - `src/renderer/`: React UI for the project sidebar, board, ticket editor, draft flow, run console, and user-facing errors.
-
-Local development does not require a database server, container stack, hosted issue tracker, or `.env` file.
-
-## Prerequisites
-
-- Node.js 18 or newer.
-- npm. The current lockfile is `package-lock.json`.
-- Git, strongly recommended. Relay can manage boards for non-Git folders, but Codex execution is disabled by default for non-Git projects.
-- Codex CLI and Codex authentication for agent-backed ticket drafting or execution.
-
-Manual board and ticket management does not require Codex. Codex-backed drafting and execution require `codex` on `PATH` plus an authenticated Codex session or API key.
-
-## First Project
-
-To initialize a project in the app:
-
-1. Click `Add Project`.
-2. Choose a local project folder.
-3. Confirm initialization when Relay asks to create `.relay/`.
-4. Create a manual ticket or use Codex to draft one.
-5. Open a ticket and start or resume a Codex run when needed.
 
 ## Keyboard Shortcuts
 
@@ -84,9 +70,7 @@ Relay keeps `Tab` for normal accessibility focus traversal. Ticket browsing uses
 
 ## Local Data
 
-Relay uses filesystem storage instead of a database.
-
-Project state lives under each project's `.relay/` directory:
+Relay uses filesystem storage instead of a database. Project state lives under each project's `.relay/` directory:
 
 ```text
 <project>/
@@ -113,17 +97,15 @@ Key files:
 - `.relay/runs/<ticket-id>/<run-id>.jsonl` stores streamed Codex run events.
 - `.relay/audit.jsonl` records status changes and clarification events.
 
-Relay also stores an app-level registry and log under Electron `userData`. On macOS, with the current package name, the log script tails:
+Relay also stores an app-level registry and log under Electron `userData`. On macOS, with the current package name, `npm run logs` tails:
 
 ```text
 ~/Library/Application Support/relay/relay.log
 ```
 
-The registry only caches known project folders. Removing a project from the sidebar should not delete that project folder or its `.relay/` data.
-
 ## Codex and Secrets
 
-Codex authentication is discovered from one of these sources:
+Codex-backed drafting and execution use one of these authentication sources:
 
 - `~/.codex/auth.json`, usually created by `codex login`.
 - `OPENAI_API_KEY`
@@ -133,7 +115,7 @@ Relay inherits environment variables from the shell that launched it. If you use
 
 Do not commit or store API keys, Codex auth tokens, bearer tokens, or other secrets in `.relay/`, ticket Markdown, run logs, or committed files.
 
-`ELECTRON_RENDERER_URL` is used internally by `electron-vite` during development. You should not need to set it manually for normal local work.
+`ELECTRON_RENDERER_URL` is used internally by `electron-vite` during development. Normal local work should not require setting it manually.
 
 ## Commands
 
@@ -184,7 +166,7 @@ Treat generated or local-only directories such as `node_modules/`, `out/`, and p
 
 ## Development Workflow
 
-Before changing behavior, read `SPEC.md` and the relevant service or renderer code. The spec is the source for product intent, while the TypeScript implementation is the source for current commands and runtime behavior.
+Before changing behavior, read `SPEC.md` and the relevant service or renderer code. The spec is the source for product intent; the TypeScript implementation is the source for current commands and runtime behavior.
 
 Keep process boundaries intact:
 
@@ -192,9 +174,11 @@ Keep process boundaries intact:
 - Renderer code should call the typed API exposed by `src/preload/index.ts`.
 - Shared request and response shapes should live in `src/shared/types.ts`; shared IPC channel signatures should live in `src/shared/ipc.ts`.
 
-For changes that touch ticket files or run state, verify storage in `src/main/services/storage/` and validation schemas in `src/main/services/schemas.ts`. For IPC changes, update both `src/shared/ipc.ts` and the matching method module under `src/main/ipc/methods/`, then keep `src/preload/index.ts` aligned.
+Change checklist:
 
-For Codex flows, start in `src/main/services/codex/index.ts`. Ticket drafting uses `CreateDraftInput`, `TicketDraft`, `TicketCreateInput`, and `draftToCreateInput`; ticket update uses `AgentTicketUpdateInput` and `AgentTicketUpdate`; execution uses `StartRunInput`, ticket run state, clarification records, and run events.
+- Ticket files or run state: verify storage in `src/main/services/storage/` and validation schemas in `src/main/services/schemas.ts`.
+- IPC behavior: update `src/shared/ipc.ts`, the matching method module under `src/main/ipc/methods/`, and `src/preload/index.ts`.
+- Codex flows: start in `src/main/services/codex/index.ts`. Drafting uses `CreateDraftInput`, `TicketDraft`, `TicketCreateInput`, and `draftToCreateInput`; ticket update uses `AgentTicketUpdateInput` and `AgentTicketUpdate`; execution uses `StartRunInput`, ticket run state, clarification records, and run events.
 
 For coding agents working from Relay tickets:
 
