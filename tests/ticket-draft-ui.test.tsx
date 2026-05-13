@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   activeRunElapsedLabel,
+  canRedraftTicket,
   CreateTicketDraftMessage,
   DraftIntakeQuestionsPanel,
   DraftingTicketDetailLoading,
@@ -21,7 +22,14 @@ import {
   TicketRunElapsedPill,
   TicketRunStatusPill
 } from "../src/renderer/src/App";
-import { DEFAULT_COLUMNS, type ClarificationQuestion, type DraftIntakeResult, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
+import {
+  DEFAULT_COLUMNS,
+  type ClarificationQuestion,
+  type DraftIntakeResult,
+  type TicketRecord,
+  type TicketSuggestion,
+  type TicketSummary
+} from "../src/shared/types";
 
 const renderWithQueryClient = (element: ReactElement): string => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -70,6 +78,17 @@ const clarificationQuestion = (patch: Partial<ClarificationQuestion> = {}): Clar
   codexThreadId: "thread_elapsed",
   ...patch
 });
+
+const ticketRecord = (patch: Partial<TicketRecord["frontMatter"]> = {}): TicketRecord => {
+  const summary = ticketSummary({ runStatus: "idle", authoringState: "rough", ...patch });
+  const { excerpt: _excerpt, filePath, checklist, ...frontMatter } = summary;
+  return {
+    frontMatter,
+    markdown: "# Elapsed runtime\n",
+    filePath,
+    checklist
+  };
+};
 
 test("empty column copy is status-aware for standard workflow columns", () => {
   assert.deepEqual(emptyColumnMessage("Todo"), {
@@ -212,6 +231,15 @@ test("drafting ticket detail loading state hides placeholder draft content", () 
   assert.doesNotMatch(markup, /Original Idea/);
   assert.doesNotMatch(markup, /Markdown/);
   assert.doesNotMatch(markup, /Preview/);
+});
+
+test("redraft eligibility is limited to failed placeholders and generated drafts", () => {
+  assert.equal(canRedraftTicket(ticketRecord({ runStatus: "draft_failed" })), true);
+  assert.equal(canRedraftTicket(ticketRecord({ runStatus: "draft_complete" })), true);
+  assert.equal(canRedraftTicket(ticketRecord({ authoringState: "reviewing" })), true);
+  assert.equal(canRedraftTicket(ticketRecord({ runStatus: "drafting", authoringState: "drafting" })), false);
+  assert.equal(canRedraftTicket(ticketRecord({ runStatus: "idle", authoringState: "rough" })), false);
+  assert.equal(canRedraftTicket(ticketRecord({ runStatus: "completed", authoringState: "ready" })), false);
 });
 
 test("ticket markdown tabs render preview by default without source textarea", () => {

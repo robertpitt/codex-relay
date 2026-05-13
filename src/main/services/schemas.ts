@@ -44,6 +44,7 @@ import type {
   TicketFrontMatter,
   TicketMoveInput,
   TicketPriority,
+  TicketRedraftInput,
   TicketRecord,
   TicketSaveInput,
   TicketSuggestion,
@@ -519,6 +520,20 @@ export const createDraftInputSchema: RelaySchema<CreateDraftInput> = passthrough
   effort: Schema.optional(ticketEffortSchema),
   preferredTicketType: Schema.optional(ticketTypeSchema),
   ticketId: Schema.optional(Schema.String),
+  draftScope: Schema.optional(draftScopeSchema),
+  runIntake: Schema.optional(Schema.Boolean),
+  intakeAnswers: Schema.optional(mutableArray(draftIntakeAnswerSchema)),
+  intakeKnownFacts: Schema.optional(mutableArray(Schema.String)),
+  relatedTicketIds: Schema.optional(mutableArray(Schema.String))
+});
+
+export const ticketRedraftInputSchema: RelaySchema<TicketRedraftInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticketId: Schema.String,
+  idea: Schema.optional(Schema.String),
+  priority: Schema.optional(ticketPrioritySchema),
+  effort: Schema.optional(ticketEffortSchema),
+  preferredTicketType: Schema.optional(ticketTypeSchema),
   draftScope: Schema.optional(draftScopeSchema),
   runIntake: Schema.optional(Schema.Boolean),
   intakeAnswers: Schema.optional(mutableArray(draftIntakeAnswerSchema)),

@@ -19,6 +19,7 @@ import type {
   TicketAttachmentSaveInput,
   TicketCreateInput,
   TicketMoveInput,
+  TicketRedraftInput,
   TicketSaveInput
 } from "../shared/types";
 
@@ -43,6 +44,7 @@ const api: RelayApi = {
   ticket: {
     intakeDraft: (input: DraftIntakeInput) => invoke(relayIpcChannels.ticketIntakeDraft, input),
     createDraft: (input: CreateDraftInput) => invoke(relayIpcChannels.ticketCreateDraft, input),
+    redraft: (input: TicketRedraftInput) => invoke(relayIpcChannels.ticketRedraft, input),
     generateSuggestions: (projectPath: string) => invoke(relayIpcChannels.ticketGenerateSuggestions, projectPath),
     createManual: (projectPath: string, input: TicketCreateInput) => invoke(relayIpcChannels.ticketCreateManual, projectPath, input),
     createSubticket: (input: EpicSubticketCreateInput) => invoke(relayIpcChannels.ticketCreateSubticket, input),

@@ -19,6 +19,7 @@ import type {
   StartRunInput,
   TicketAttachmentSaveInput,
   TicketMoveInput,
+  TicketRedraftInput,
   TicketRecord,
   TicketSaveInput
 } from "@shared/types";
@@ -196,6 +197,16 @@ export const useCreateDraftMutation = () => {
     mutationFn: (input: CreateDraftInput) => getRelayApi().ticket.createDraft(input),
     onSuccess: async (_result, input) => {
       await invalidateProjectData(queryClient, input.projectPath);
+    }
+  });
+};
+
+export const useRedraftTicketMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TicketRedraftInput) => getRelayApi().ticket.redraft(input),
+    onSuccess: async (_result, input) => {
+      await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
   });
 };

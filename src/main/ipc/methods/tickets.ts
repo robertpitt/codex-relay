@@ -7,6 +7,7 @@ import {
   maybeResumeTicketDraftAfterClarification,
   reconcileTicketQueueState,
   startTicketDraftRun,
+  startTicketRedraftRun,
   startTicketUpdateRun,
   ticketDraftErrorToPayload
 } from "../../services/codex";
@@ -24,6 +25,7 @@ import {
   ticketAttachmentSaveInputSchema,
   ticketCreateInputSchema,
   ticketMoveInputSchema,
+  ticketRedraftInputSchema,
   ticketSaveInputSchema
 } from "../../services/schemas";
 import { isTicketNotFoundError, Storage } from "../../services/storage";
@@ -46,6 +48,19 @@ export const ticketIpcMethods = [
       fromPromise(async (): Promise<TicketDraftStartResult> => {
         try {
           return { ok: true, ...(await startTicketDraftRun(parseSchema(createDraftInputSchema, input))) };
+        } catch (error) {
+          return { ok: false, error: ticketDraftErrorToPayload(error) };
+        }
+      })
+  }),
+  defineRelayIpcMethod({
+    channel: relayIpcChannels.ticketRedraft,
+    payload: ipcArgs([ipcObject]),
+    result: ipcResult(),
+    handler: (_event, input) =>
+      fromPromise(async (): Promise<TicketDraftStartResult> => {
+        try {
+          return { ok: true, ...(await startTicketRedraftRun(parseSchema(ticketRedraftInputSchema, input))) };
         } catch (error) {
           return { ok: false, error: ticketDraftErrorToPayload(error) };
         }

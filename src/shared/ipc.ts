@@ -31,6 +31,7 @@ import type {
   TicketCreateInput,
   TicketDraftStartResult,
   TicketMoveInput,
+  TicketRedraftInput,
   TicketRecord,
   TicketReferenceCandidate,
   TicketSaveInput,
@@ -48,6 +49,7 @@ export type RelayIpcContract = {
   "board:read": { args: [projectPath: string]; result: BoardSnapshot };
   "ticket:intakeDraft": { args: [input: DraftIntakeInput]; result: DraftIntakeResult };
   "ticket:createDraft": { args: [input: CreateDraftInput]; result: TicketDraftStartResult };
+  "ticket:redraft": { args: [input: TicketRedraftInput]; result: TicketDraftStartResult };
   "ticket:generateSuggestions": { args: [projectPath: string]; result: TicketSuggestionsGenerateResult };
   "ticket:createManual": { args: [projectPath: string, input: TicketCreateInput]; result: TicketRecord };
   "ticket:createSubticket": { args: [input: EpicSubticketCreateInput]; result: TicketRecord };
@@ -91,6 +93,7 @@ export const relayIpcChannels = {
   boardRead: "board:read",
   ticketIntakeDraft: "ticket:intakeDraft",
   ticketCreateDraft: "ticket:createDraft",
+  ticketRedraft: "ticket:redraft",
   ticketGenerateSuggestions: "ticket:generateSuggestions",
   ticketCreateManual: "ticket:createManual",
   ticketCreateSubticket: "ticket:createSubticket",

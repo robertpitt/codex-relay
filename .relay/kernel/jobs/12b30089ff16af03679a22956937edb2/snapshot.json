@@ -5,10 +5,10 @@
   "commandType": "codex.ticketDraft",
   "projectPath": "/Users/robertpitt/Projects/relay",
   "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krhf2jbryw7c2199t7fqpha7:run_01krhf2j9gf6rqvfa0sm3zfq5z",
-  "status": "running",
+  "status": "completed",
   "attempts": 1,
   "createdAt": "2026-05-13T20:04:58.875Z",
-  "updatedAt": "2026-05-13T20:04:58.881Z",
+  "updatedAt": "2026-05-13T20:07:04.257Z",
   "runId": "run_01krhf2j9gf6rqvfa0sm3zfq5z",
   "ticketId": "tkt_01krhf2jbryw7c2199t7fqpha7",
   "payload": {
@@ -22,5 +22,9 @@
     "runId": "run_01krhf2j9gf6rqvfa0sm3zfq5z",
     "ticketId": "tkt_01krhf2jbryw7c2199t7fqpha7"
   },
-  "message": "Ticket draft generation started."
+  "message": "Ticket draft completed.",
+  "result": {
+    "ticketId": "tkt_01krhf2jbryw7c2199t7fqpha7",
+    "title": "Add Redraft Action for AI-Generated Tickets"
+  }
 }

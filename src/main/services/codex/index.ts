@@ -36,6 +36,7 @@ import {
   type TicketDraftResearchLimits,
   type TicketDraftErrorCode,
   type TicketDraftErrorPayload,
+  type TicketRedraftInput,
   type TicketRecord,
   type TicketSuggestion
 } from "../../../shared/types";
@@ -1964,6 +1965,292 @@ const setExistingDraftInProgress = async (projectPath: string, ticketId: string,
       lastRunId: runId
     }
   });
+};
+
+const redraftIdeaFromTicket = (ticket: TicketRecord, override?: string): string => {
+  const overrideIdea = override?.trim();
+  if (overrideIdea) return overrideIdea;
+  const originalIdea = originalIdeaFromDraftMarkdown(ticket.markdown);
+  if (originalIdea) return originalIdea;
+  return `Redraft the existing generated ticket in place.
+
+Existing ticket title:
+${ticket.frontMatter.title}
+
+Existing ticket markdown:
+${ticket.markdown}`;
+};
+
+const isRedraftEligibleTicket = (ticket: TicketRecord): boolean => {
+  if (ticket.frontMatter.runStatus === "draft_failed" && originalIdeaFromDraftMarkdown(ticket.markdown)) return true;
+  return ticket.frontMatter.runStatus === "draft_complete" || ticket.frontMatter.authoringState === "reviewing";
+};
+
+const assertRedraftEligibleTicket = (ticket: TicketRecord): void => {
+  if (isRedraftEligibleTicket(ticket)) return;
+  throw ticketDraftError(
+    "backend_failure",
+    newId("tdr"),
+    0,
+    "Only failed draft placeholders and generated draft tickets can be redrafted.",
+    "redraft_not_eligible"
+  );
+};
+
+const setExistingTicketRedraftInProgress = async (projectPath: string, ticket: TicketRecord, runId: string): Promise<TicketRecord> =>
+  writeTicket(projectPath, {
+    ...ticket,
+    frontMatter: {
+      ...ticket.frontMatter,
+      authoringState: "drafting",
+      runStatus: "drafting",
+      lastRunId: runId
+    }
+  });
+
+const failExistingTicketRedraft = async (
+  projectPath: string,
+  preservedTicket: TicketRecord,
+  runId: string,
+  status: RunStatus
+): Promise<TicketRecord> =>
+  writeTicket(projectPath, {
+    ...preservedTicket,
+    frontMatter: {
+      ...preservedTicket.frontMatter,
+      runStatus: status,
+      lastRunId: runId
+    }
+  });
+
+const blockExistingTicketRedraftForClarification = async (
+  projectPath: string,
+  preservedTicket: TicketRecord,
+  runId: string
+): Promise<TicketRecord> =>
+  writeTicket(projectPath, {
+    ...preservedTicket,
+    frontMatter: {
+      ...preservedTicket.frontMatter,
+      authoringState: "needs_input",
+      runStatus: "blocked",
+      lastRunId: runId
+    }
+  });
+
+export const startTicketRedraftRun = async (
+  input: TicketRedraftInput,
+  dependencies: TicketDraftStartDependencies = {}
+): Promise<TicketDraftStart> => {
+  const projectPath = pathResolve(input.projectPath);
+  const existingTicket = await readTicket(projectPath, input.ticketId);
+  assertRedraftEligibleTicket(existingTicket);
+  const idea = redraftIdeaFromTicket(existingTicket, input.idea);
+  const runId = dependencies.createRunId?.() ?? newId("run");
+  const threadId = draftRunThreadId(runId);
+  const abortController = new AbortController();
+  const draftingTicket = await setExistingTicketRedraftInProgress(projectPath, existingTicket, runId);
+  await submitTicketDraftJob(
+    {
+      projectPath,
+      ticketId: existingTicket.frontMatter.id,
+      idea,
+      effort: input.effort ?? existingTicket.frontMatter.effort,
+      preferredTicketType: input.preferredTicketType ?? existingTicket.frontMatter.ticketType,
+      draftScope: input.draftScope,
+      intakeAnswers: input.intakeAnswers,
+      intakeKnownFacts: input.intakeKnownFacts,
+      relatedTicketIds: input.relatedTicketIds ?? existingTicket.frontMatter.relatedTicketIds
+    },
+    { runId, ticketId: existingTicket.frontMatter.id }
+  );
+  await markKernelRunStatusSafely(projectPath, runId, "running", { message: "Ticket redraft generation started." });
+  const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
+    try {
+      await emitRunEventForDependencies(dependencies.runEventSink, projectPath, existingTicket.frontMatter.id, runId, threadId, event);
+    } catch (error) {
+      await logWarn("codex:draft", "failed to emit ticket redraft event", {
+        projectPath,
+        ticketId: existingTicket.frontMatter.id,
+        runId,
+        eventType: event.type,
+        error: errorMessage(error, "Event emission failed.")
+      });
+    }
+  };
+
+  await emitDraftEvent({
+    type: "run.started",
+    runId,
+    threadId,
+    timestamp: nowIso()
+  });
+
+  await registerDraftRun(runId, {
+    abortController,
+    ticketId: existingTicket.frontMatter.id,
+    projectPath
+  });
+
+  const draftDependencies: TicketDraftStartDependencies = {
+    ...dependencies,
+    abortController,
+    onProgress: async (message) => {
+      await dependencies.onProgress?.(message);
+      await emitDraftEvent({
+        type: "agent.message.completed",
+        text: message,
+        timestamp: nowIso()
+      });
+    }
+  };
+
+  void (async () => {
+    try {
+      let draftInput: CreateDraftInput = {
+        projectPath,
+        ticketId: existingTicket.frontMatter.id,
+        idea,
+        effort: input.effort ?? existingTicket.frontMatter.effort,
+        preferredTicketType: input.preferredTicketType ?? existingTicket.frontMatter.ticketType,
+        draftScope: input.draftScope,
+        intakeAnswers: input.intakeAnswers,
+        intakeKnownFacts: input.intakeKnownFacts,
+        relatedTicketIds: input.relatedTicketIds ?? existingTicket.frontMatter.relatedTicketIds
+      };
+
+      if (input.runIntake && !hasUserSuppliedIntakeContext({ ...draftInput, runIntake: input.runIntake })) {
+        await reportTicketDraftProgress(draftDependencies, "Running draft intake to classify scope and find blocking questions.");
+        const intake = await createDraftIntake(
+          {
+            projectPath,
+            idea,
+            scopeOverride: draftIntakeScopeOverrideForCreateInput({ ...draftInput, runIntake: input.runIntake }),
+            effort: draftInput.effort
+          },
+          draftDependencies
+        );
+        await reportTicketDraftProgress(
+          draftDependencies,
+          `Draft intake classified this as ${DRAFT_SCOPE_PROFILES[intake.scope].label.toLowerCase()} with ${intake.questions.length} blocking question${
+            intake.questions.length === 1 ? "" : "s"
+          }.`
+        );
+
+        if (intake.questions.length > 0) {
+          const clarificationPrompts = intake.questions.map(draftIntakeQuestionToClarification);
+          const questions = await createClarificationQuestions(
+            projectPath,
+            existingTicket.frontMatter.id,
+            clarificationPrompts.map((question) => ({ question })),
+            {
+              actor: "codex",
+              source: "draft_generation",
+              runId,
+              codexThreadId: threadId
+            }
+          );
+          await blockExistingTicketRedraftForClarification(projectPath, existingTicket, runId);
+          await emitDraftEvent({
+            type: "clarification.requested",
+            questions,
+            timestamp: nowIso()
+          });
+          await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+            message: "Ticket redraft is blocked on clarification.",
+            metadata: { clarificationQuestionCount: questions.length }
+          });
+          return;
+        }
+
+        draftInput = {
+          ...draftInput,
+          preferredTicketType: preferredTicketTypeForDraftScope(intake.scope, input.preferredTicketType ?? existingTicket.frontMatter.ticketType),
+          draftScope: intake.scope,
+          intakeKnownFacts: intake.knownFacts,
+          relatedTicketIds: intake.relatedTicketIds,
+          intakeAnswers: []
+        };
+      }
+
+      const outcome = await createTicketDraftOutcome(draftInput, draftDependencies);
+      if (outcome.status === "needs_clarification") {
+        const questions = await createClarificationQuestions(
+          projectPath,
+          existingTicket.frontMatter.id,
+          outcome.questions.map((question) => ({ question })),
+          {
+            actor: "codex",
+            source: "draft_generation",
+            runId,
+            codexThreadId: threadId
+          }
+        );
+        await blockExistingTicketRedraftForClarification(projectPath, existingTicket, runId);
+        await emitDraftEvent({
+          type: "clarification.requested",
+          questions,
+          timestamp: nowIso()
+        });
+        await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+          message: "Ticket redraft is blocked on clarification.",
+          metadata: { clarificationQuestionCount: questions.length }
+        });
+        return;
+      }
+
+      const draft = outcome.draft;
+      await applyTicketDraftToTicket(projectPath, existingTicket.frontMatter.id, draft, runId);
+      await emitDraftEvent({
+        type: "run.completed",
+        finalResponse: `Ticket redraft completed and applied to ${existingTicket.frontMatter.id}: ${draft.title}`,
+        finalStatus: "draft_complete",
+        timestamp: nowIso()
+      });
+      await logInfo("codex:draft", "ticket redraft applied", {
+        projectPath,
+        ticketId: existingTicket.frontMatter.id,
+        runId,
+        title: draft.title
+      });
+      await markKernelRunStatusSafely(projectPath, runId, "completed", {
+        result: { ticketId: existingTicket.frontMatter.id, title: draft.title },
+        message: "Ticket redraft completed."
+      });
+    } catch (error) {
+      const payload = ticketDraftErrorToPayload(error);
+      try {
+        await failExistingTicketRedraft(projectPath, existingTicket, runId, payload.code === "cancelled" ? "cancelled" : "draft_failed");
+      } catch (persistError) {
+        await logError("codex:draft", "ticket redraft failure state could not be persisted", persistError, {
+          projectPath,
+          ticketId: existingTicket.frontMatter.id,
+          runId,
+          draftError: payload
+        });
+      }
+      await emitDraftEvent({
+        type: "run.failed",
+        message: payload.message,
+        details: payload,
+        finalStatus: payload.code === "cancelled" ? "cancelled" : "draft_failed",
+        timestamp: nowIso()
+      });
+      if (payload.code === "timeout" || payload.code === "cancelled") {
+        await logWarn("codex:draft", "ticket redraft did not complete", { projectPath, ticketId: existingTicket.frontMatter.id, runId, ...payload });
+      } else {
+        await logError("codex:draft", "ticket redraft failed", error, { projectPath, ticketId: existingTicket.frontMatter.id, runId, ...payload });
+      }
+      await markKernelRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
+        error: payload,
+        message: payload.message
+      });
+    } finally {
+      await completeDraftRun(runId);
+    }
+  })();
+
+  return { ticket: draftingTicket, runId };
 };
 
 export const maybeResumeTicketDraftAfterClarification = async (

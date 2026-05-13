@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "executionId": "8fd60c1719205feb06e73447470ca590",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krhm1a426k93cazwpmavthxs:run_01krhm1a1ychk9q3fdtahbb3s2",
+  "status": "suspended",
+  "attempts": 1,
+  "createdAt": "2026-05-13T21:31:40.549Z",
+  "updatedAt": "2026-05-13T21:32:04.478Z",
+  "runId": "run_01krhm1a1ychk9q3fdtahbb3s2",
+  "ticketId": "tkt_01krhm1a426k93cazwpmavthxs",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "I would like to refactor the codebase such that we no longer use the ipc to bridge main and renderer, instead we switch towards using a a webscket or reset api so that the renderer can run in a chrome window and not fail because the window.relay is not avaialble.\n\nThe ultimate goal is to allow the app to work on the electron app but also via a url if I want to load it locally for testing",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krhm1a1ychk9q3fdtahbb3s2",
+    "ticketId": "tkt_01krhm1a426k93cazwpmavthxs"
+  },
+  "message": "Workflow suspended awaiting external input.",
+  "metadata": {
+    "clarificationQuestionCount": 3
+  }
+}

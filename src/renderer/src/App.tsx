@@ -113,6 +113,7 @@ import {
   useProjectsQuery,
   useRefreshCodexStatusMutation,
   useRemoveProjectMutation,
+  useRedraftTicketMutation,
   useRepositoryChatMutation,
   useRevealProjectMutation,
   useRevealTicketFileMutation,
@@ -329,6 +330,11 @@ export function TicketChecklistPill({ completed, total }: { completed: number; t
     </span>
   );
 }
+
+export const canRedraftTicket = (ticket: TicketRecord): boolean =>
+  ticket.frontMatter.runStatus === "draft_failed" ||
+  ticket.frontMatter.runStatus === "draft_complete" ||
+  ticket.frontMatter.authoringState === "reviewing";
 
 export const activeRunElapsedLabel = (
   ticket: Pick<TicketSummary, "status" | "runStatus" | "lastRunStartedAt">,
@@ -2073,6 +2079,7 @@ function TicketDetail({
   const [submittingAnswerId, setSubmittingAnswerId] = useState<string | null>(null);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
   const [runPreflight, setRunPreflight] = useState<CodexRunPreflightResult | null>(null);
+  const [redraftRunId, setRedraftRunId] = useState<string | null>(null);
   const [ticketUpdateRequest, setTicketUpdateRequest] = useState("");
   const [ticketUpdateRunId, setTicketUpdateRunId] = useState<string | null>(null);
   const [ticketUpdateStatus, setTicketUpdateStatus] = useState<RunStatus>("idle");
@@ -2108,6 +2115,7 @@ function TicketDetail({
   const startRunMutation = useStartRunMutation();
   const moveTicketMutation = useMoveTicketMutation();
   const createDraftMutation = useCreateDraftMutation();
+  const redraftTicketMutation = useRedraftTicketMutation();
   const cancelRunMutation = useCancelRunMutation();
   const answerClarificationMutation = useAnswerClarificationMutation();
   const deleteTicketMutation = useDeleteTicketMutation();
@@ -2172,6 +2180,7 @@ function TicketDetail({
     setAttachmentDropBusy(false);
     setTitleEditing(false);
     setRunPreflight(null);
+    setRedraftRunId(null);
     setAddTicketsOpen(false);
     setBlockerPanelOpen(false);
     setNewSubticketTitle("");
@@ -2205,6 +2214,8 @@ function TicketDetail({
   }, [events, persistedEvents, runId]);
   const draftInProgress = ticket?.frontMatter.runStatus === "drafting";
   const draftFailed = ticket?.frontMatter.runStatus === "draft_failed";
+  const redraftEligible = ticket ? canRedraftTicket(ticket) : false;
+  const redraftActive = Boolean(ticket && draftInProgress && redraftRunId && ticket.frontMatter.lastRunId === redraftRunId);
   const draftFailureMessage = useMemo(
     () => [...currentRunEvents].reverse().find((event) => event.type === "run.failed")?.message ?? "Agent ticket drafting failed.",
     [currentRunEvents]
@@ -2581,6 +2592,28 @@ function TicketDetail({
     }
   };
 
+  const redraftTicket = async (): Promise<void> => {
+    if (!ticket || !redraftEligible || draftInProgress) return;
+    setBusy(true);
+    try {
+      const result = await redraftTicketMutation.mutateAsync({ projectPath, ticketId });
+      if (!result.ok) {
+        setToast({ kind: "error", message: result.error.message });
+        return;
+      }
+
+      setRunId(result.runId);
+      setRedraftRunId(result.runId);
+      setToast({ kind: "info", message: `Ticket redraft started: ${result.runId}` });
+      await Promise.resolve(onChanged());
+      await refreshDetail();
+    } catch (error) {
+      setToast({ kind: "error", message: error instanceof Error ? error.message : "Unable to start ticket redraft." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const focusLabelsInput = (): void => {
     labelsInputRef.current?.scrollIntoView({ block: "center" });
     window.requestAnimationFrame(() => labelsInputRef.current?.focus());
@@ -2848,6 +2881,12 @@ function TicketDetail({
                 <Button onClick={cancelRun}>
                   <X size={16} />
                   Stop
+                </Button>
+              )}
+              {(redraftEligible || redraftActive) && (
+                <Button onClick={() => void redraftTicket()} disabled={busy || ticketUpdateActive || draftInProgress || runQueued}>
+                  {busy || redraftActive ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                  Redraft
                 </Button>
               )}
               {completedStatusAvailable && ticket.frontMatter.status === "review" && (

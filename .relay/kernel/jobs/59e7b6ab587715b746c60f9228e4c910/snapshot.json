@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "executionId": "59e7b6ab587715b746c60f9228e4c910",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketUpdate",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketUpdate:/Users/robertpitt/Projects/relay:tkt_01krdw9ngjt2n2rzvynwvdvwd1:run_01krhfrk9zd8vk13p80fm3k5hq",
+  "status": "failed",
+  "attempts": 1,
+  "createdAt": "2026-05-13T20:17:00.740Z",
+  "updatedAt": "2026-05-13T20:17:06.548Z",
+  "runId": "run_01krhfrk9zd8vk13p80fm3k5hq",
+  "ticketId": "tkt_01krdw9ngjt2n2rzvynwvdvwd1",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "ticketId": "tkt_01krdw9ngjt2n2rzvynwvdvwd1",
+    "request": "redraft this ticket",
+    "runId": "run_01krhfrk9zd8vk13p80fm3k5hq"
+  },
+  "message": "Workflow failed.",
+  "error": {
+    "_id": "Cause",
+    "failures": [
+      {
+        "_tag": "Fail",
+        "error": {
+          "message": "{\n  \"type\": \"error\",\n  \"error\": {\n    \"type\": \"invalid_request_error\",\n    \"code\": \"invalid_json_schema\",\n    \"message\": \"Invalid schema for response_format 'codex_output_schema': In context=('properties', 'patch'), 'required' is required to be supplied and to be an array including every key in properties. Missing 'fullMarkdown'.\",\n    \"param\": \"text.format.schema\"\n  },\n  \"status\": 400\n}",
+          "finalStatus": "failed"
+        }
+      }
+    ]
+  }
+}

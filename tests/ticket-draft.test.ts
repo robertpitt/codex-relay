@@ -11,6 +11,7 @@ import {
   extractTicketDraftUrls,
   maybeResumeTicketDraftAfterClarification,
   startTicketDraftRun,
+  startTicketRedraftRun,
   TicketDraftServiceError,
   type TicketDraftCodexClient,
   type TicketDraftDependencies,
@@ -543,6 +544,97 @@ test("async ticket draft keeps the pending ticket visible when Codex drafting fa
   assert.equal(board.tickets.length, 1);
   assert.equal(board.tickets[0].id, started.ticket.frontMatter.id);
   assert.equal(events.at(-1)?.type, "run.failed");
+});
+
+test("ticket redraft replaces generated content in place without moving the ticket", async () => {
+  const projectPath = await createProject();
+  const existing = await createTicket(projectPath, {
+    title: "Old generated draft",
+    priority: "low",
+    effort: "high",
+    labels: ["old"],
+    markdown: "# Old generated draft\n\n## Requirements\n\n- Keep old behavior.\n",
+    status: "ready",
+    authoringState: "reviewing"
+  });
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_redraft_success",
+    createRequestId: () => "tdr_redraft_success",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () => createDraftCodexClient(async () => ({ finalResponse: validDraftJson("Redrafted ticket") }))
+  };
+
+  const started = await startTicketRedraftRun({ projectPath, ticketId: existing.frontMatter.id }, dependencies);
+  const drafting = await readTicket(projectPath, existing.frontMatter.id);
+
+  assert.equal(started.ticket.frontMatter.id, existing.frontMatter.id);
+  assert.equal(drafting.frontMatter.status, "ready");
+  assert.equal(drafting.frontMatter.runStatus, "drafting");
+  assert.equal(drafting.markdown, existing.markdown);
+
+  await waitFor(async () => (await readTicket(projectPath, existing.frontMatter.id)).frontMatter.runStatus === "draft_complete", "redraft completion");
+  const completed = await readTicket(projectPath, existing.frontMatter.id);
+  const board = await readBoard(projectPath);
+
+  assert.equal(completed.frontMatter.id, existing.frontMatter.id);
+  assert.equal(completed.frontMatter.status, "ready");
+  assert.equal(completed.frontMatter.title, "Redrafted ticket");
+  assert.equal(completed.frontMatter.priority, "medium");
+  assert.deepEqual(completed.frontMatter.labels, ["codex"]);
+  assert.match(completed.markdown, /Build the requested behavior/);
+  assert.equal(board.tickets.length, 1);
+  assert.equal(board.tickets[0].id, existing.frontMatter.id);
+  assert.equal(events.at(-1)?.type, "run.completed");
+});
+
+test("ticket redraft failure preserves prior generated content and remains retryable", async () => {
+  const projectPath = await createProject();
+  const existing = await createTicket(projectPath, {
+    title: "Stable generated draft",
+    priority: "high",
+    effort: "medium",
+    labels: ["stable"],
+    markdown: "# Stable generated draft\n\n## Requirements\n\n- Preserve this content.\n",
+    status: "review",
+    authoringState: "reviewing"
+  });
+  const { runEventSink, events } = createFakeRunEventSink();
+  const dependencies: TicketDraftStartDependencies = {
+    getStatus: async () => readyStatus,
+    createRunId: () => "run_redraft_failure",
+    createRequestId: () => "tdr_redraft_failure",
+    disableResearch: true,
+    runEventSink,
+    createCodexClient: () => createDraftCodexClient(async () => ({ finalResponse: "{ invalid json" }))
+  };
+
+  await startTicketRedraftRun({ projectPath, ticketId: existing.frontMatter.id }, dependencies);
+
+  await waitFor(async () => (await readTicket(projectPath, existing.frontMatter.id)).frontMatter.runStatus === "draft_failed", "redraft failure");
+  const failed = await readTicket(projectPath, existing.frontMatter.id);
+
+  assert.equal(failed.frontMatter.id, existing.frontMatter.id);
+  assert.equal(failed.frontMatter.status, "review");
+  assert.equal(failed.frontMatter.title, existing.frontMatter.title);
+  assert.equal(failed.frontMatter.priority, existing.frontMatter.priority);
+  assert.deepEqual(failed.frontMatter.labels, existing.frontMatter.labels);
+  assert.equal(failed.markdown, existing.markdown);
+  assert.equal(failed.frontMatter.runStatus, "draft_failed");
+  assert.equal(failed.frontMatter.lastRunId, "run_redraft_failure");
+  assert.ok(events.some((event) => event.type === "run.failed"));
+
+  const retryDependencies: TicketDraftStartDependencies = {
+    ...dependencies,
+    createRunId: () => "run_redraft_retry",
+    createRequestId: () => "tdr_redraft_retry",
+    createCodexClient: () => createDraftCodexClient(async () => ({ finalResponse: validDraftJson("Redraft retry succeeded") }))
+  };
+  await startTicketRedraftRun({ projectPath, ticketId: existing.frontMatter.id }, retryDependencies);
+  await waitFor(async () => (await readTicket(projectPath, existing.frontMatter.id)).frontMatter.runStatus === "draft_complete", "redraft retry");
+  assert.equal((await readTicket(projectPath, existing.frontMatter.id)).frontMatter.title, "Redraft retry succeeded");
 });
 
 test("async ticket draft can be cancelled through the shared run cancellation flow", async () => {

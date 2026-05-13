@@ -584,6 +584,20 @@ export type CreateDraftInput = {
   relatedTicketIds?: string[];
 };
 
+export type TicketRedraftInput = {
+  projectPath: string;
+  ticketId: string;
+  idea?: string;
+  priority?: TicketPriority;
+  effort?: TicketEffort;
+  preferredTicketType?: TicketType;
+  draftScope?: DraftScope;
+  runIntake?: boolean;
+  intakeAnswers?: DraftIntakeAnswer[];
+  intakeKnownFacts?: string[];
+  relatedTicketIds?: string[];
+};
+
 export type RunLogLine = {
   schemaVersion: number;
   timestamp: string;
@@ -632,6 +646,7 @@ export type RelayApi = {
   ticket: {
     intakeDraft: (input: DraftIntakeInput) => Promise<DraftIntakeResult>;
     createDraft: (input: CreateDraftInput) => Promise<TicketDraftStartResult>;
+    redraft: (input: TicketRedraftInput) => Promise<TicketDraftStartResult>;
     generateSuggestions: (projectPath: string) => Promise<TicketSuggestionsGenerateResult>;
     createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
     createSubticket: (input: EpicSubticketCreateInput) => Promise<TicketRecord>;
