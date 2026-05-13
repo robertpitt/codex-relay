@@ -17,7 +17,6 @@ import {
   RELAY_COMPLETED_STATUS,
   RELAY_IN_PROGRESS_STATUS,
   RELAY_NEEDS_CLARIFICATION_STATUS,
-  RELAY_NOT_DOING_STATUS,
   RELAY_READY_STATUS,
   RELAY_REVIEW_STATUS,
   RELAY_TODO_STATUS,
@@ -2747,13 +2746,10 @@ const preflightCodexRunInternal = async (
     const currentColumn = config.columns.find((column) => column.id === ticket.frontMatter.status);
     if (!currentColumn) {
       errors.push(`Ticket status "${ticket.frontMatter.status}" does not exist in this project workflow.`);
-    } else if (currentColumn.terminal && ticket.frontMatter.status !== RELAY_NOT_DOING_STATUS && ticket.frontMatter.status !== RELAY_COMPLETED_STATUS) {
+    } else if (currentColumn.terminal && ticket.frontMatter.status !== RELAY_COMPLETED_STATUS) {
       errors.push(`Move this ticket out of ${currentColumn.name} before starting the agent.`);
     }
 
-    if (ticket.frontMatter.status === RELAY_NOT_DOING_STATUS) {
-      errors.push("Move this ticket out of Not Doing before starting the agent.");
-    }
     if (ticket.frontMatter.status === RELAY_COMPLETED_STATUS) {
       errors.push("Completed tickets are human accepted. Reopen this ticket before starting the agent.");
     }

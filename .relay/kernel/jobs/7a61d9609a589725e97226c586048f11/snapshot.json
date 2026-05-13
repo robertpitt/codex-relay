@@ -8,7 +8,7 @@
   "status": "suspended",
   "attempts": 1,
   "createdAt": "2026-05-12T23:37:05.347Z",
-  "updatedAt": "2026-05-12T23:37:28.031Z",
+  "updatedAt": "2026-05-13T00:47:13.041Z",
   "runId": "run_01krf8t7gapss0h9vajv3zhcyn",
   "ticketId": "tkt_01krf8t7j1vg54c53wfhjsa30t",
   "payload": {
@@ -20,8 +20,9 @@
     "runId": "run_01krf8t7gapss0h9vajv3zhcyn",
     "ticketId": "tkt_01krf8t7j1vg54c53wfhjsa30t"
   },
-  "message": "Workflow suspended awaiting external input.",
+  "message": "Recovered incomplete workflow on boot.",
   "metadata": {
-    "clarificationQuestionCount": 2
+    "clarificationQuestionCount": 2,
+    "recovered": true
   }
 }

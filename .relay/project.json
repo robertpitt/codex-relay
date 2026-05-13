@@ -24,12 +24,6 @@
       "terminal": false
     },
     {
-      "id": "not_doing",
-      "name": "Not Doing",
-      "position": 4000,
-      "terminal": true
-    },
-    {
       "id": "completed",
       "name": "Completed",
       "position": 5000,
