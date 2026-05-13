@@ -26,7 +26,9 @@ const collectButtons = (node: React.ReactNode, buttons: ButtonElement[] = []): B
   }
   if (!React.isValidElement(node)) return buttons;
   const element = node as ElementWithChildren;
-  if (element.type === "button") buttons.push(element as ButtonElement);
+  if (element.type === "button" || typeof (element.props as ButtonElement["props"])["aria-label"] === "string") {
+    buttons.push(element as ButtonElement);
+  }
   collectButtons(element.props.children, buttons);
   return buttons;
 };

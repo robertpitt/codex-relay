@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krh998j5j8w2cmbjm03pa7hx
 title: Centralize renderer UI primitives and move IPC data state to TanStack Query
 ticketType: task
-status: todo
-position: 20000
+status: completed
+position: 74000
 priority: high
 effort: high
 labels:
@@ -18,12 +18,12 @@ subticketIds: []
 blockedByIds: []
 relatedTicketIds: []
 createdAt: '2026-05-13T18:23:46.757Z'
-updatedAt: '2026-05-13T18:29:18.433Z'
-authoringState: reviewing
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krh9ex6xqx3agv80nz4za0jz
-lastRunStartedAt: null
+updatedAt: '2026-05-13T20:03:16.469Z'
+authoringState: ready
+codexThreadId: 019e22c7-cd82-7ab0-a078-41077516b92a
+runStatus: completed
+lastRunId: run_01krhear1b6hn3bnwd2g3d3csk
+lastRunStartedAt: '2026-05-13T19:51:58.592Z'
 ---
 # Centralize renderer UI primitives and move IPC data state to TanStack Query
 
@@ -84,5 +84,58 @@ Add `@tanstack/react-query` as an application dependency and wrap the renderer w
 - When replacing native elements with primitives, keep className passthroughs so existing CSS can be migrated incrementally instead of rewriting the full stylesheet in one pass.
 
 ## Codex Handoff
+
+### 5/13/2026, 9:02:56 PM
+
+**Summary**
+Implemented the renderer TanStack Query foundation and migrated the main renderer async IPC paths into `src/renderer/src/lib/relayQueries.ts`. `App.tsx`, ticket detail, board refresh, floating composer, repository chat, ticket suggestions, Codex status, run logs/summaries, and ticket mutations now use query/mutation hooks and invalidation instead of direct renderer `getRelayApi()` calls.
+
+Added shared native-rendering UI primitives under `src/renderer/src/components/ui/` and migrated renderer controls to them while preserving existing classes/markup behavior.
+
+**Files changed**
+- `package.json`
+- `package-lock.json`
+- `src/renderer/src/main.tsx`
+- `src/renderer/src/App.tsx`
+- `src/renderer/src/lib/queryClient.ts`
+- `src/renderer/src/lib/relayQueries.ts`
+- `src/renderer/src/components/ui/*`
+- `src/renderer/src/components/AgentActivity.tsx`
+- `src/renderer/src/components/ClarificationPanel.tsx`
+- `src/renderer/src/components/MarkdownBlock.tsx`
+- `tests/renderer-query-hooks.test.tsx`
+- `tests/run-tests.mjs`
+- `tests/markdown-block.test.tsx`
+- `tests/ticket-draft-ui.test.tsx`
+
+**Commands run**
+- `git status --short`
+- `git diff ...`
+- `git grep` / `grep` / `sed` inspections
+- `node -p "require('./node_modules/@tanstack/react-query/package.json').version"`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+
+**Tests**
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- `npm test`: failed 5 existing backend workflow-column tests around `not_doing`:
+  - `manual ticket moves still work for existing columns`
+  - `project summaries include ordered swimlane counts and active runs including empty lanes`
+  - `new projects include Ready between Todo and In Progress`
+  - `legacy project configs are normalized with ready and review lanes without rewriting the file`
+  - `codex run preflight blocks invalid workflow states`
+
+The renderer/query/UI tests, including the new `renderer-query-hooks.test.tsx`, passed. The failing tests are in the backend workflow column area and appear unrelated to this renderer migration.
+
+**Subagent usage**
+- Zeno: inspected renderer static-render tests and likely primitive/provider impacts. No files changed. I used the findings to keep primitives native-rendering and update only necessary tests.
+- Euler: inspected `RelayApi`/IPC/direct call sites. No files changed. I used the method inventory to cover the query/mutation layer.
+
+**Remaining risks / follow-up**
+- Full `npm test` is still blocked by the unrelated `not_doing` backend column expectation mismatch in the current dirty worktree.
+- The query layer is intentionally broad; future cleanup can split `App.tsx` surfaces into smaller files now that data access is centralized.
+
 
 No Codex run has been started.

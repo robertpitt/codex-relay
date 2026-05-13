@@ -2225,6 +2225,82 @@ test("codex run cancellation aborts the stream and cleans up the active run", as
   assert.equal(persistedEvents.some((event) => event.type === "run.failed" && /aborted/i.test(event.message)), true);
 });
 
+test("codex run cancellation reconciles stale implementation state after restart", async () => {
+  const projectPath = await createProject();
+  await allowNonGitRuns(projectPath);
+  const ticket = await createTicket(projectPath, {
+    title: "Stale implementation run",
+    priority: "medium",
+    labels: ["codex"],
+    markdown: "# Stale implementation run\n"
+  });
+
+  await writeTicket(projectPath, {
+    ...ticket,
+    frontMatter: {
+      ...ticket.frontMatter,
+      status: "in_progress",
+      authoringState: "ready",
+      codexThreadId: "thread_stale_impl",
+      runStatus: "running",
+      lastRunId: "run_stale_impl",
+      lastRunStartedAt: new Date().toISOString()
+    }
+  });
+
+  await cancelCodexRun({ projectPath, ticketId: ticket.frontMatter.id, runId: "run_stale_impl" });
+
+  const cancelled = await readTicket(projectPath, ticket.frontMatter.id);
+  assert.equal(cancelled.frontMatter.runStatus, "cancelled");
+  assert.equal(cancelled.frontMatter.status, "in_progress");
+
+  const preflight = await preflightCodexRun({ projectPath, ticketId: ticket.frontMatter.id });
+  assert.equal(preflight.ok, true);
+
+  const events = await readCodexRunEvents(projectPath, ticket.frontMatter.id, "run_stale_impl");
+  const terminal = events.find((event) => event.type === "run.failed");
+  assert.equal(terminal?.type, "run.failed");
+  if (terminal?.type === "run.failed") {
+    assert.equal(terminal.finalStatus, "cancelled");
+    assert.match(terminal.message, /Stale Codex implementation run cancelled/);
+  }
+});
+
+test("codex run cancellation reconciles stale draft state after restart", async () => {
+  const projectPath = await createProject();
+  const ticket = await createTicket(projectPath, {
+    title: "Pending stale draft",
+    priority: "medium",
+    labels: [],
+    markdown: "# Pending stale draft\n"
+  });
+
+  await writeTicket(projectPath, {
+    ...ticket,
+    frontMatter: {
+      ...ticket.frontMatter,
+      authoringState: "drafting",
+      runStatus: "drafting",
+      lastRunId: "run_stale_draft",
+      lastRunStartedAt: new Date().toISOString()
+    }
+  });
+
+  await cancelCodexRun({ projectPath, ticketId: ticket.frontMatter.id, runId: "run_stale_draft" });
+
+  const cancelled = await readTicket(projectPath, ticket.frontMatter.id);
+  assert.equal(cancelled.frontMatter.runStatus, "cancelled");
+  assert.equal(cancelled.frontMatter.authoringState, "rough");
+
+  const events = await readCodexRunEvents(projectPath, ticket.frontMatter.id, "run_stale_draft");
+  const terminal = events.find((event) => event.type === "run.failed");
+  assert.equal(terminal?.type, "run.failed");
+  if (terminal?.type === "run.failed") {
+    assert.equal(terminal.finalStatus, "cancelled");
+    assert.match(terminal.message, /Stale ticket draft run cancelled/);
+  }
+});
+
 test("clarification questions and answers persist with auditable events", async () => {
   const projectPath = await createProject();
   const ticket = await createTicket(projectPath, {

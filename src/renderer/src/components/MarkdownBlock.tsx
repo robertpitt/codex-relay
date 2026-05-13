@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Copy } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
+import { IconButton } from "./ui";
 
 export type ClipboardWriter = {
   writeText: (text: string) => Promise<void> | void;
@@ -390,15 +391,14 @@ const renderMarkdownNode = (
         <div className="markdown-code-block" key={keyPrefix}>
           <div className="markdown-code-header">
             <span>{block.language ?? "code"}</span>
-            <button
-              className="icon-button markdown-copy-button"
-              type="button"
+            <IconButton
+              className="markdown-copy-button"
               onClick={() => onCopy("code", block.code)}
               title="Copy code"
               aria-label="Copy code block"
             >
               <Copy size={13} />
-            </button>
+            </IconButton>
           </div>
           <pre>
             <code className={block.language ? `language-${block.language}` : undefined}>{block.code}</code>
@@ -466,15 +466,14 @@ export function MarkdownBlock({
         <header className="markdown-block-header">
           {title ? <h3>{title}</h3> : <span aria-hidden="true" />}
           {showCopy && (
-            <button
-              className="icon-button markdown-copy-button"
-              type="button"
+            <IconButton
+              className="markdown-copy-button"
               onClick={() => handleCopy("markdown", source)}
               title="Copy Markdown source"
               aria-label="Copy Markdown source"
             >
               <Copy size={14} />
-            </button>
+            </IconButton>
           )}
         </header>
       )}

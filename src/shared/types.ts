@@ -537,6 +537,12 @@ export type StartRunInput = {
   freshThread?: boolean;
 };
 
+export type CancelRunInput = {
+  projectPath: string;
+  ticketId: string;
+  runId: string;
+};
+
 export type RepositoryChatInput = {
   projectPath: string;
   message: string;
@@ -649,7 +655,7 @@ export type RelayApi = {
     preflightRun: (input: StartRunInput) => Promise<CodexRunPreflightResult>;
     startRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
     resumeRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
-    cancelRun: (runId: string) => Promise<void>;
+    cancelRun: (input: CancelRunInput) => Promise<void>;
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => Promise<void>;
     sendRepositoryChatMessage: (input: RepositoryChatInput) => Promise<RepositoryChatResponse>;
     readRunEvents: (projectPath: string, ticketId: string, runId: string) => Promise<RendererRunEvent[]>;

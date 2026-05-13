@@ -3,6 +3,7 @@ import type {
   AgentTicketUpdateInput,
   AgentTicketUpdateStartResult,
   BoardSnapshot,
+  CancelRunInput,
   ClarificationAnswerInput,
   ClarificationQuestion,
   CodexRunStartResult,
@@ -68,7 +69,7 @@ export type RelayIpcContract = {
   "codex:preflightRun": { args: [input: StartRunInput]; result: CodexRunPreflightResult };
   "codex:startRun": { args: [input: StartRunInput]; result: CodexRunStartResult };
   "codex:resumeRun": { args: [input: StartRunInput]; result: CodexRunStartResult };
-  "codex:cancelRun": { args: [runId: string]; result: void };
+  "codex:cancelRun": { args: [input: CancelRunInput]; result: void };
   "codex:approveAction": { args: [approvalId: string, decision: RelayApprovalDecision]; result: void };
   "codex:sendRepositoryChatMessage": { args: [input: RepositoryChatInput]; result: RepositoryChatResponse };
   "codex:readRunEvents": { args: [projectPath: string, ticketId: string, runId: string]; result: RendererRunEvent[] };

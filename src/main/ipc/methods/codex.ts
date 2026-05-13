@@ -10,7 +10,7 @@ import {
   startCodexRun
 } from "../../services/codex";
 import { fromPromise } from "../../services/runtime";
-import { parseSchema, relayApprovalDecisionSchema, repositoryChatInputSchema, startRunInputSchema } from "../../services/schemas";
+import { cancelRunInputSchema, parseSchema, relayApprovalDecisionSchema, repositoryChatInputSchema, startRunInputSchema } from "../../services/schemas";
 import { defineRelayIpcMethod, type AnyRelayIpcMethod } from "../RelayIpc";
 import { relayIpcChannels } from "../channels";
 import { emptyArgs, ipcArgs, ipcObject, ipcResult, ipcString, ipcVoid } from "../schema";
@@ -42,9 +42,9 @@ export const codexIpcMethods = [
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexCancelRun,
-    payload: ipcArgs([ipcString]),
+    payload: ipcArgs([ipcObject]),
     result: ipcVoid,
-    handler: (_event, runId: string) => fromPromise(() => cancelCodexRun(runId))
+    handler: (_event, input) => fromPromise(() => cancelCodexRun(parseSchema(cancelRunInputSchema, input)))
   }),
   defineRelayIpcMethod({
     channel: relayIpcChannels.codexApproveAction,

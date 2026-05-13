@@ -5,6 +5,7 @@ import type {
   AgentTicketUpdate,
   AgentTicketUpdateInput,
   AppRegistry,
+  CancelRunInput,
   ClarificationAnswerInput,
   ClarificationQuestion,
   ClarificationQuestionStore,
@@ -529,6 +530,12 @@ export const startRunInputSchema: RelaySchema<StartRunInput> = passthroughStruct
   projectPath: Schema.String,
   ticketId: Schema.String,
   freshThread: Schema.optional(Schema.Boolean)
+});
+
+export const cancelRunInputSchema: RelaySchema<CancelRunInput> = passthroughStruct({
+  projectPath: Schema.String,
+  ticketId: Schema.String,
+  runId: Schema.String
 });
 
 export const repositoryChatInputSchema: RelaySchema<RepositoryChatInput> = passthroughStruct({

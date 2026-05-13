@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "executionId": "8f3672ad58b6a44bde6e86a4d0d3bf6e",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krhcm2ferrf08g7jthzgagpn:run_01krhcm2dxvbqk480emmg34vg5",
+  "status": "cancelled",
+  "attempts": 1,
+  "createdAt": "2026-05-13T19:22:06.704Z",
+  "updatedAt": "2026-05-13T19:52:37.204Z",
+  "runId": "run_01krhcm2dxvbqk480emmg34vg5",
+  "ticketId": "tkt_01krhcm2ferrf08g7jthzgagpn",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Take a look around the ../t3code app and make a plan to bring in some of those ideas to our own app, specifically around the git features, like showing the current branch, additions/removals along with some actions for things like commit, pull, push.\n\nRight now I see to have to switch over to a terminal to commit completed tickets to git, I would much rather do that task in the app via a button",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krhcm2dxvbqk480emmg34vg5",
+    "ticketId": "tkt_01krhcm2ferrf08g7jthzgagpn"
+  },
+  "message": "Stale ticket draft run cancelled after Relay restart.",
+  "metadata": {
+    "recovered": true
+  }
+}

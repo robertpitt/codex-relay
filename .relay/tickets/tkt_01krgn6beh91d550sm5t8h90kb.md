@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krgn6beh91d550sm5t8h90kb
 title: Add project header dropdown to open project in editor
 ticketType: task
-status: review
-position: 1000
+status: completed
+position: 73000
 priority: medium
 effort: medium
 labels:
@@ -16,7 +16,7 @@ subticketIds: []
 blockedByIds: []
 relatedTicketIds: []
 createdAt: '2026-05-13T12:32:39.889Z'
-updatedAt: '2026-05-13T13:03:59.298Z'
+updatedAt: '2026-05-13T19:29:22.198Z'
 authoringState: ready
 codexThreadId: 019e216a-4c51-74d2-81df-e35b3aa72d2c
 runStatus: completed

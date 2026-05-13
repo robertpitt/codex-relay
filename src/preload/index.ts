@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import { relayIpcChannels, type RelayIpcArgs, type RelayIpcChannel, type RelayIpcResult } from "../shared/ipc";
 import type {
   AgentTicketUpdateInput,
+  CancelRunInput,
   ClarificationAnswerInput,
   CreateDraftInput,
   DraftIntakeInput,
@@ -65,7 +66,7 @@ const api: RelayApi = {
     preflightRun: (input: StartRunInput) => invoke(relayIpcChannels.codexPreflightRun, input),
     startRun: (input: StartRunInput) => invoke(relayIpcChannels.codexStartRun, input),
     resumeRun: (input: StartRunInput) => invoke(relayIpcChannels.codexResumeRun, input),
-    cancelRun: (runId: string) => invoke(relayIpcChannels.codexCancelRun, runId),
+    cancelRun: (input: CancelRunInput) => invoke(relayIpcChannels.codexCancelRun, input),
     approveAction: (approvalId: string, decision: RelayApprovalDecision) => invoke(relayIpcChannels.codexApproveAction, approvalId, decision),
     sendRepositoryChatMessage: (input: RepositoryChatInput) => invoke(relayIpcChannels.codexSendRepositoryChatMessage, input),
     readRunEvents: (projectPath: string, ticketId: string, runId: string) =>

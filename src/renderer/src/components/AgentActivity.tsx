@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import type { RendererRunEvent, RunStatus, RunSummary, RunUsageSummary } from "@shared/types";
 import { MarkdownBlock } from "./MarkdownBlock";
+import { Button, IconButton } from "./ui";
 import { useShortcutOverlay } from "../lib/keyboardShortcuts";
 import {
   agentEventLabel,
@@ -314,14 +315,14 @@ export function AgentActivityPanel({
       <header>
         <h3>Agent Activity</h3>
         <div className="agent-panel-actions">
-          <button onClick={onOpenLogs} disabled={!runId && events.length === 0}>
+          <Button onClick={onOpenLogs} disabled={!runId && events.length === 0}>
             <List size={14} />
             Open Logs
-          </button>
-          <button onClick={onRevealFile}>
+          </Button>
+          <Button onClick={onRevealFile}>
             <FileText size={14} />
             File
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -414,9 +415,9 @@ export function AgentLogViewer({
             <h2 id="agent-log-title">{title}</h2>
             <p>{orderedEvents.length} event{orderedEvents.length === 1 ? "" : "s"} in chronological order</p>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close agent log viewer">
+          <IconButton onClick={onClose} aria-label="Close agent log viewer">
             <X size={18} />
-          </button>
+          </IconButton>
         </header>
 
         {loading && (

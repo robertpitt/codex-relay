@@ -2,6 +2,7 @@ import { Check, CircleDashed, Send } from "lucide-react";
 import { useId, type ReactElement } from "react";
 import type { ClarificationQuestion } from "@shared/types";
 import { MarkdownBlock } from "./MarkdownBlock";
+import { Button, Textarea } from "./ui";
 
 type ClarificationPanelVariant = "default" | "primary" | "sidebar";
 
@@ -66,14 +67,14 @@ export function ClarificationPanel({
                 </div>
               ) : (
                 <div className="clarification-form">
-                  <textarea
+                  <Textarea
                     value={answerDrafts[question.id] ?? ""}
                     onChange={(event) => onDraftChange(question.id, event.target.value)}
                     placeholder="Answer"
                     aria-label="Answer clarification question"
                     aria-describedby={questionTextId}
                   />
-                  <button
+                  <Button
                     className="primary-button"
                     onClick={() => onSubmit(question.id)}
                     disabled={submittingId === question.id || !(answerDrafts[question.id] ?? "").trim()}
@@ -82,7 +83,7 @@ export function ClarificationPanel({
                   >
                     <Send size={15} />
                     Submit Answer
-                  </button>
+                  </Button>
                 </div>
               )}
             </article>

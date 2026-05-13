@@ -24,6 +24,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@openai/codex-sdk": "^0.130.0",
+    "@tanstack/react-query": "^5.100.10",
     "clsx": "^2.1.1",
     "effect": "4.0.0-beta.65",
     "gray-matter": "^4.0.3",

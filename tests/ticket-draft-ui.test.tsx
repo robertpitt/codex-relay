@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   activeRunElapsedLabel,
   CreateTicketDraftMessage,
@@ -20,6 +22,11 @@ import {
   TicketRunStatusPill
 } from "../src/renderer/src/App";
 import { DEFAULT_COLUMNS, type ClarificationQuestion, type DraftIntakeResult, type TicketSuggestion, type TicketSummary } from "../src/shared/types";
+
+const renderWithQueryClient = (element: ReactElement): string => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return renderToStaticMarkup(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+};
 
 const ticketSummary = (patch: Partial<TicketSummary> = {}): TicketSummary => ({
   schemaVersion: 1,
@@ -384,7 +391,7 @@ test("create ticket draft messages expose status and alert roles", () => {
 });
 
 test("floating ticket composer renders compact drafting controls without create modal chrome", () => {
-  const markup = renderToStaticMarkup(
+  const markup = renderWithQueryClient(
     <FloatingTicketComposer
       projectPath="/tmp/project"
       defaultEffort="medium"
@@ -409,7 +416,7 @@ test("floating ticket composer renders compact drafting controls without create 
 });
 
 test("floating ticket composer submit button is disabled for blank ideas", () => {
-  const markup = renderToStaticMarkup(
+  const markup = renderWithQueryClient(
     <FloatingTicketComposer
       projectPath="/tmp/project"
       defaultEffort="medium"

@@ -8,6 +8,7 @@ import {
   type CodexRunStartResult,
   type CodexRunPreflightResult,
   type CodexStatus,
+  type CancelRunInput,
   type CreateDraftInput,
   type DraftIntakeAnswer,
   type DraftIntakeInput,
@@ -46,6 +47,7 @@ import {
   emitRunEventToRendererSink,
   readRunEvents,
   readRunSummary,
+  writeRunLog,
   type RendererRunEventSink
 } from "../run-events";
 import {
@@ -3267,7 +3269,67 @@ export const reconcileTicketQueueState = async (
   return ticket;
 };
 
-export const cancelCodexRun = async (runId: string): Promise<void> => {
+type CancelRunTarget = {
+  readonly runId: string;
+  readonly projectPath?: string;
+  readonly ticketId?: string;
+};
+
+const normalizeCancelRunInput = (input: string | CancelRunInput): CancelRunTarget =>
+  typeof input === "string" ? { runId: input } : { runId: input.runId, projectPath: pathResolve(input.projectPath), ticketId: input.ticketId };
+
+const cancelPersistedTicketRun = async ({ projectPath, ticketId, runId }: CancelRunTarget): Promise<boolean> => {
+  if (!projectPath || !ticketId) return false;
+
+  let ticket: Awaited<ReturnType<typeof readTicket>>;
+  try {
+    ticket = await readTicket(projectPath, ticketId);
+  } catch (error) {
+    await logWarn("codex:run", "stale run cancellation could not load ticket", {
+      projectPath,
+      ticketId,
+      runId,
+      error: errorMessage(error, "Ticket could not be loaded.")
+    });
+    return false;
+  }
+
+  if (ticket.frontMatter.lastRunId !== runId) return false;
+
+  if (ticket.frontMatter.runStatus === "queued") {
+    const targetStatus = (await readProjectConfig(projectPath)).columns.some((column) => column.id === RELAY_TODO_STATUS)
+      ? RELAY_TODO_STATUS
+      : null;
+    await clearQueuedTicket(projectPath, ticketId, targetStatus, runId);
+    await markKernelRunStatusSafely(projectPath, runId, "cancelled", { message: "Queued Codex run cancelled." });
+    return true;
+  }
+
+  if (ticket.frontMatter.runStatus !== "running" && ticket.frontMatter.runStatus !== "drafting") return false;
+
+  const wasDrafting = ticket.frontMatter.runStatus === "drafting";
+  const threadId = wasDrafting ? draftRunThreadId(runId) : ticket.frontMatter.codexThreadId ?? `pending_${runId}`;
+  const message = wasDrafting
+    ? "Stale ticket draft run cancelled after Relay restart."
+    : "Stale Codex implementation run cancelled after Relay restart.";
+
+  await updateTicketRunState(projectPath, ticketId, {
+    authoringState: wasDrafting ? "rough" : ticket.frontMatter.authoringState,
+    runStatus: "cancelled"
+  });
+  await writeRunLog(projectPath, ticketId, runId, threadId, {
+    type: "run.failed",
+    message,
+    finalStatus: "cancelled",
+    timestamp: nowIso()
+  });
+  await markKernelRunStatusSafely(projectPath, runId, "cancelled", { message });
+  return true;
+};
+
+export const cancelCodexRun = async (input: string | CancelRunInput): Promise<void> => {
+  const cancelInput = normalizeCancelRunInput(input);
+  const runId = cancelInput.runId;
   const queued = await getQueuedImplementationRun(runId);
   if (queued) {
     await removeQueuedImplementationRun(runId);
@@ -3300,7 +3362,10 @@ export const cancelCodexRun = async (runId: string): Promise<void> => {
   }
 
   const draftRun = await getDraftRun(runId);
-  if (!draftRun) return;
+  if (!draftRun) {
+    await cancelPersistedTicketRun(cancelInput);
+    return;
+  }
   draftRun.abortController.abort();
   await updateTicketRunState(draftRun.projectPath, draftRun.ticketId, { runStatus: "cancelled" });
   await markKernelRunStatusSafely(draftRun.projectPath, runId, "cancelled", { message: "Ticket draft cancellation requested." });
