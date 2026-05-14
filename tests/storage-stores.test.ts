@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { RELAY_SCHEMA_VERSION, type RunLogLine } from "../src/shared/types";
+import { RELAY_SCHEMA_VERSION, type RunLogLine } from "../src/shared/schemas";
 import { initializeProject, isTicketNotFoundError, makeFileSystemRunLog, readTicket } from "../src/storage";
 import { runBackendEffect } from "../src/runtime";
 

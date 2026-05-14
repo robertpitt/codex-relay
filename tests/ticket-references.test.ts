@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { TicketReferenceCandidate } from "../src/shared/types";
+import type { TicketReferenceCandidate } from "../src/shared/schemas";
 import {
   filterTicketReferenceCandidates,
   formatTicketReferenceMarkdown,

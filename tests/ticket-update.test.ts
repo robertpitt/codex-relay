@@ -18,7 +18,7 @@ import {
   readTicket,
   writeProjectConfig
 } from "../src/storage";
-import type { AgentTicketUpdate, RendererRunEvent } from "../src/shared/types";
+import type { AgentTicketUpdate, RendererRunEvent } from "../src/shared/schemas";
 
 const createProject = async (): Promise<string> => {
   const projectPath = await mkdtemp(path.join(os.tmpdir(), "relay-ticket-update-"));

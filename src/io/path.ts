@@ -1,4 +1,4 @@
-import { Effect, Layer, Path } from "effect";
+import { Effect, Path } from "effect";
 
 const pathService = Effect.runSync(
   Effect.gen(function*() {

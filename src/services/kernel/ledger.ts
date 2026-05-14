@@ -1,16 +1,7 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { ulid } from "ulid";
 import { BackendClock, type BackendIoServices, type BackendServicesBase } from "../../runtime";
-import {
-  appendTextFileEffect,
-  isFileNotFoundError,
-  makeDirectoryEffect,
-  pathDirname,
-  readDirectoryEffect,
-  readTextFileEffect,
-  renamePathEffect,
-  writeTextFileEffect
-} from "../../io";
+import { isFileNotFoundError } from "../../platform/PlatformError";
 import { kernelJobEventsPath, kernelJobsPath, kernelJobSnapshotPath } from "../../storage/paths";
 import {
   isTerminalJobStatus,
@@ -21,9 +12,17 @@ import {
   type JobSubmitInput,
   type JobTransitionInput
 } from "./types";
+import {
+  KernelJobNotFoundError,
+  KernelJsonParseError,
+  KernelPersistenceError,
+  type KernelError,
+  kernelPersistenceError
+} from "./errors";
+import { applyJobTransition, isBlockedByTerminalStatus } from "./state";
 
 type KernelBaseServices = BackendServicesBase | BackendIoServices;
-type KernelEffect<A> = Effect.Effect<A, unknown, KernelBaseServices>;
+type KernelEffect<A> = Effect.Effect<A, KernelError, KernelBaseServices>;
 
 export type JobLedgerService = {
   readonly recordSubmitted: (input: JobSubmitInput) => KernelEffect<JobExecutionSnapshot>;
@@ -39,32 +38,47 @@ export const JobLedger = Context.Service<JobLedgerService>("relay/JobLedger");
 
 const safeExecutionId = (executionId: string): string => executionId.replace(/[^a-zA-Z0-9._-]/g, "_");
 
-const parseJson = <A>(raw: string, target: string): Effect.Effect<A, Error> =>
+const parseJson = <A>(raw: string, target: string): Effect.Effect<A, KernelJsonParseError> =>
   Effect.try({
     try: () => JSON.parse(raw) as A,
-    catch: (cause) => new Error(`Could not parse kernel JSON at ${target}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    catch: (cause) =>
+      new KernelJsonParseError({
+        target,
+        message: `Could not parse kernel JSON at ${target}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        cause
+      })
   });
 
-const readJsonOrNull = <A>(target: string): Effect.Effect<A | null, unknown, BackendIoServices> =>
-  readTextFileEffect(target).pipe(
-    Effect.flatMap((raw) => parseJson<A>(raw, target)),
-    Effect.catchIf(isFileNotFoundError, () => Effect.succeed(null))
+const readJsonOrNull = <A>(target: string): Effect.Effect<A | null, KernelJsonParseError | KernelPersistenceError, BackendIoServices> =>
+  FileSystem.FileSystem.use((fs) => fs.readFileString(target, "utf8")).pipe(
+    Effect.catchIf(isFileNotFoundError, () => Effect.succeed(null as string | null)),
+    Effect.mapError((cause) => kernelPersistenceError(target, "read kernel JSON", cause)),
+    Effect.flatMap((raw) => raw === null ? Effect.succeed(null) : parseJson<A>(raw, target))
   );
 
-const atomicWriteTextEffect = (target: string, value: string): Effect.Effect<void, unknown, BackendIoServices> =>
+const atomicWriteTextEffect = (target: string, value: string): Effect.Effect<void, KernelPersistenceError, BackendIoServices> =>
   Effect.gen(function*() {
-    yield* makeDirectoryEffect(pathDirname(target));
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
     const tmp = `${target}.${ulid().toLowerCase()}.tmp`;
-    yield* writeTextFileEffect(tmp, value);
-    yield* renamePathEffect(tmp, target);
-  });
+    yield* fs.writeFileString(tmp, value);
+    yield* fs.rename(tmp, target);
+  }).pipe(Effect.mapError((cause) => kernelPersistenceError(target, "write kernel JSON", cause)));
 
-const appendEvent = (event: JobLedgerEvent): KernelEffect<void> =>
-  Effect.gen(function*() {
-    const target = kernelJobEventsPath(event.projectPath, safeExecutionId(event.executionId));
-    yield* makeDirectoryEffect(pathDirname(target));
-    yield* appendTextFileEffect(target, `${JSON.stringify(event)}\n`);
-  });
+const appendEvent = (event: JobLedgerEvent): KernelEffect<void> => {
+  const target = kernelJobEventsPath(event.projectPath, safeExecutionId(event.executionId));
+  return Effect.gen(function*() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFileString(target, `${JSON.stringify(event)}\n`, { flag: "a" });
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof KernelPersistenceError ? cause : kernelPersistenceError(target, "append kernel event", cause)
+    )
+  );
+};
 
 const writeSnapshot = (snapshot: JobExecutionSnapshot): KernelEffect<void> =>
   atomicWriteTextEffect(
@@ -96,37 +110,23 @@ const newKernelEventId = (): string => `kevt_${ulid().toLowerCase()}`;
 const readSnapshot = (projectPath: string, executionId: string): KernelEffect<JobExecutionSnapshot | null> =>
   readJsonOrNull<JobExecutionSnapshot>(kernelJobSnapshotPath(projectPath, safeExecutionId(executionId)));
 
-const mergeMetadata = (
-  current: Record<string, unknown> | undefined,
-  next: Record<string, unknown> | undefined
-): Record<string, unknown> | undefined => {
-  if (!current) return next;
-  if (!next) return current;
-  return { ...current, ...next };
-};
-
 const transition = (input: JobTransitionInput): KernelEffect<JobExecutionSnapshot> =>
   Effect.gen(function*() {
     const current = yield* readSnapshot(input.projectPath, input.executionId);
     if (!current) {
-      return yield* Effect.fail(new Error(`Kernel job does not exist: ${input.executionId}`));
+      return yield* Effect.fail(
+        new KernelJobNotFoundError({
+          projectPath: input.projectPath,
+          executionId: input.executionId,
+          message: `Kernel job does not exist: ${input.executionId}`
+        })
+      );
     }
-    if (isTerminalJobStatus(current.status) && current.status !== input.status) {
-      return current;
-    }
+    if (isBlockedByTerminalStatus(current, input)) return current;
 
     const clock = yield* BackendClock;
     const now = clock.nowIso();
-    const next: JobExecutionSnapshot = {
-      ...current,
-      status: input.status,
-      attempts: input.status === "running" && current.status !== "running" ? current.attempts + 1 : current.attempts,
-      updatedAt: now,
-      result: input.result ?? current.result,
-      error: input.error ?? current.error,
-      message: input.message ?? current.message,
-      metadata: mergeMetadata(current.metadata, input.metadata)
-    };
+    const next = applyJobTransition(current, input, now);
 
     yield* appendEvent(makeEvent(next, jobEventTypeForStatus(input.status), now, {
       payload: input.result,
@@ -172,8 +172,9 @@ const recordSubmitted = (input: JobSubmitInput): KernelEffect<JobExecutionSnapsh
 const readEvents = (projectPath: string, executionId: string): KernelEffect<JobLedgerEvent[]> =>
   Effect.gen(function*() {
     const target = kernelJobEventsPath(projectPath, safeExecutionId(executionId));
-    const raw = yield* readTextFileEffect(target).pipe(
-      Effect.catchIf(isFileNotFoundError, () => Effect.succeed(""))
+    const raw = yield* FileSystem.FileSystem.use((fs) => fs.readFileString(target, "utf8")).pipe(
+      Effect.catchIf(isFileNotFoundError, () => Effect.succeed("")),
+      Effect.mapError((cause) => kernelPersistenceError(target, "read kernel events", cause))
     );
     const clock = yield* BackendClock;
     const events: JobLedgerEvent[] = [];
@@ -201,8 +202,10 @@ const readEvents = (projectPath: string, executionId: string): KernelEffect<JobL
 
 const listProjectExecutions = (projectPath: string): KernelEffect<JobExecutionSnapshot[]> =>
   Effect.gen(function*() {
-    const names = yield* readDirectoryEffect(kernelJobsPath(projectPath)).pipe(
-      Effect.catchIf(isFileNotFoundError, () => Effect.succeed<string[]>([]))
+    const target = kernelJobsPath(projectPath);
+    const names = yield* FileSystem.FileSystem.use((fs) => fs.readDirectory(target)).pipe(
+      Effect.catchIf(isFileNotFoundError, () => Effect.succeed<string[]>([])),
+      Effect.mapError((cause) => kernelPersistenceError(target, "list kernel jobs", cause))
     );
     const snapshots: JobExecutionSnapshot[] = [];
     for (const name of names) {

@@ -2,8 +2,6 @@ import { Option, Schema } from "effect";
 import * as SchemaIssue from "effect/SchemaIssue";
 import { passthroughFieldNamesFor, strictFieldNamesFor, type RelaySchema } from "@shared/schemas";
 
-export * from "@shared/schemas";
-
 const isSchemaIssue = (value: unknown): boolean =>
   typeof value === "object" && value !== null && "~effect/SchemaIssue/Issue" in value;
 

@@ -19,7 +19,7 @@ Scope: backend and shared contract surfaces only. Renderer matches for `effect` 
   - Uses service layers for `CodexRunDependencies`, `TicketUpdateDependencies`, and `TicketDraftDependencies`.
   - Keeps public APIs Promise-based: `getCodexStatus`, `createTicketDraft`, `startTicketUpdateRun`, `startCodexRun`, `resumeCodexRun`, and run cancellation/read helpers.
 - `src/main/services/logger.ts`
-  - Uses `logEffect` plus `BackendClock`, `fromPromise`, `fromSync`, and `runBackendEffect` to preserve current console/file logging behavior.
+  - Uses Effect logging through `LoggerLive`, with Promise adapters kept at existing Promise boundaries.
 - `src/main/services/storage.ts`
   - Uses Effect for `appendAuditEventEffect` and the backend clock dependency while preserving storage APIs as Promises.
 - `tests/backend.test.ts`

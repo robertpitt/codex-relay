@@ -11,7 +11,7 @@ import {
   type TicketSuggestionDependencies
 } from "../src/services/codex";
 import { createTicket, initializeProject } from "../src/storage";
-import type { CodexStatus, TicketSuggestion } from "../src/shared/types";
+import type { CodexStatus, TicketSuggestion } from "../src/shared/schemas";
 
 const readyStatus: CodexStatus = {
   sdkAvailable: true,

@@ -1,4 +1,4 @@
-import type { TicketDraft, TicketDraftSubticket } from "@shared/types";
+import type { TicketDraft, TicketDraftSubticket } from "@shared/schemas";
 
 const list = (items: readonly string[] | undefined): string => {
   if (!items) return "- None.";

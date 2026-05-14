@@ -3,8 +3,8 @@ schemaVersion: 1
 id: tkt_01krhmsbpyf6ytkx5240zkzge3
 title: Create detailed README files for backend service folders
 ticketType: task
-status: todo
-position: 20000
+status: in_progress
+position: 1000
 priority: medium
 effort: medium
 labels:
@@ -16,12 +16,12 @@ subticketIds: []
 blockedByIds: []
 relatedTicketIds: []
 createdAt: '2026-05-13T21:44:48.606Z'
-updatedAt: '2026-05-14T14:06:04.401Z'
-authoringState: reviewing
-codexThreadId: null
-runStatus: draft_complete
-lastRunId: run_01krkcx33ansh8cgv0c6ms6fsr
-lastRunStartedAt: null
+updatedAt: '2026-05-14T22:36:14.518Z'
+authoringState: ready
+codexThreadId: 019e28a1-ec71-7662-8bf7-38e715c6f6c9
+runStatus: cancelled
+lastRunId: run_01krma3t65292mvbhktgrv9zcy
+lastRunStartedAt: '2026-05-14T22:36:00.460Z'
 ---
 # Create detailed README files for backend service folders
 

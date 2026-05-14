@@ -14,6 +14,7 @@ const entryPoints = [
   path.join(testsDir, "backend.test.ts"),
   path.join(testsDir, "clarification-panel.test.tsx"),
   path.join(testsDir, "create-ticket-mention-layout.test.ts"),
+  path.join(testsDir, "electron-app-lifecycle.test.ts"),
   path.join(testsDir, "git-metadata.test.tsx"),
   path.join(testsDir, "import-boundaries.test.ts"),
   path.join(testsDir, "ipc-contract.test.ts"),

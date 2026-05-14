@@ -13,7 +13,7 @@ import {
 } from "../src/services/git";
 import { BackendConfig, BackendConfigDefaults, runBackendEffect } from "../src/runtime";
 import { GitMetadataPill } from "../src/renderer/src/components/GitMetadata";
-import type { GitMetadata } from "../src/shared/types";
+import type { GitMetadata } from "../src/shared/schemas";
 
 const createProjectPath = (): Promise<string> => mkdtemp(path.join(os.tmpdir(), "relay-git-metadata-"));
 

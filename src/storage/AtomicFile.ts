@@ -3,7 +3,7 @@
  */
 import { Effect, FileSystem, Context, Layer, Path } from "effect";
 import { ulid } from "ulid";
-import { StorageReadError, StorageWriteError, errorMessage } from "../domain";
+import { StorageReadError, StorageWriteError, errorMessage } from "../domain/errors";
 
 export type AtomicFileService = {
   readonly exists: (target: string) => Effect.Effect<boolean, StorageReadError, FileSystem.FileSystem>;

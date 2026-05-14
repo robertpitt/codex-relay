@@ -1,4 +1,4 @@
-import type { RendererRunEvent, RunStatus } from "@shared/types";
+import type { RendererRunEvent, RunStatus } from "@shared/schemas";
 
 export type AgentProgressStatus = RunStatus;
 
@@ -73,13 +73,14 @@ export const agentEventText = (event: RendererRunEvent): string => {
     case "web.search":
       return `Web search: ${event.query}`;
     case "todo.updated": {
-      const completed = event.items.filter((item) => item.completed).length;
+      const items = Array.isArray(event.items) ? event.items : [];
+      const completed = items.filter((item) => item.completed).length;
       const summary =
-        event.items.length === 0
+        items.length === 0
           ? "Todo list updated: no items"
-          : `Todo list updated: ${completed}/${event.items.length} completed`;
-      const items = event.items.map((item) => `[${item.completed ? "x" : " "}] ${item.text}`).join("\n");
-      return items ? `${summary}\n${items}` : summary;
+          : `Todo list updated: ${completed}/${items.length} completed`;
+      const itemText = items.map((item) => `[${item.completed ? "x" : " "}] ${item.text}`).join("\n");
+      return itemText ? `${summary}\n${itemText}` : summary;
     }
     case "mcp.tool_call": {
       const call = `${event.server}.${event.tool}`;
@@ -92,8 +93,12 @@ export const agentEventText = (event: RendererRunEvent): string => {
       return `Approval ${event.decision}`;
     case "ticket.status_changed":
       return `Status moved from ${event.fromStatus} to ${event.toStatus}`;
-    case "clarification.requested":
-      return `${event.questions.length} clarification question${event.questions.length === 1 ? "" : "s"} requested`;
+    case "clarification.requested": {
+      const questions = Array.isArray(event.questions) ? event.questions : [];
+      return questions.length === 0
+        ? "Clarification requested"
+        : `${questions.length} clarification question${questions.length === 1 ? "" : "s"} requested`;
+    }
     case "run.completed":
       return event.finalResponse;
     case "run.failed":

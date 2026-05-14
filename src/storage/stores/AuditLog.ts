@@ -2,7 +2,7 @@
  * Append-only audit log storage.
  */
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
-import type { RelayAuditEvent } from "@shared/types";
+import type { RelayAuditEvent } from "@shared/schemas";
 import { auditLogPath } from "../paths";
 import { mapStoreWriteError, type StoreEffect } from "./effects";
 

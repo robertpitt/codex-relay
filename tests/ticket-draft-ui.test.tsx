@@ -29,7 +29,7 @@ import {
   type TicketRecord,
   type TicketSuggestion,
   type TicketSummary
-} from "../src/shared/types";
+} from "../src/shared/schemas";
 
 const renderWithQueryClient = (element: ReactElement): string => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });

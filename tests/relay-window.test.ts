@@ -1,14 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Effect } from "effect";
-import type { RendererRunEvent } from "../src/shared/types";
-import { makeRelayWindowService, type RelayWindowOptions } from "../src/services/window/RelayWindow";
+import type { RendererRunEvent } from "../src/shared/schemas";
+import { makeRelayWindowService } from "../src/services/window/RelayWindow";
 import type { ElectronMainWindowOptions, ElectronWindowService } from "../src/platform/electron";
-
-const options: RelayWindowOptions = {
-  preloadPath: "/tmp/preload.js",
-  rendererHtmlPath: "/tmp/index.html"
-};
 
 test("RelayWindow revealOrCreateMain creates when absent and focuses when present", async () => {
   let open = false;
@@ -36,13 +31,12 @@ test("RelayWindow revealOrCreateMain creates when absent and focuses when presen
 
   const relayWindow = makeRelayWindowService(electronWindow);
 
-  await Effect.runPromise(relayWindow.revealOrCreateMain(options));
+  await Effect.runPromise(relayWindow.revealOrCreateMain());
   assert.equal(created, 1);
   assert.equal(focused, 0);
-  assert.equal(lastOptions?.preloadPath, options.preloadPath);
   assert.equal(typeof lastOptions?.onRendererError, "function");
 
-  await Effect.runPromise(relayWindow.revealOrCreateMain(options));
+  await Effect.runPromise(relayWindow.revealOrCreateMain());
   assert.equal(created, 1);
   assert.equal(focused, 1);
 });

@@ -2,7 +2,7 @@
  * Shared Effect helpers for filesystem-backed Relay stores.
  */
 import { Effect } from "effect";
-import { StorageReadError, StorageWriteError, errorMessage, type RelayDomainError } from "../../domain";
+import { StorageReadError, StorageWriteError, errorMessage, type RelayDomainError } from "../../domain/errors";
 import { TicketNotFoundError, isTicketNotFoundError } from "../errors";
 
 export type StoreError = RelayDomainError | TicketNotFoundError;

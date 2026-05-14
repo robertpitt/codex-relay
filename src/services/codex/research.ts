@@ -1,19 +1,17 @@
+import { FileSystem } from "effect";
 import type {
   CreateDraftInput,
   TicketDraftResearch,
   TicketDraftResearchFile,
   TicketDraftResearchLimits,
   TicketDraftResearchUrl
-} from "@shared/types";
+} from "@shared/schemas";
 import {
   fetchUrlEffect,
   pathBasename,
   pathExtname,
   pathJoin,
-  pathRelative,
-  readDirectoryEffect,
-  readTextFileEffect,
-  statPathEffect
+  pathRelative
 } from "../../io";
 import { runBackendEffect } from "../../runtime";
 
@@ -352,7 +350,7 @@ const collectResearchFiles = async (
     if (Date.now() >= deadlineMs || files.length >= limits.maxFilesToScan) return;
     let entries: string[];
     try {
-      entries = await runBackendEffect(readDirectoryEffect(directory));
+      entries = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.readDirectory(directory)));
     } catch (error) {
       limitations.push(`Could not read directory ${slashPath(pathRelative(projectPath, directory)) || "."}: ${errorMessage(error, "unknown error")}`);
       return;
@@ -366,28 +364,28 @@ const collectResearchFiles = async (
     for (const entryName of entries) {
       if (Date.now() >= deadlineMs || files.length >= limits.maxFilesToScan) return;
       const absolutePath = pathJoin(directory, entryName);
-      let info: { isDirectory: boolean; isFile: boolean; size: number };
+      let info: FileSystem.File.Info;
       try {
-        info = await runBackendEffect(statPathEffect(absolutePath));
+        info = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.stat(absolutePath)));
       } catch {
         continue;
       }
-      if (info.isDirectory) {
+      if (info.type === "Directory") {
         if (!IGNORED_RESEARCH_DIRS.has(entryName)) await visit(absolutePath);
         continue;
       }
-      if (!info.isFile || !isResearchTextFile(absolutePath)) continue;
+      if (info.type !== "File" || !isResearchTextFile(absolutePath)) continue;
       files.push({
         absolutePath,
         relativePath: slashPath(pathRelative(projectPath, absolutePath)),
-        size: info.size
+        size: Number(info.size)
       });
     }
   };
 
   try {
-    const info = await runBackendEffect(statPathEffect(projectPath));
-    if (!info.isDirectory) {
+    const info = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.stat(projectPath)));
+    if (info.type !== "Directory") {
       limitations.push(`Project path is not a directory: ${projectPath}`);
       return files;
     }
@@ -444,7 +442,7 @@ const scoreResearchFile = async (
 ): Promise<ScoredResearchFile | null> => {
   let content = "";
   try {
-    content = await runBackendEffect(readTextFileEffect(file.absolutePath));
+    content = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.readFileString(file.absolutePath, "utf8")));
   } catch {
     return null;
   }

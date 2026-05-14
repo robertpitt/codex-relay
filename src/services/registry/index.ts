@@ -1,9 +1,9 @@
-import { Context, Effect, Layer } from "effect";
-import type { AppRegistry } from "@shared/types";
+import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import type { AppRegistry } from "@shared/schemas";
+import { appRegistrySchema } from "@shared/schemas";
 import { getElectronPath } from "../../platform/electron";
-import { fromPromise, runBackendEffect } from "../../runtime";
-import { makeDirectoryEffect, pathDirname, pathJoin, pathResolve, readTextFileEffect, renamePathEffect, writeTextFileEffect } from "../../io";
-import { appRegistrySchema, parseSchema } from "../schemas";
+import { runBackendEffect } from "../../runtime";
+import { parseSchema } from "../schemas";
 
 const defaultRegistry = (): AppRegistry => ({
   schemaVersion: 1,
@@ -14,58 +14,6 @@ const defaultRegistry = (): AppRegistry => ({
   }
 });
 
-const registryPath = (): string => pathJoin(getElectronPath("userData"), "registry.json");
-
-const readRegistryPromise = async (): Promise<AppRegistry> => {
-  try {
-    const raw = await runBackendEffect(readTextFileEffect(registryPath()));
-    return parseSchema(appRegistrySchema, JSON.parse(raw));
-  } catch {
-    return defaultRegistry();
-  }
-};
-
-const writeRegistryPromise = async (registry: AppRegistry): Promise<void> => {
-  const target = registryPath();
-  await runBackendEffect(makeDirectoryEffect(pathDirname(target)));
-  const tmp = `${target}.tmp`;
-  await runBackendEffect(writeTextFileEffect(tmp, `${JSON.stringify(registry, null, 2)}\n`));
-  await runBackendEffect(renamePathEffect(tmp, target));
-};
-
-const upsertProjectPathPromise = async (projectPath: string): Promise<AppRegistry> => {
-  const registry = await readRegistryPromise();
-  const resolved = pathResolve(projectPath);
-  const existing = registry.projects.find((project) => pathResolve(project.path) === resolved);
-  const now = new Date().toISOString();
-
-  if (existing) {
-    existing.lastOpenedAt = now;
-  } else {
-    registry.projects.push({
-      path: resolved,
-      pinned: true,
-      lastOpenedAt: now,
-      sidebarPosition: (registry.projects.at(-1)?.sidebarPosition ?? 0) + 1000
-    });
-  }
-
-  registry.ui.lastProjectPath = resolved;
-  await writeRegistryPromise(registry);
-  return registry;
-};
-
-const removeProjectPathPromise = async (projectPath: string): Promise<AppRegistry> => {
-  const registry = await readRegistryPromise();
-  const resolved = pathResolve(projectPath);
-  registry.projects = registry.projects.filter((project) => pathResolve(project.path) !== resolved);
-  if (registry.ui.lastProjectPath && pathResolve(registry.ui.lastProjectPath) === resolved) {
-    registry.ui.lastProjectPath = registry.projects[0]?.path ?? null;
-  }
-  await writeRegistryPromise(registry);
-  return registry;
-};
-
 export type RegistryStoreService = {
   readonly read: () => Effect.Effect<AppRegistry, unknown>;
   readonly write: (registry: AppRegistry) => Effect.Effect<void, unknown>;
@@ -75,12 +23,67 @@ export type RegistryStoreService = {
 
 export const RegistryStore = Context.Service<RegistryStoreService>("relay/RegistryStore");
 
-export const RegistryStoreLive = Layer.succeed(RegistryStore)({
-  read: () => fromPromise(() => readRegistryPromise()),
-  write: (registry) => fromPromise(() => writeRegistryPromise(registry)),
-  upsertProjectPath: (projectPath) => fromPromise(() => upsertProjectPathPromise(projectPath)),
-  removeProjectPath: (projectPath) => fromPromise(() => removeProjectPathPromise(projectPath))
-});
+export const RegistryStoreLive = Layer.effect(
+  RegistryStore,
+  Effect.gen(function*() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const registryPath = (): string => path.join(getElectronPath("userData"), "registry.json");
+
+    const read = (): Effect.Effect<AppRegistry> =>
+      fs.readFileString(registryPath(), "utf8").pipe(
+        Effect.map((raw) => parseSchema(appRegistrySchema, JSON.parse(raw))),
+        Effect.catch(() => Effect.succeed(defaultRegistry()))
+      );
+
+    const write = (registry: AppRegistry): Effect.Effect<void, unknown> =>
+      Effect.gen(function*() {
+        const target = registryPath();
+        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+        const tmp = `${target}.tmp`;
+        yield* fs.writeFileString(tmp, `${JSON.stringify(registry, null, 2)}\n`);
+        yield* fs.rename(tmp, target);
+      });
+
+    return {
+      read,
+      write,
+      upsertProjectPath: (projectPath) =>
+        Effect.gen(function*() {
+          const registry = yield* read();
+          const resolved = path.resolve(projectPath);
+          const existing = registry.projects.find((project) => path.resolve(project.path) === resolved);
+          const now = new Date().toISOString();
+
+          if (existing) {
+            existing.lastOpenedAt = now;
+          } else {
+            registry.projects.push({
+              path: resolved,
+              pinned: true,
+              lastOpenedAt: now,
+              sidebarPosition: (registry.projects.at(-1)?.sidebarPosition ?? 0) + 1000
+            });
+          }
+
+          registry.ui.lastProjectPath = resolved;
+          yield* write(registry);
+          return registry;
+        }),
+      removeProjectPath: (projectPath) =>
+        Effect.gen(function*() {
+          const registry = yield* read();
+          const resolved = path.resolve(projectPath);
+          registry.projects = registry.projects.filter((project) => path.resolve(project.path) !== resolved);
+          if (registry.ui.lastProjectPath && path.resolve(registry.ui.lastProjectPath) === resolved) {
+            registry.ui.lastProjectPath = registry.projects[0]?.path ?? null;
+          }
+          yield* write(registry);
+          return registry;
+        })
+    };
+  })
+);
 
 export const readRegistry = (): Promise<AppRegistry> =>
   runBackendEffect(Effect.provide(RegistryStore.use((store) => store.read()), RegistryStoreLive));

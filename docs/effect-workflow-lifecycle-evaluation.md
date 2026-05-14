@@ -23,7 +23,7 @@ The existing board columns, ticket front matter, and run JSONL files remain stab
 
 ```mermaid
 flowchart TD
-  Root["Electron main process"] --> Boot["src/main/index.ts"]
+  Root["Electron main process"] --> Boot["src/main.app.ts"]
   Boot --> Runtime["ManagedRuntime(AppLayerLive)"]
   Runtime --> IPC["Relay IPC"]
   Runtime --> Kernel["Backend kernel"]

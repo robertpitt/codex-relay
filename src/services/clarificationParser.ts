@@ -1,4 +1,4 @@
-import type { ClarificationQuestionCreateInput } from "@shared/types";
+import type { ClarificationQuestionCreateInput } from "@shared/schemas";
 
 type RawQuestion = string | { question?: unknown; text?: unknown; answerType?: unknown };
 

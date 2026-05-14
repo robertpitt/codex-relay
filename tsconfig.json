@@ -22,6 +22,7 @@
       "@runtime/*": ["src/runtime/*"],
       "@services/*": ["src/services/*"],
       "@storage/*": ["src/storage/*"],
+      "@workflows/*": ["src/workflows/*"],
       "@renderer/*": ["src/renderer/src/*"]
     },
     "resolveJsonModule": true,

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ClarificationPanel } from "../src/renderer/src/components/ClarificationPanel";
-import type { ClarificationQuestion } from "../src/shared/types";
+import type { ClarificationQuestion } from "../src/shared/schemas";
 
 const question = (patch: Partial<ClarificationQuestion>): ClarificationQuestion => ({
   id: "clar_1",

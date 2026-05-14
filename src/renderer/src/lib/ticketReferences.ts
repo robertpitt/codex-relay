@@ -1,4 +1,4 @@
-import type { TicketReferenceCandidate } from "@shared/types";
+import type { TicketReferenceCandidate } from "@shared/schemas";
 
 export type TicketMentionToken = {
   start: number;

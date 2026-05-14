@@ -1,7 +1,6 @@
-import { Context, Effect, Layer, ManagedRuntime, Option, Queue, Ref } from "effect";
-import type { StartRunInput } from "@shared/types";
+import { Context, Effect, Layer, ManagedRuntime, Queue, Ref } from "effect";
+import type { StartRunInput } from "@shared/schemas";
 import { pathResolve } from "../../io";
-import { runBackendEffect } from "../../runtime";
 
 type RegistryEffect<A> = Effect.Effect<A, unknown>;
 
@@ -310,8 +309,4 @@ const fallbackRegistryRuntime = ManagedRuntime.make(KernelRunRegistryLive);
 
 export const runKernelRunRegistryEffect = async <A>(
   effect: Effect.Effect<A, unknown, Context.Service.Identifier<typeof KernelRunRegistry>>
-): Promise<A> => {
-  const hasRegistry = await runBackendEffect(Effect.map(Effect.serviceOption(KernelRunRegistry), Option.isSome));
-  if (hasRegistry) return runBackendEffect(effect);
-  return fallbackRegistryRuntime.runPromise(effect);
-};
+): Promise<A> => fallbackRegistryRuntime.runPromise(effect);

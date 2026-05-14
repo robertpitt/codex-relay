@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { openProjectInEditorFromHeader, ProjectEditorDropdown, ProjectSidebar } from "../src/renderer/src/App";
-import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectSummary } from "../src/shared/types";
+import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectSummary } from "../src/shared/schemas";
 
 const projectPath = "/tmp/relay-sidebar-project";
 

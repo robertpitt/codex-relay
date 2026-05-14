@@ -1,6 +1,6 @@
-import { Effect } from "effect";
-import type { CodexStatus } from "@shared/types";
-import { HostRuntime, pathJoin, readTextFileEffect } from "../../io";
+import { Effect, FileSystem } from "effect";
+import type { CodexStatus } from "@shared/schemas";
+import { HostRuntime, pathJoin } from "../../io";
 import { runBackendEffect } from "../../runtime";
 import { resolveAvailableCodexCli, type CodexCliResolution } from "./cli";
 
@@ -19,12 +19,12 @@ const getCodexStatusPromise = async (dependencies: CodexStatusDependencies = {})
   );
   try {
     await runBackendEffect(
-      HostRuntime.use((host) =>
-        Effect.gen(function*() {
-          const home = yield* host.homeDirectory;
-          yield* readTextFileEffect(pathJoin(home, ".codex", "auth.json"));
-        })
-      )
+      Effect.gen(function*() {
+        const host = yield* HostRuntime;
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* host.homeDirectory;
+        yield* fs.readFileString(pathJoin(home, ".codex", "auth.json"), "utf8");
+      })
     );
     authenticated = true;
   } catch {

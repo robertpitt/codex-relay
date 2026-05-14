@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ConfigProvider, Effect, Layer, ManagedRuntime } from "effect";
+import { ConfigProvider, Effect, Layer, ManagedRuntime, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { access, appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,13 +22,13 @@ import {
   type RepositoryChatThread,
   type TicketDraftStartDependencies
 } from "../src/services/codex";
-import { resolveAvailableCodexCli, runCodexVersion, type CodexCliCandidate } from "../src/services/codex/cli";
-import { CommandExecutor } from "../src/io";
+import { resolveAvailableCodexCli, runCodexVersionEffect, type CodexCliCandidate } from "../src/services/codex/cli";
 import {
   BackendKernelLive,
   JobLedger,
   JobLedgerLive,
   JobSupervisor,
+  KernelJobNotFoundError,
   KernelRunRegistry,
   KernelRunRegistryLive,
   RELAY_EXTERNAL_JOB_WORKFLOW_NAME
@@ -36,8 +37,6 @@ import {
   BackendClock,
   BackendConfig,
   BackendConfigDefaults,
-  BackendRuntimeLive,
-  configureBackendRuntime,
   loadBackendConfig,
   runBackendEffect
 } from "../src/runtime";
@@ -65,7 +64,7 @@ import {
   unlinkSubticket,
   writeProjectConfig
 } from "../src/storage";
-import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
+import type { CodexStatus, RendererRunEvent } from "../src/shared/schemas";
 
 const readyCodexStatus: CodexStatus = {
   sdkAvailable: true,
@@ -201,6 +200,67 @@ test("job ledger persists snapshots, event logs, and ignores corrupt event lines
   assert.deepEqual(
     events.map((event) => event.type),
     ["job.submitted", "job.running", "job.corrupt_event_ignored"]
+  );
+});
+
+test("job ledger keeps terminal snapshots immutable and reports typed missing-job errors", async () => {
+  const projectPath = await createProject();
+  const executionId = "exec_kernel_terminal";
+  const submitInput = {
+    executionId,
+    workflowName: RELAY_EXTERNAL_JOB_WORKFLOW_NAME,
+    commandType: "worker.dispatch" as const,
+    projectPath,
+    idempotencyKey: "worker:terminal",
+    runId: "run_kernel_terminal",
+    ticketId: "tkt_kernel_terminal",
+    payload: { workerType: "local", runId: "run_kernel_terminal" }
+  };
+
+  await runBackendEffect(
+    Effect.provide(JobLedger.use((ledger) => ledger.recordSubmitted(submitInput)), JobLedgerLive)
+  );
+  await runBackendEffect(
+    Effect.provide(JobLedger.use((ledger) => ledger.transition({ projectPath, executionId, status: "running" })), JobLedgerLive)
+  );
+  const completed = await runBackendEffect(
+    Effect.provide(
+      JobLedger.use((ledger) =>
+        ledger.transition({ projectPath, executionId, status: "completed", result: { ok: true }, message: "Done." })
+      ),
+      JobLedgerLive
+    )
+  );
+  assert.equal(completed.status, "completed");
+
+  const blocked = await runBackendEffect(
+    Effect.provide(
+      JobLedger.use((ledger) =>
+        ledger.transition({ projectPath, executionId, status: "failed", error: "late failure", message: "Too late." })
+      ),
+      JobLedgerLive
+    )
+  );
+  assert.equal(blocked.status, "completed");
+  assert.deepEqual(blocked.result, { ok: true });
+  assert.equal(blocked.message, "Done.");
+
+  const events = await runBackendEffect(
+    Effect.provide(JobLedger.use((ledger) => ledger.readEvents(projectPath, executionId)), JobLedgerLive)
+  );
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["job.submitted", "job.running", "job.completed"]
+  );
+
+  await assert.rejects(
+    runBackendEffect(
+      Effect.provide(
+        JobLedger.use((ledger) => ledger.transition({ projectPath, executionId: "exec_missing", status: "running" })),
+        JobLedgerLive
+      )
+    ),
+    (error) => error instanceof KernelJobNotFoundError && error.executionId === "exec_missing"
   );
 });
 
@@ -535,43 +595,46 @@ test("storage service uses the configured filesystem adapter", async () => {
   assert.equal(board.tickets[0]?.id, ticket.frontMatter.id);
 });
 
-test("Codex CLI status command uses BackendConfig timeout", async () => {
-  const captured: Array<{ command: string; args: readonly string[]; timeoutMs?: number }> = [];
+test("Codex CLI status command runs through ChildProcessSpawner", async () => {
+  const captured: Array<{ command: string; args: readonly string[] }> = [];
+  const output = new TextEncoder().encode("codex-cli 0.130.0\n");
   const runtime = ManagedRuntime.make(
     Layer.mergeAll(
       Layer.succeed(BackendConfig)({
         ...BackendConfigDefaults,
         codexStatusTimeoutMs: 12_345
       }),
-      Layer.succeed(CommandExecutor)({
-        run: (command, options = {}) =>
-          Effect.sync(() => {
-            if (command._tag !== "StandardCommand") throw new Error("Only standard commands are expected in this test.");
-            captured.push({ command: command.command, args: command.args, timeoutMs: options.timeoutMs });
-            return { stdout: "codex-cli 0.130.0\n", stderr: "" };
-          }),
-        execFile: (command, args, options = {}) =>
-          Effect.sync(() => {
-            captured.push({ command, args, timeoutMs: options.timeoutMs });
-            return { stdout: "codex-cli 0.130.0\n", stderr: "" };
-          }),
-        spawnDetached: () => {
-          throw new Error("spawnDetached is not used in this test.");
-        }
-      })
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(Effect.fnUntraced(function*(command) {
+          if (command._tag !== "StandardCommand") throw new Error("Only standard commands are expected in this test.");
+          captured.push({ command: command.command, args: command.args });
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(12_345),
+            stdin: Sink.drain,
+            stdout: Stream.fromIterable([output]),
+            stderr: Stream.empty,
+            all: Stream.fromIterable([output]),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void)
+          });
+        }))
+      )
     )
   );
 
-  configureBackendRuntime(runtime);
   try {
-    const version = await runCodexVersion({ source: "path", command: "codex-test" });
+    const version = (await runtime.runPromise(runCodexVersionEffect({ source: "path", command: "codex-test" }))).trim();
     assert.equal(version, "codex-cli 0.130.0");
   } finally {
-    configureBackendRuntime(ManagedRuntime.make(BackendRuntimeLive));
     await runtime.dispose();
   }
 
-  assert.deepEqual(captured, [{ command: "codex-test", args: ["--version"], timeoutMs: 12_345 }]);
+  assert.deepEqual(captured, [{ command: "codex-test", args: ["--version"] }]);
 });
 
 test("codex status uses the bundled CLI candidate without requiring PATH codex", async () => {
@@ -1907,7 +1970,7 @@ test("manual Ready moves enqueue idle tickets and moving out clears queued state
     labels: ["codex"],
     markdown: "# Manual queued ticket\n"
   });
-  const { runEventSink, events } = createFakeRunEventSink();
+  const { runEventSink } = createFakeRunEventSink();
   const gate = deferred();
   let startedCount = 0;
   const dependencies: CodexRunDependencies = {

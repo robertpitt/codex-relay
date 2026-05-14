@@ -1,5 +1,5 @@
 import type { ServerResponse } from "node:http";
-import type { RendererRunEvent } from "@shared/types";
+import type { RendererRunEvent } from "@shared/schemas";
 
 const clients = new Set<ServerResponse>();
 

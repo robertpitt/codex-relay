@@ -1,16 +1,17 @@
-import { Effect, Exit, Fiber, Layer, Option, Scope } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, Option, Scope } from "effect";
 import { Workflow, WorkflowEngine } from "effect/unstable/workflow";
+import type { BackendIoServices, BackendServicesBase } from "../../runtime";
 import { JobLedger, type JobLedgerService } from "./ledger";
 import type { JobExecutionSnapshot } from "./types";
 import { isTerminalJobStatus } from "./types";
 import { RelayExternalJobWorkflow, type ExternalJobWorkflowPayload } from "./workflows";
 
+export type KernelRuntimeServices = BackendServicesBase | BackendIoServices;
+type EncodedWorkflowExecute = Parameters<WorkflowEngine.Encoded["register"]>[1];
+
 type WorkflowRegistration = {
   readonly workflow: Workflow.Any;
-  readonly execute: (
-    payload: object,
-    executionId: string
-  ) => Effect.Effect<unknown, unknown, any>;
+  readonly execute: EncodedWorkflowExecute;
   readonly scope: Scope.Scope;
 };
 
@@ -28,7 +29,7 @@ const waitForExternalJob = (
   ledger: JobLedgerService,
   payload: ExternalJobWorkflowPayload,
   executionId: string
-): Effect.Effect<unknown, unknown, any> =>
+): Effect.Effect<unknown, unknown, KernelRuntimeServices | WorkflowEngine.WorkflowInstance> =>
   Effect.gen(function*() {
     const instance = yield* WorkflowEngine.WorkflowInstance;
     while (true) {
@@ -76,7 +77,7 @@ const markResult = (
   payload: object,
   executionId: string,
   result: Workflow.Result<unknown, unknown>
-): Effect.Effect<void, unknown, any> => {
+): Effect.Effect<void, unknown, KernelRuntimeServices> => {
   const jobPayload = externalJobPayload(payload);
   if (result._tag === "Suspended") {
     return Effect.asVoid(
@@ -109,13 +110,24 @@ const markResult = (
   );
 };
 
-const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEngine["Service"] => {
+const makeDurableEngine = (
+  ledger: JobLedgerService,
+  runtimeContext: Context.Context<KernelRuntimeServices>
+): WorkflowEngine.WorkflowEngine["Service"] => {
   const workflows = new Map<string, WorkflowRegistration>();
   const executions = new Map<string, ExecutionState>();
 
   let engine!: WorkflowEngine.WorkflowEngine["Service"];
 
-  const resume: (executionId: string) => Effect.Effect<void, unknown, any> = Effect.fnUntraced(function*(executionId: string) {
+  const provideRuntime = <A, E>(
+    effect: Effect.Effect<A, E, KernelRuntimeServices>
+  ): Effect.Effect<A, E> => Effect.provide(effect, runtimeContext);
+
+  const provideRuntimeOrDie = <A, E>(
+    effect: Effect.Effect<A, E, KernelRuntimeServices>
+  ): Effect.Effect<A> => provideRuntime(effect).pipe(Effect.catch((cause: E) => Effect.die(cause)));
+
+  const resume: (executionId: string) => Effect.Effect<void> = Effect.fnUntraced(function*(executionId: string) {
     const state = executions.get(executionId);
     if (!state) return;
     const exit = state.fiber?.pollUnsafe();
@@ -126,7 +138,7 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
     if (!entry) return;
 
     const payload = externalJobPayload(state.payload);
-    const snapshot = yield* ledger.readSnapshot(payload.projectPath, executionId);
+    const snapshot = yield* provideRuntimeOrDie(ledger.readSnapshot(payload.projectPath, executionId));
     if (snapshot && isTerminalJobStatus(snapshot.status)) return;
 
     const instance = WorkflowEngine.WorkflowInstance.initial(state.instance.workflow, state.instance.executionId);
@@ -134,19 +146,19 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
     state.instance = instance;
 
     if (!snapshot || snapshot.status === "submitted") {
-      yield* ledger.transition({
+      yield* provideRuntimeOrDie(ledger.transition({
         projectPath: payload.projectPath,
         executionId,
         status: "running",
         message: "Workflow execution started."
-      });
+      }));
     }
 
     state.fiber = yield* state.execute(state.payload, state.instance.executionId).pipe(
       Workflow.intoResult,
       Effect.provideService(WorkflowEngine.WorkflowInstance, instance),
       Effect.provideService(WorkflowEngine.WorkflowEngine, engine),
-      Effect.tap((result) => markResult(ledger, state.payload, state.instance.executionId, result)),
+      Effect.tap((result) => provideRuntimeOrDie(markResult(ledger, state.payload, state.instance.executionId, result))),
       Effect.tap((result) => {
         if (!state.parent || result._tag !== "Complete") return Effect.void;
         return Effect.forkIn(resume(state.parent), entry.scope);
@@ -155,7 +167,7 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
     );
   });
 
-  const encoded = {
+  const encoded: WorkflowEngine.Encoded = {
     register: Effect.fnUntraced(function*(workflow, execute) {
       workflows.set(workflow.name, {
         workflow,
@@ -163,10 +175,15 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
         scope: yield* Effect.scope
       });
     }),
-    execute: Effect.fnUntraced(function*(workflow: Workflow.Any, options: WorkflowEngine.Encoded["execute"] extends (
+    execute: Effect.fnUntraced(function*<const Discard extends boolean>(
       workflow: Workflow.Any,
-      options: infer Options
-    ) => Effect.Effect<any> ? Options : never) {
+      options: {
+        readonly executionId: string;
+        readonly payload: object;
+        readonly discard: Discard;
+        readonly parent?: WorkflowEngine.WorkflowInstance["Service"] | undefined;
+      }
+    ) {
       const entry = workflows.get(workflow.name);
       if (!entry) {
         return yield* Effect.die(`Workflow ${workflow.name} is not registered`);
@@ -174,11 +191,11 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
 
       const payload = externalJobPayload(options.payload);
       let state = executions.get(options.executionId);
-      const snapshot = yield* ledger.readSnapshot(payload.projectPath, options.executionId);
+      const snapshot = yield* provideRuntimeOrDie(ledger.readSnapshot(payload.projectPath, options.executionId));
       if (snapshot && isTerminalJobStatus(snapshot.status)) {
         const result = resultFromSnapshot(snapshot);
-        if (options.discard) return;
-        if (result) return result;
+        if (options.discard) return undefined as Discard extends true ? void : Workflow.Result<unknown, unknown>;
+        if (result) return result as Discard extends true ? void : Workflow.Result<unknown, unknown>;
       }
 
       if (!state) {
@@ -193,8 +210,9 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
       }
 
       yield* resume(options.executionId);
-      if (options.discard) return;
-      return (yield* Fiber.join(state.fiber!)) as Workflow.Result<unknown, unknown>;
+      if (options.discard) return undefined as Discard extends true ? void : Workflow.Result<unknown, unknown>;
+      const result = yield* Fiber.join(state.fiber!).pipe(Effect.catch((cause: unknown) => Effect.die(cause)));
+      return result as Discard extends true ? void : Workflow.Result<unknown, unknown>;
     }),
     poll: (_workflow: Workflow.Any, executionId: string) =>
       Effect.gen(function*() {
@@ -215,12 +233,12 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
       if (!state) return;
       state.instance.interrupted = true;
       const payload = externalJobPayload(state.payload);
-      yield* ledger.transition({
+      yield* provideRuntimeOrDie(ledger.transition({
         projectPath: payload.projectPath,
         executionId,
         status: "cancelled",
         message: "Workflow interrupted."
-      });
+      }));
       if (state.fiber) {
         yield* Fiber.interrupt(state.fiber);
       }
@@ -244,7 +262,7 @@ const makeDurableEngine = (ledger: JobLedgerService): WorkflowEngine.WorkflowEng
     scheduleClock: () => Effect.void
   };
 
-  engine = WorkflowEngine.makeUnsafe(encoded as unknown as WorkflowEngine.Encoded);
+  engine = WorkflowEngine.makeUnsafe(encoded);
 
   return engine;
 };
@@ -253,9 +271,11 @@ export const RelayWorkflowEngineLive = Layer.effect(
   WorkflowEngine.WorkflowEngine,
   Effect.gen(function*() {
     const ledger = yield* JobLedger;
-    const engine = makeDurableEngine(ledger);
+    const runtimeContext = yield* Effect.context<KernelRuntimeServices>();
+    const engine = makeDurableEngine(ledger, runtimeContext);
     yield* engine.register(RelayExternalJobWorkflow, (payload, executionId) =>
       waitForExternalJob(ledger, payload as ExternalJobWorkflowPayload, executionId)
+        .pipe(Effect.provide(runtimeContext))
     ).pipe(Effect.provideService(WorkflowEngine.WorkflowEngine, engine));
     return engine;
   })

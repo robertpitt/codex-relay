@@ -10,13 +10,14 @@ const sourceEntries = [
   path.join(projectRoot, "src", "io"),
   path.join(projectRoot, "src", "runtime"),
   path.join(projectRoot, "src", "services"),
+  path.join(projectRoot, "src", "workflows"),
   path.join(projectRoot, "src", "ipc"),
   path.join(projectRoot, "src", "http"),
   path.join(projectRoot, "src", "storage"),
   path.join(projectRoot, "src", "main.app.ts"),
   path.join(projectRoot, "src", "preload.app.ts")
 ];
-const preloadAllowedImports = new Set(["electron", "./ipc/protocol", "@shared/types"]);
+const preloadAllowedImports = new Set(["electron", "@platform/electron/Protocol", "@shared/schemas"]);
 const unstableWorkflowImportPattern =
   /(?:from\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\)|require\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\))/;
 const codexLifecycleMapNames = [

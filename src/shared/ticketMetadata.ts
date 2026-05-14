@@ -1,4 +1,4 @@
-import type { TicketChecklistSummary } from "./types";
+import type { TicketChecklistSummary } from "./schemas";
 
 export const emptyTicketChecklistSummary = (): TicketChecklistSummary => ({
   total: 0,

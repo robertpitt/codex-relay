@@ -29,44 +29,8 @@ export class StorageWriteError extends Data.TaggedError("StorageWriteError")<{
   readonly cause?: unknown;
 }> {}
 
-export class StorageNotFoundError extends Data.TaggedError("StorageNotFoundError")<{
-  readonly path: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export class StorageParseError extends Data.TaggedError("StorageParseError")<{
-  readonly path: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
 export class TransportDecodeError extends Data.TaggedError("TransportDecodeError")<{
   readonly channel: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export class TransportEncodeError extends Data.TaggedError("TransportEncodeError")<{
-  readonly channel: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export class TransportHandlerError extends Data.TaggedError("TransportHandlerError")<{
-  readonly channel: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export class IpcBoundaryError extends Data.TaggedError("IpcBoundaryError")<{
-  readonly channel: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-export class CodexServiceError extends Data.TaggedError("CodexServiceError")<{
-  readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
 }> {}
@@ -76,13 +40,7 @@ export type RelayDomainError =
   | ProjectPathNotDirectory
   | StorageReadError
   | StorageWriteError
-  | StorageNotFoundError
-  | StorageParseError
-  | TransportDecodeError
-  | TransportEncodeError
-  | TransportHandlerError
-  | IpcBoundaryError
-  | CodexServiceError;
+  | TransportDecodeError;
 
 export const errorMessage = (error: unknown, fallback = "Operation failed."): string =>
   error instanceof Error ? error.message : typeof error === "string" && error.length > 0 ? error : fallback;
@@ -94,13 +52,7 @@ export const isRelayDomainError = (error: unknown): error is RelayDomainError =>
     case "ProjectPathNotDirectory":
     case "StorageReadError":
     case "StorageWriteError":
-    case "StorageNotFoundError":
-    case "StorageParseError":
     case "TransportDecodeError":
-    case "TransportEncodeError":
-    case "TransportHandlerError":
-    case "IpcBoundaryError":
-    case "CodexServiceError":
       return true;
     default:
       return false;

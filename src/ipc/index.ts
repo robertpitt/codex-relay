@@ -1,6 +1,7 @@
 export {
   installRelayIpcTransport,
   makeRelayIpcRpcServerProtocol,
+  type RelayIpcRouterService,
   type RelayRpcEffectRunner
 } from "./RelayIpc";
 export {
@@ -9,4 +10,9 @@ export {
   type RelayIpcRpcClientPacket,
   type RelayIpcRpcServerPacket
 } from "./protocol";
-export * from "./transport";
+export {
+  relayTransportFailureFromError,
+  transportBodyDecodeError,
+  type RelayTransportFailure,
+  type RelayTransportFailureCode
+} from "./transport";

@@ -2,8 +2,9 @@
  * Append-only Codex run event log storage.
  */
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
-import type { RunLogLine } from "@shared/types";
-import { isFileNotFoundError, pathJoin } from "../../io";
+import type { RunLogLine } from "@shared/schemas";
+import { pathJoin } from "../../io";
+import { isFileNotFoundError } from "../../platform/PlatformError";
 import { runsPath } from "../paths";
 import { mapStoreReadError, mapStoreWriteError, type StoreEffect } from "./effects";
 

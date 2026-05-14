@@ -29,7 +29,7 @@ import {
   writeProjectConfig
 } from "../src/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
-import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
+import type { CodexStatus, RendererRunEvent } from "../src/shared/schemas";
 
 const readyStatus: CodexStatus = {
   sdkAvailable: true,

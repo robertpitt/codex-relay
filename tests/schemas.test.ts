@@ -1,17 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Schema } from "effect";
 import {
   agentTicketUpdateSchema,
-  isRelaySchemaError,
-  parseSchema,
   projectConfigSchema,
   relayCodexEventSchema,
+  rendererRunEventSchema,
   runLogLineSchema,
   ticketDraftSchema,
   ticketFrontMatterSchema,
   ticketSuggestionsResponseSchema
-} from "../src/services/schemas";
-import type { TicketDraftSubticket } from "../src/shared/types";
+} from "../src/shared/schemas";
+import { isRelaySchemaError, parseSchema } from "../src/services/schemas";
+import type { TicketDraftSubticket } from "../src/shared/schemas";
 
 const expectSchemaError = (error: unknown, message?: RegExp): true => {
   assert.equal(isRelaySchemaError(error), true);
@@ -393,4 +394,22 @@ test("event schemas decode timestamps, preserve record payloads, and reject inva
       }),
     (error) => expectSchemaError(error)
   );
+});
+
+test("renderer run event schema preserves variant fields across RPC encoding", () => {
+  const event = {
+    type: "clarification.requested" as const,
+    questions: [],
+    timestamp: "2026-05-11T11:00:00.000Z",
+    projectPath: "/tmp/project",
+    ticketId: "tkt_schema",
+    runId: "run_schema"
+  };
+  const rendererRunEventCodec = rendererRunEventSchema as Schema.Codec<typeof event, unknown, never, never>;
+
+  const encoded = Schema.encodeUnknownSync(rendererRunEventCodec)(event) as typeof event;
+  assert.deepEqual(encoded.questions, []);
+
+  const decoded = Schema.decodeUnknownSync(rendererRunEventCodec)(encoded);
+  assert.deepEqual(decoded, event);
 });

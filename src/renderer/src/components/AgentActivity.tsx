@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Activity, Clock, FileText, Files, Globe2, Hash, List, Loader2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import type { RendererRunEvent, RunStatus, RunSummary, RunUsageSummary } from "@shared/types";
+import type { RendererRunEvent, RunStatus, RunSummary, RunUsageSummary } from "@shared/schemas";
 import { MarkdownBlock } from "./MarkdownBlock";
 import { Button, IconButton } from "./ui";
 import { useShortcutOverlay } from "../lib/keyboardShortcuts";

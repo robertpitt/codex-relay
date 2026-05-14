@@ -2,7 +2,7 @@
  * Project-level storage operations for Relay repositories.
  */
 import { Context, Effect, FileSystem, Layer } from "effect";
-import type { BoardSnapshot, ProjectConfig, ProjectSummary } from "@shared/types";
+import type { BoardSnapshot, ProjectConfig, ProjectSummary } from "@shared/schemas";
 import { pathJoin } from "../../io";
 import * as FileSystemStorage from "../filesystem";
 import { projectConfigPath, projectRelayPath, ticketPath } from "../paths";

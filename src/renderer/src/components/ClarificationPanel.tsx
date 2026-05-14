@@ -1,6 +1,6 @@
 import { Check, CircleDashed, Send } from "lucide-react";
 import { useId, type ReactElement } from "react";
-import type { ClarificationQuestion } from "@shared/types";
+import type { ClarificationQuestion } from "@shared/schemas";
 import { MarkdownBlock } from "./MarkdownBlock";
 import { Button, Textarea } from "./ui";
 

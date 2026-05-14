@@ -1,23 +1,12 @@
 import { Effect, Scope } from "effect";
 import { Rpc, RpcClient, RpcMessage, RpcSerialization } from "effect/unstable/rpc";
 import { relayRpcGroup, type RelayRpcs } from "@shared/rpc";
-import type { RendererRunEvent } from "@shared/types";
-
-type RelayRpcBridgeClientPacket = {
-  readonly clientId: number;
-  readonly message: RpcMessage.FromClientEncoded;
-};
-
-type RelayRpcBridgeServerPacket = {
-  readonly clientId: number;
-  readonly message: RpcMessage.FromServerEncoded;
-};
-
-type RelayRpcBridge = {
-  readonly send: (packet: RelayRpcBridgeClientPacket) => void;
-  readonly onMessage: (listener: (packet: RelayRpcBridgeServerPacket) => void) => () => void;
-  readonly onRunEvent: (listener: (event: RendererRunEvent) => void) => () => void;
-};
+import type { RendererRunEvent } from "@shared/schemas";
+import {
+  electronPreloadRpcBridgeFromWindow,
+  makeElectronRpcClientProtocol,
+  type ElectronPreloadRpcBridge
+} from "@platform/electron/Renderer";
 
 type RelayRpcFlatClient = RpcClient.RpcClient.Flat<RelayRpcs>;
 export type RelayRpcPayload<Tag extends RelayRpcs["_tag"]> = Rpc.PayloadConstructor<Rpc.ExtractTag<RelayRpcs, Tag>>;
@@ -29,13 +18,8 @@ export type RelayRpcRunner = <Tag extends RelayRpcs["_tag"]>(
 
 let testRunner: RelayRpcRunner | null = null;
 let clientPromise: Promise<RelayRpcFlatClient> | null = null;
-let electronBridgeUnsubscribe: (() => void) | null = null;
 
-const relayRpcBridge = (): RelayRpcBridge | null => {
-  if (typeof window === "undefined") return null;
-  const bridge = (window as unknown as { readonly relayRpc?: RelayRpcBridge }).relayRpc;
-  return bridge ?? null;
-};
+const relayRpcBridge = (): ElectronPreloadRpcBridge | null => electronPreloadRpcBridgeFromWindow();
 
 const rpcUrlFromLocation = (): { readonly rpcUrl: string; readonly eventsUrl: string; readonly token: string } | null => {
   if (typeof window === "undefined") return null;
@@ -62,26 +46,6 @@ const normalizeRpcFailure = (error: unknown): Error | unknown => {
   }
   return error;
 };
-
-const makeElectronRpcClientProtocol = (bridge: RelayRpcBridge): Effect.Effect<RpcClient.Protocol["Service"]> =>
-  RpcClient.Protocol.make((writeResponse) =>
-    Effect.sync(() => {
-      if (!electronBridgeUnsubscribe) {
-        electronBridgeUnsubscribe = bridge.onMessage((packet) => {
-          void Effect.runPromise(writeResponse(packet.clientId, packet.message)).catch(() => undefined);
-        });
-      }
-
-      return {
-        send: (clientId, message) =>
-          Effect.sync(() => {
-            bridge.send({ clientId, message });
-          }),
-        supportsAck: false,
-        supportsTransferables: false
-      };
-    })
-  );
 
 const makeHttpRpcClientProtocol = (http: {
   readonly rpcUrl: string;
@@ -137,7 +101,7 @@ const makeClient = async (): Promise<RelayRpcFlatClient> => {
       );
 
       if (bridge) {
-        const protocol = yield* makeElectronRpcClientProtocol(bridge);
+        const protocol = yield* makeElectronRpcClientProtocol(bridge).pipe(Effect.provideService(Scope.Scope, scope));
         return yield* clientEffect.pipe(Effect.provideService(RpcClient.Protocol, protocol));
       }
 

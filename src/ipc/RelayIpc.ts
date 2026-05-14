@@ -1,35 +1,61 @@
-import { Effect, Queue } from "effect";
-import { RpcServer } from "effect/unstable/rpc";
-import { relayRpcGroup } from "@shared/rpc";
-import { ElectronIpc, type ElectronIpcEvent, type ElectronIpcService, type ElectronIpcWebContents } from "../platform/electron";
+import { Effect, Queue, Scope } from "effect";
+import { Rpc, RpcServer } from "effect/unstable/rpc";
+import { relayRpcGroup, type RelayRpcs } from "@shared/rpc";
+import {
+  IpcMainRouter,
+  type IpcMainRouterEvent,
+  type IpcMainRouterService,
+  type IpcMainRouterWebContents
+} from "@platform/electron/IpcMainRouter";
 import { runBackendEffect } from "../runtime";
 import {
+  isRelayIpcRpcClientPacket,
   relayRpcClientMessageChannel,
   relayRpcServerMessageChannel,
-  type RelayIpcRpcClientPacket,
   type RelayIpcRpcServerPacket
-} from "./protocol";
+} from "@platform/electron/Protocol";
 
-export type RelayRpcEffectRunner = <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>;
+export type RelayRpcEffectRunner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
+export type RelayIpcRouterService = Pick<IpcMainRouterService, "on">;
+
+export type RelayIpcTransportServices =
+  | IpcMainRouter
+  | Rpc.ToHandler<RelayRpcs>
+  | Rpc.Middleware<RelayRpcs>
+  | Rpc.ServicesServer<RelayRpcs>
+  | Scope.Scope;
 
 type ClientRecord = {
-  readonly sender: ElectronIpcWebContents;
+  readonly sender: IpcMainRouterWebContents;
   readonly rendererClientId: number;
   readonly key: string;
 };
 
-const isClientPacket = (value: unknown): value is RelayIpcRpcClientPacket => {
-  if (typeof value !== "object" || value === null) return false;
-  const packet = value as { readonly clientId?: unknown; readonly message?: unknown };
-  return typeof packet.clientId === "number" && typeof packet.message === "object" && packet.message !== null;
-};
-
-const clientKey = (event: ElectronIpcEvent, rendererClientId: number): string => `${event.sender.id}:${rendererClientId}`;
+const clientKey = (event: IpcMainRouterEvent, rendererClientId: number): string => `${event.sender.id}:${rendererClientId}`;
 
 export const makeRelayIpcRpcServerProtocol = (
-  electronIpc: ElectronIpcService,
+  ipcRouter: RelayIpcRouterService,
   runEffect: RelayRpcEffectRunner = runBackendEffect
 ): Effect.Effect<RpcServer.Protocol["Service"]> =>
+  makeRelayIpcRpcServerProtocolInternal(ipcRouter, runEffect, () => Effect.void);
+
+const makeRelayIpcRpcServerProtocolScoped = (
+  ipcRouter: RelayIpcRouterService,
+  runEffect: RelayRpcEffectRunner = runBackendEffect
+): Effect.Effect<RpcServer.Protocol["Service"], never, Scope.Scope> =>
+  makeRelayIpcRpcServerProtocolInternal(ipcRouter, runEffect, (removeListener) =>
+    Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        removeListener();
+      })
+    )
+  );
+
+const makeRelayIpcRpcServerProtocolInternal = <R>(
+  ipcRouter: RelayIpcRouterService,
+  runEffect: RelayRpcEffectRunner,
+  registerCleanup: (removeListener: () => void) => Effect.Effect<void, never, R>
+): Effect.Effect<RpcServer.Protocol["Service"], never, R> =>
   RpcServer.Protocol.make((writeRequest) =>
     Effect.gen(function*() {
       const disconnects = yield* Queue.make<number>();
@@ -45,7 +71,7 @@ export const makeRelayIpcRpcServerProtocol = (
         clientIds.delete(serverClientId);
       };
 
-      const serverClientIdFor = (event: ElectronIpcEvent, rendererClientId: number): number => {
+      const serverClientIdFor = (event: IpcMainRouterEvent, rendererClientId: number): number => {
         const key = clientKey(event, rendererClientId);
         const existing = clientIdsByKey.get(key);
         if (existing !== undefined) {
@@ -60,14 +86,15 @@ export const makeRelayIpcRpcServerProtocol = (
         return serverClientId;
       };
 
-      yield* electronIpc.on(relayRpcClientMessageChannel, (event, payload) => {
-        if (!isClientPacket(payload)) return;
+      const removeListener = yield* ipcRouter.on(relayRpcClientMessageChannel, (event, payload) => {
+        if (!isRelayIpcRpcClientPacket(payload)) return;
         const serverClientId = serverClientIdFor(event, payload.clientId);
         void runEffect(writeRequest(serverClientId, payload.message)).catch(() => {
           removeClient(serverClientId);
           Queue.offerUnsafe(disconnects, serverClientId);
         });
-      });
+      }).pipe(Effect.orDie);
+      yield* registerCleanup(removeListener);
 
       return {
         disconnects,
@@ -97,12 +124,12 @@ export const makeRelayIpcRpcServerProtocol = (
     })
   );
 
-export const installRelayIpcTransport = () =>
+export const installRelayIpcTransport = (): Effect.Effect<void, never, RelayIpcTransportServices> =>
   Effect.gen(function*() {
-    const electronIpc = yield* ElectronIpc;
-    const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc);
+    const ipcRouter = yield* IpcMainRouter;
+    const protocol = yield* makeRelayIpcRpcServerProtocolScoped(ipcRouter);
     yield* RpcServer.make(relayRpcGroup, { spanPrefix: "RelayRpc" }).pipe(
       Effect.provideService(RpcServer.Protocol, protocol),
-      Effect.forkDetach({ startImmediately: true })
+      Effect.forkScoped({ startImmediately: true })
     );
   });

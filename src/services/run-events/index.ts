@@ -7,10 +7,11 @@ import {
   type RunStatus,
   type RunSummary,
   type RunUsageSummary
-} from "@shared/types";
+} from "@shared/schemas";
+import { relayCodexEventSchema, runLogLineSchema } from "@shared/schemas";
 import { RelayWindow } from "../window/RelayWindow";
 import { type BackendServices, fromPromise, runBackendEffect } from "../../runtime";
-import { parseSchema, relayCodexEventSchema, runLogLineSchema } from "../schemas";
+import { parseSchema } from "../schemas";
 import { makeFileSystemRunLog } from "../../storage";
 
 export type RendererRunEventSink = {
@@ -235,7 +236,7 @@ export const emitRunEvent = (
   runId: string,
   threadId: string,
   event: RelayCodexEvent
-): Promise<void> => runBackendEffect(RunEventSink.use((sink) => sink.emit(projectPath, ticketId, runId, threadId, event)));
+): Promise<void> => writeRunLog(projectPath, ticketId, runId, threadId, event);
 
 export const emitRunEventToRendererSink = (
   rendererSink: RendererRunEventSink,

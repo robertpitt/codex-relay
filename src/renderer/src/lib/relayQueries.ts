@@ -22,7 +22,7 @@ import type {
   TicketRedraftInput,
   TicketRecord,
   TicketSaveInput
-} from "@shared/types";
+} from "@shared/schemas";
 import { runRelayRpc, subscribeRelayRunEvents } from "./relayRpc";
 
 type ProjectPath = string | null | undefined;

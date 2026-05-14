@@ -1,5 +1,5 @@
 import { isSupportedImageAttachment } from "@shared/attachments";
-import type { TicketAttachmentSaveInput, TicketAttachmentSaveResult } from "@shared/types";
+import type { TicketAttachmentSaveInput, TicketAttachmentSaveResult } from "@shared/schemas";
 
 export type DroppedImageFile = Pick<File, "arrayBuffer" | "name" | "type">;
 

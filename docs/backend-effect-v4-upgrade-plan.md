@@ -36,7 +36,7 @@ The existing Effect usage is an adapter-style first pass, not a complete Effect 
   - This should become the single backend runtime composition point before more services are migrated.
 - `src/main/services/logger.ts`
   - Console and file logging to Electron `app.getPath("userData")/relay.log`.
-  - Already exposes `logEffect` and Promise wrappers. It uses `BackendClock` but still has direct Electron path access and local JSON serialization.
+  - Uses Effect logging through `LoggerLive`; Promise wrappers are retained only for existing Promise-facing modules.
 - `src/main/services/storage.ts`
   - File-backed Relay project store. Owns `.relay/project.json`, ticket markdown front matter, `.relay/runs`, `.relay/clarifications`, `.relay/audit.jsonl`, trash, attachments, and backups.
   - Uses `gray-matter`, Zod schemas from `schemas.ts`, atomic write helpers, path helpers, and `TicketNotFoundError`.
@@ -132,7 +132,7 @@ Recommended service graph:
 
 - `BackendClock`
   - Current service; keep as a shared dependency.
-- `BackendLogger`
+- Effect `Logger` through `LoggerLive`
   - Wrap structured file/console logging, metadata redaction, and eventually Effect `Logger`.
 - `BackendConfig`
   - App/process runtime settings from `Config` and `ConfigProvider`.
@@ -221,7 +221,7 @@ Short term:
 
 Longer term:
 
-- Back `BackendLogger` with Effect `Logger`.
+- Back Relay logging directly with Effect `Logger`.
 - Add counters/timers for draft latency, run starts, cancellations, invalid responses, Git metadata failures, and persistence failures.
 - Introduce tracing spans around draft research, SDK calls, run event processing, storage writes, and IPC entry points.
 
@@ -313,7 +313,7 @@ Scope:
 
 - Turn `effectRuntime.ts` into the canonical runtime/layer module.
 - Add app-level config parsing with Effect `Config`.
-- Move logging behind a `BackendLogger` service while preserving `logInfo`, `logWarn`, and `logError` Promise wrappers.
+- Move logging onto Effect's logger layer while preserving `logInfo`, `logWarn`, and `logError` as Promise boundary adapters.
 
 Files to inspect/change:
 
@@ -325,7 +325,7 @@ Files to inspect/change:
 
 Expected code patterns:
 
-- `Context.Service` identifiers for `BackendConfig` and `BackendLogger`.
+- `Context.Service` identifiers for `BackendConfig`; logging is provided by Effect's logger layer.
 - `Layer.succeed` for simple test services.
 - `Config.all`, `Config.withDefault`, and `ConfigProvider.fromEnv` for production defaults.
 - `ConfigProvider.fromUnknown` in tests.

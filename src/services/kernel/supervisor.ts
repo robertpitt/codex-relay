@@ -1,11 +1,13 @@
-import { Context, Effect, Layer, Option } from "effect";
-import type { AgentTicketUpdateInput, CreateDraftInput, StartRunInput } from "@shared/types";
-import { appendTextFileEffect, makeDirectoryEffect, pathDirname, pathResolve } from "../../io";
-import { RegistryStore } from "../registry";
-import { BackendClock, runBackendEffect } from "../../runtime";
+import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import { WorkflowEngine } from "effect/unstable/workflow";
+import type { AgentTicketUpdateInput, CreateDraftInput, StartRunInput } from "@shared/schemas";
+import { pathResolve } from "../../io";
+import { RegistryStore, RegistryStoreLive } from "../registry";
+import { BackendClock, type BackendIoServices, type BackendServicesBase, runBackendEffect } from "../../runtime";
 import { kernelAuditLogPath } from "../../storage/paths";
 import { RelayWorkflowEngineLive } from "./engine";
 import { JobLedger, JobLedgerLive } from "./ledger";
+import { KernelPersistenceError, KernelWorkflowError, type KernelError, kernelPersistenceError } from "./errors";
 import {
   type JobCommandType,
   type JobExecutionHandle,
@@ -17,7 +19,18 @@ import {
 } from "./types";
 import { RelayExternalJobWorkflow, RELAY_EXTERNAL_JOB_WORKFLOW_NAME, type ExternalJobWorkflowPayload } from "./workflows";
 
-type SupervisorEffect<A> = Effect.Effect<A, unknown, any>;
+type SupervisorCoreServices =
+  | BackendServicesBase
+  | BackendIoServices
+  | Context.Service.Identifier<typeof JobLedger>
+  | Context.Service.Identifier<typeof AuditService>
+  | Context.Service.Identifier<typeof IdempotencyService>
+  | Context.Service.Identifier<typeof JobSupervisor>
+  | Context.Service.Identifier<typeof WorkflowEngine.WorkflowEngine>;
+
+type SupervisorServices = SupervisorCoreServices | Context.Service.Identifier<typeof RegistryStore>;
+type SupervisorEffect<A, Extra = never> = Effect.Effect<A, KernelError, SupervisorCoreServices | Extra>;
+type AuditEffect<A> = Effect.Effect<A, KernelPersistenceError, BackendServicesBase | BackendIoServices>;
 
 export type IdempotencyService = {
   readonly key: (parts: readonly unknown[]) => string;
@@ -44,14 +57,17 @@ export type AuditService = {
     readonly runId?: string | null;
     readonly ticketId?: string | null;
     readonly payload?: Record<string, unknown>;
-  }) => SupervisorEffect<void>;
+  }) => AuditEffect<void>;
 };
 
 export const AuditService = Context.Service<AuditService>("relay/AuditService");
 
 export const AuditServiceLive = Layer.succeed(AuditService)({
-  emit: (event) =>
-    Effect.gen(function*() {
+  emit: (event) => {
+    const target = kernelAuditLogPath(event.projectPath);
+    return Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const clock = yield* BackendClock;
       const record = {
         schemaVersion: RELAY_KERNEL_SCHEMA_VERSION,
@@ -65,10 +81,14 @@ export const AuditServiceLive = Layer.succeed(AuditService)({
         ticketId: event.ticketId ?? null,
         payload: event.payload ?? {}
       };
-      const target = kernelAuditLogPath(event.projectPath);
-      yield* makeDirectoryEffect(pathDirname(target));
-      yield* appendTextFileEffect(target, `${JSON.stringify(record)}\n`);
-    })
+      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+      yield* fs.writeFileString(target, `${JSON.stringify(record)}\n`, { flag: "a" });
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof KernelPersistenceError ? cause : kernelPersistenceError(target, "append kernel audit event", cause)
+      )
+    );
+  }
 });
 
 export type WorkerRegistry = {
@@ -105,7 +125,7 @@ export type JobSupervisorService = {
   readonly cancel: (projectPath: string, executionId: string) => SupervisorEffect<void>;
   readonly resume: (projectPath: string, executionId: string) => SupervisorEffect<void>;
   readonly recoverProject: (projectPath: string) => SupervisorEffect<JobExecutionHandle[]>;
-  readonly recoverFromRegistry: () => SupervisorEffect<JobExecutionHandle[]>;
+  readonly recoverFromRegistry: () => SupervisorEffect<JobExecutionHandle[], Context.Service.Identifier<typeof RegistryStore>>;
 };
 
 export const JobSupervisor = Context.Service<JobSupervisorService>("relay/JobSupervisor");
@@ -118,6 +138,14 @@ const externalPayload = (input: JobSubmitInput): ExternalJobWorkflowPayload => (
   ticketId: input.ticketId ?? null,
   payload: input.payload
 });
+
+const workflowError = (message: string, cause: unknown, executionId?: string): KernelWorkflowError =>
+  new KernelWorkflowError({
+    executionId,
+    workflowName: RELAY_EXTERNAL_JOB_WORKFLOW_NAME,
+    message,
+    cause
+  });
 
 const submit = (input: JobSubmitInput): SupervisorEffect<JobExecutionHandle> =>
   Effect.gen(function*() {
@@ -136,7 +164,9 @@ const submit = (input: JobSubmitInput): SupervisorEffect<JobExecutionHandle> =>
       ticketId: input.ticketId,
       payload: { commandType: input.commandType, status: queued.status }
     });
-    yield* RelayExternalJobWorkflow.execute(payload, { discard: true });
+    yield* RelayExternalJobWorkflow.execute(payload, { discard: true }).pipe(
+      Effect.catch((cause: unknown) => Effect.fail(workflowError("Failed to start kernel workflow.", cause, input.executionId)))
+    );
     return snapshotToHandle(queued);
   });
 
@@ -290,9 +320,13 @@ const recoverProject: JobSupervisorService["recoverProject"] = (projectPathInput
     return handles;
   });
 
-const recoverFromRegistry = (): SupervisorEffect<JobExecutionHandle[]> =>
+const recoverFromRegistry = (): SupervisorEffect<JobExecutionHandle[], Context.Service.Identifier<typeof RegistryStore>> =>
   Effect.gen(function*() {
-    const registry = yield* RegistryStore.use((store) => store.read());
+    const registry = yield* RegistryStore.use((store) => store.read()).pipe(
+      Effect.catch((cause: unknown) =>
+        Effect.fail(kernelPersistenceError("app registry", "read kernel recovery registry", cause))
+      )
+    );
     const handles: JobExecutionHandle[] = [];
     for (const project of registry.projects) {
       const recovered = yield* Effect.catch(recoverProject(project.path), () => Effect.succeed<JobExecutionHandle[]>([]));
@@ -330,20 +364,13 @@ const SupervisorRuntimeLive = Layer.mergeAll(
   IdempotencyServiceLive,
   AuditServiceLive,
   WorkerRegistryLive,
+  RegistryStoreLive,
   JobSupervisorLive,
   RelayWorkflowEngineLive.pipe(Layer.provide(JobLedgerLive))
 );
 
-const runSupervisor = <A>(effect: Effect.Effect<A, unknown, any>): Promise<A> =>
-  runBackendEffect(
-    Effect.gen(function*() {
-      const supervisor = yield* Effect.serviceOption(JobSupervisor);
-      if (Option.isSome(supervisor)) {
-        return yield* effect;
-      }
-      return yield* Effect.provide(effect, SupervisorRuntimeLive);
-    })
-  );
+const runSupervisor = <A>(effect: Effect.Effect<A, KernelError, SupervisorServices>): Promise<A> =>
+  runBackendEffect(Effect.provide(effect, SupervisorRuntimeLive));
 
 export const submitCodexImplementationJob = (
   input: StartRunInput,

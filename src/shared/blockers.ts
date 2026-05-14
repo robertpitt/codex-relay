@@ -1,4 +1,4 @@
-import type { RelayColumn, TicketFrontMatter } from "./types";
+import type { RelayColumn, TicketFrontMatter } from "./schemas";
 
 export type TicketBlockerItem = Pick<
   TicketFrontMatter,

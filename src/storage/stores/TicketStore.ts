@@ -14,7 +14,7 @@ import type {
   TicketReferenceCandidate,
   TicketSaveInput,
   TicketSummary
-} from "@shared/types";
+} from "@shared/schemas";
 import * as FileSystemStorage from "../filesystem";
 import type { StatusTransitionOptions } from "../filesystem";
 import { ticketPath, ticketsPath } from "../paths";

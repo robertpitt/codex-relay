@@ -2,7 +2,7 @@
  * Ref-backed cache for Git metadata snapshots.
  */
 import { Context, Effect, Layer, Ref } from "effect";
-import type { GitMetadata } from "@shared/types";
+import type { GitMetadata } from "@shared/schemas";
 
 type CacheEntry = {
   readonly value: GitMetadata;

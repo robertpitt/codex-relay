@@ -18,40 +18,35 @@ import type {
   TicketRecord,
   TicketSaveInput,
   TicketSummary
-} from "@shared/types";
-import { BackendConfig, BackendServicesBaseLive, runBackendEffect } from "../runtime";
+} from "@shared/schemas";
+import {
+  BackendConfig,
+  BackendServicesBaseLive,
+  runBackendEffect,
+  type BackendIoServices,
+  type BackendServices,
+  type BackendServicesBase
+} from "../runtime";
 import * as FileSystemStorage from "./filesystem";
 import type { ClarificationQuestionCreateOptions, StatusTransitionOptions } from "./filesystem";
-import {
-  ArtifactStore,
-  AuditLog,
-  ClarificationStore,
-  FileSystemArtifactStoreLive,
-  FileSystemAuditLogLive,
-  FileSystemClarificationStoreLive,
-  FileSystemProjectStoreLive,
-  FileSystemRunLogLive,
-  FileSystemTicketStoreLive,
-  ProjectStore,
-  RunLog,
-  TicketStore,
-  type ArtifactStoreService,
-  type ClarificationStoreService,
-  type ProjectStoreService,
-  type TicketStoreService
-} from "./stores";
+import { ArtifactStore, FileSystemArtifactStoreLive, type ArtifactStoreService } from "./stores/ArtifactStore";
+import { AuditLog, FileSystemAuditLogLive } from "./stores/AuditLog";
+import { ClarificationStore, FileSystemClarificationStoreLive, type ClarificationStoreService } from "./stores/ClarificationStore";
+import { FileSystemProjectStoreLive, ProjectStore, type ProjectStoreService } from "./stores/ProjectStore";
+import { FileSystemRunLogLive, RunLog } from "./stores/RunLog";
+import { FileSystemTicketStoreLive, TicketStore, type TicketStoreService } from "./stores/TicketStore";
 
 export { TicketNotFoundError, isTicketNotFoundError } from "./errors";
 export { newId } from "./ids";
 export { runsPath } from "./paths";
 export { appendCodexHandoff } from "./filesystem";
 export { AtomicFile, AtomicFileLive } from "./AtomicFile";
-export * from "./stores";
+export { makeFileSystemRunLog } from "./stores/RunLog";
 export type { ClarificationQuestionCreateOptions, StatusTransitionOptions } from "./filesystem";
 
 export type StorageAdapterName = "filesystem";
 
-type StorageEffect<A> = Effect.Effect<A, unknown, any>;
+type StorageEffect<A> = Effect.Effect<A, unknown, BackendServicesBase | BackendIoServices>;
 
 export type StorageService = {
   readonly adapter: StorageAdapterName;
@@ -206,7 +201,9 @@ export const StorageLive = Layer.effect(
   })
 ).pipe(Layer.provide(FileSystemStoresLive));
 
-const runStorage = <A, R>(effect: Effect.Effect<A, unknown, R>): Promise<A> =>
+const runStorage = <A>(
+  effect: Effect.Effect<A, unknown, BackendServices | Context.Service.Identifier<typeof Storage>>
+): Promise<A> =>
   runBackendEffect(Effect.provide(effect, StorageLive.pipe(Layer.provide(BackendServicesBaseLive))));
 
 const runStorageMethod = <A>(evaluate: (storage: StorageService) => StorageEffect<A>): Promise<A> =>

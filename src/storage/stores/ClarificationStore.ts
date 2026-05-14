@@ -2,7 +2,7 @@
  * Clarification question storage for blocked draft and implementation runs.
  */
 import { Context, Layer } from "effect";
-import type { ClarificationQuestion, ClarificationQuestionCreateInput } from "@shared/types";
+import type { ClarificationQuestion, ClarificationQuestionCreateInput } from "@shared/schemas";
 import * as FileSystemStorage from "../filesystem";
 import type { ClarificationQuestionCreateOptions } from "../filesystem";
 import { clarificationStorePath } from "../paths";

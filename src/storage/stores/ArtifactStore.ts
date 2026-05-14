@@ -2,7 +2,7 @@
  * Artifact storage for user-provided ticket attachments.
  */
 import { Context, Effect, FileSystem, Layer } from "effect";
-import type { TicketAttachmentSaveInput, TicketAttachmentSaveResult } from "@shared/types";
+import type { TicketAttachmentSaveInput, TicketAttachmentSaveResult } from "@shared/schemas";
 import { imageAttachmentExtension, isSupportedImageAttachment } from "@shared/attachments";
 import { pathBasename, pathExtname, pathJoin, pathRelative } from "../../io";
 import { newId } from "../ids";

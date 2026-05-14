@@ -9,7 +9,10 @@ import type { RelayHttpServerHandle, RelayHttpServerOptions } from "../src/http"
 const runTestEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
   Effect.runPromise(effect as Effect.Effect<A, E, never>);
 
-const startTestServer = async (t: TestContext, options: RelayHttpServerOptions = {}): Promise<RelayHttpServerHandle | null> => {
+const startTestServer = async (
+  t: TestContext,
+  options: Omit<Partial<RelayHttpServerOptions>, "runEffect"> = {}
+): Promise<RelayHttpServerHandle | null> => {
   try {
     return await startRelayHttpServer({ token: "test-token", runEffect: runTestEffect, ...options });
   } catch (error) {

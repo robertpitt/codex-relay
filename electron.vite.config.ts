@@ -20,7 +20,9 @@ const aliases = {
   "@shared": resolve(__dirname, "src/shared"),
   "@shared/": resolve(__dirname, "src/shared") + "/",
   "@storage": resolve(__dirname, "src/storage"),
-  "@storage/": resolve(__dirname, "src/storage") + "/"
+  "@storage/": resolve(__dirname, "src/storage") + "/",
+  "@workflows": resolve(__dirname, "src/workflows"),
+  "@workflows/": resolve(__dirname, "src/workflows") + "/"
 };
 
 export default defineConfig({
@@ -46,6 +48,10 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/preload.app.ts")
+        },
+        output: {
+          entryFileNames: "[name].cjs",
+          format: "cjs"
         }
       }
     }

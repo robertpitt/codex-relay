@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Scope } from "effect";
 import { RpcMessage, RpcServer, RpcSerialization } from "effect/unstable/rpc";
 import { relayRpcGroup } from "@shared/rpc";
-import { relayTransportFailureFromError, transportBodyDecodeError, type RelayRpcEffectRunner } from "../ipc";
+import { relayTransportFailureFromError, transportBodyDecodeError } from "../ipc";
 import { logInfo } from "../services/logger";
 import { runBackendEffect } from "../runtime";
 import { HostRuntime } from "../io";
@@ -15,7 +15,7 @@ export type RelayHttpServerOptions = {
   readonly port?: number;
   readonly token?: string;
   readonly handlerLayer?: Layer.Layer<never, unknown, unknown>;
-  readonly runEffect?: RelayRpcEffectRunner;
+  readonly runEffect: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>;
 };
 
 export type RelayHttpServerHandle = {
@@ -180,8 +180,8 @@ export const startRelayHttpServer = async ({
   port = 0,
   token = randomBytes(24).toString("base64url"),
   handlerLayer = RelayRpcHandlersLive,
-  runEffect = runBackendEffect
-}: RelayHttpServerOptions = {}): Promise<RelayHttpServerHandle> => {
+  runEffect
+}: RelayHttpServerOptions): Promise<RelayHttpServerHandle> => {
   const bridge = await runEffect(makeRelayHttpRpcBridge(handlerLayer));
 
   const server = createServer(async (request, response) => {

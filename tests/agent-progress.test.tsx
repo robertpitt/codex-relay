@@ -7,9 +7,10 @@ import {
   agentEventText,
   agentEventTone,
   deriveAgentProgress,
-  formatElapsedDuration
+  formatElapsedDuration,
+  mergeRunEvents
 } from "../src/renderer/src/lib/agentProgress";
-import type { RendererRunEvent } from "../src/shared/types";
+import type { RendererRunEvent } from "../src/shared/schemas";
 
 const baseEvent = {
   projectPath: "/tmp/relay-project",
@@ -226,6 +227,16 @@ test("agent progress utilities describe todo and MCP events", () => {
   assert.match(markup, /mcp.tool_call/);
   assert.match(markup, /Persist structured events/);
   assert.match(markup, /github.search/);
+});
+
+test("agent progress utilities tolerate partial persisted events", () => {
+  const clarification = event({
+    type: "clarification.requested",
+    timestamp: "2026-05-11T10:00:30.000Z"
+  } as Partial<RendererRunEvent> & { type: RendererRunEvent["type"]; timestamp: string });
+
+  assert.equal(agentEventText(clarification), "Clarification requested");
+  assert.deepEqual(mergeRunEvents([clarification]), [clarification]);
 });
 
 test("agent log viewer distinguishes loading, failed, and empty states", () => {

@@ -33,7 +33,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { CSSProperties, DragEvent, KeyboardEvent, ReactElement, Ref, RefObject } from "react";
-import { RELAY_IN_PROGRESS_STATUS } from "@shared/types";
+import { RELAY_IN_PROGRESS_STATUS } from "@shared/schemas";
 import type {
   BoardSnapshot,
   ClarificationQuestion,
@@ -58,7 +58,7 @@ import type {
   TicketSuggestion,
   TicketSummary,
   TicketType
-} from "@shared/types";
+} from "@shared/schemas";
 import {
   resolveTicketBlockers,
   resolvedBlockerLabel,
@@ -69,7 +69,7 @@ import { AgentActivityPanel, AgentLogViewer, AgentProgressSummary } from "./comp
 import { ClarificationPanel } from "./components/ClarificationPanel";
 import { GitMetadataPill, loadingGitMetadata } from "./components/GitMetadata";
 import { MarkdownBlock } from "./components/MarkdownBlock";
-import { Button, Dialog, DialogBackdrop, Dropdown, DropdownSelect, Field, IconButton, Input, Panel, Select, Textarea } from "./components/ui";
+import { Button, Dialog, DialogBackdrop, Dropdown, DropdownSelect, Field, Input, Select, Textarea } from "./components/ui";
 import { formatElapsedDuration, isAgentSessionActive, mergeRunEvents } from "./lib/agentProgress";
 import {
   attachmentMarkdownBlock,

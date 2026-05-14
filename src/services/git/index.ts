@@ -1,10 +1,10 @@
-import { Effect, Layer } from "effect";
-import type { GitMetadata } from "@shared/types";
+import { Context, Effect, Layer } from "effect";
+import type { GitMetadata } from "@shared/schemas";
 import { Git, GitLive } from "./Git";
-import { GitCliFromRunner, GitCliLive, type GitCommandResult, type GitCommandRunner } from "./GitCli";
-import { GitMetadataCacheLive } from "./GitMetadataCache";
+import { GitCli, GitCliFromRunner, GitCliLive, type GitCommandResult, type GitCommandRunner } from "./GitCli";
+import { GitMetadataCache, GitMetadataCacheLive } from "./GitMetadataCache";
 import { parsePorcelainChangedFileCount } from "./GitStatus";
-import { BackendServicesBaseLive, runBackendEffect } from "../../runtime";
+import { BackendServicesBaseLive, runBackendEffect, type BackendServices } from "../../runtime";
 import { IoLive } from "../../io";
 
 export { Git, GitCliFromRunner, GitCliLive, GitLive, GitMetadataCacheLive, parsePorcelainChangedFileCount };
@@ -28,7 +28,13 @@ export const GitServiceLive = Layer.mergeAll(GitLive, GitCliLive, GitMetadataCac
 const layerForDependencies = (dependencies: GitMetadataDependencies = {}) =>
   Layer.mergeAll(GitLive, dependencies.execGit ? GitCliFromRunner(dependencies.execGit) : GitCliLive, GitMetadataCacheLive);
 
-const runGit = <A>(effect: Effect.Effect<A, unknown, any>, layer = GitServiceLive): Promise<A> =>
+type GitRunnerServices =
+  | BackendServices
+  | Context.Service.Identifier<typeof Git>
+  | Context.Service.Identifier<typeof GitCli>
+  | Context.Service.Identifier<typeof GitMetadataCache>;
+
+const runGit = <A>(effect: Effect.Effect<A, unknown, GitRunnerServices>, layer = GitServiceLive): Promise<A> =>
   runBackendEffect(Effect.provide(effect, layer.pipe(Layer.provideMerge(BackendServicesBaseLive), Layer.provideMerge(IoLive))));
 
 export const readGitMetadata = (projectPath: string, dependencies: GitMetadataDependencies = {}): Promise<GitMetadata> =>

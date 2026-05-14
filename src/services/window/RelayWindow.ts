@@ -1,16 +1,13 @@
 import { Context, Effect, Layer } from "effect";
-import type { RendererRunEvent } from "@shared/types";
+import type { RendererRunEvent } from "@shared/schemas";
 import { ElectronWindow, type ElectronMainWindowOptions, type ElectronWindowService } from "../../platform/electron";
-import { pathJoin } from "../../io";
 import { logError } from "../logger";
 
-export type RelayWindowOptions = Pick<ElectronMainWindowOptions, "preloadPath" | "rendererHtmlPath" | "rendererUrl">;
-
 export type RelayWindowService = {
-  readonly createMain: (options: RelayWindowOptions) => Effect.Effect<void, unknown>;
-  readonly ensureMain: (options: RelayWindowOptions) => Effect.Effect<void, unknown>;
-  readonly revealOrCreateMain: (options: RelayWindowOptions) => Effect.Effect<void, unknown>;
-  readonly activate: (options: RelayWindowOptions) => Effect.Effect<void, unknown>;
+  readonly createMain: () => Effect.Effect<void, unknown>;
+  readonly ensureMain: () => Effect.Effect<void, unknown>;
+  readonly revealOrCreateMain: () => Effect.Effect<void, unknown>;
+  readonly activate: () => Effect.Effect<void, unknown>;
   readonly sendRunEvent: (event: RendererRunEvent) => Effect.Effect<void>;
   readonly destroyAll: () => Effect.Effect<void>;
 };
@@ -18,29 +15,28 @@ export type RelayWindowService = {
 export const RelayWindow = Context.Service<RelayWindowService>("relay/RelayWindow");
 
 export const makeRelayWindowService = (electronWindow: ElectronWindowService): RelayWindowService => {
-  const withLogging = (options: RelayWindowOptions): ElectronMainWindowOptions => ({
-    ...options,
+  const mainWindowOptions = (): ElectronMainWindowOptions => ({
     onRendererError: (scope, error) => {
       void logError(scope, "renderer failure", error);
     }
   });
 
   const service: RelayWindowService = {
-    createMain: (options) => electronWindow.createMainWindow(withLogging(options)),
-    ensureMain: (options) =>
+    createMain: () => electronWindow.createMainWindow(mainWindowOptions()),
+    ensureMain: () =>
       Effect.gen(function*() {
         if (yield* electronWindow.hasOpenWindows()) return;
-        yield* service.createMain(options);
+        yield* service.createMain();
       }),
-    revealOrCreateMain: (options) =>
+    revealOrCreateMain: () =>
       Effect.gen(function*() {
         if (yield* electronWindow.hasOpenWindows()) {
           yield* electronWindow.focusMainWindow();
           return;
         }
-        yield* service.createMain(options);
+        yield* service.createMain();
       }),
-    activate: (options) => service.revealOrCreateMain(options),
+    activate: () => service.revealOrCreateMain(),
     sendRunEvent: (event) => electronWindow.sendRunEvent(event),
     destroyAll: () => electronWindow.destroyAll()
   };
@@ -55,9 +51,3 @@ export const RelayWindowLive = Layer.effect(
     return makeRelayWindowService(electronWindow);
   })
 );
-
-export const relayWindowPaths = (dirname: string, rendererUrl?: string): RelayWindowOptions => ({
-  preloadPath: pathJoin(dirname, "../preload/index.mjs"),
-  rendererHtmlPath: pathJoin(dirname, "../renderer/index.html"),
-  rendererUrl
-});

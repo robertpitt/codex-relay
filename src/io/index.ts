@@ -1,21 +1,41 @@
 import { Layer } from "effect";
-import { FetchHttpClientLive, NodeFileSystemLive, NodeHostRuntimeLive } from "../platform";
+import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
+import { FetchHttpClientLive } from "../platform/FetchHttpClient";
+import { NodeFileSystemLive } from "../platform/NodeFileSystem";
+import { NodeHostRuntimeLive } from "../platform/NodeHostRuntime";
+import { SocketBoundaryLive } from "../platform/SocketBoundary";
 import { NodePathLive } from "./path";
-import { CommandExecutorLive } from "./process";
-import { SocketBoundaryLive } from "./socket";
 
-export * from "./filesystem";
-export * from "./HostRuntime";
-export * from "./http";
-export * from "./path";
-export * from "./process";
-export * from "./socket";
+export {
+  HostRuntime,
+  hostCwd,
+  hostEnvironment,
+  hostEnvVar,
+  hostHomeDirectory,
+  hostResolvePackageJson,
+  hostRuntimePlatform,
+  type HostRuntimeService,
+  type RuntimePlatform
+} from "./HostRuntime";
+export { fetchUrlEffect, HttpClient, type HttpClientService } from "./http";
+export {
+  NodePathLive,
+  pathBasename,
+  pathDirname,
+  pathExtname,
+  pathIsAbsolute,
+  pathJoin,
+  pathRelative,
+  pathResolve,
+  PathLive
+} from "./path";
 
-export const IoLive = Layer.mergeAll(
+const BaseIoLive = Layer.mergeAll(
   NodeFileSystemLive,
   NodePathLive,
   NodeHostRuntimeLive,
-  CommandExecutorLive,
   FetchHttpClientLive,
   SocketBoundaryLive
 );
+
+export const IoLive = Layer.provideMerge(NodeChildProcessSpawner.layer, BaseIoLive);

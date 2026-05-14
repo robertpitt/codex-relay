@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { AlertTriangle, Check, GitBranch, GitCommitHorizontal, Loader2 } from "lucide-react";
 import type { ReactElement } from "react";
-import type { GitMetadata } from "@shared/types";
+import type { GitMetadata } from "@shared/schemas";
 
 export const loadingGitMetadata = (): GitMetadata => ({
   state: "loading",

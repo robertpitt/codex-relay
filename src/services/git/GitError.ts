@@ -39,8 +39,12 @@ export const commandMessage = (error: unknown, fallback = "Git command failed.")
   return error instanceof Error ? error.message : fallback;
 };
 
-export const isMissingGitBinaryCause = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+export const isMissingGitBinaryCause = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  if ("code" in error && (error as { code?: unknown }).code === "ENOENT") return true;
+  const platformError = error as { _tag?: unknown; reason?: { _tag?: unknown; module?: unknown } };
+  return platformError._tag === "PlatformError" && platformError.reason?._tag === "NotFound";
+};
 
 export const isNotGitRepositoryMessage = (message: string): boolean => /not a git repository|not a git dir/i.test(message);
 

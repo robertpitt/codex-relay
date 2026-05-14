@@ -39,8 +39,14 @@ import {
   type TicketRedraftInput,
   type TicketRecord,
   type TicketSuggestion
-} from "@shared/types";
+} from "@shared/schemas";
 import { resolvedBlockerLabel, resolveTicketBlockers } from "@shared/blockers";
+import {
+  agentTicketUpdateSchema,
+  draftIntakeResultSchema,
+  ticketDraftSchema,
+  ticketSuggestionsResponseSchema
+} from "@shared/schemas";
 import { extractClarificationRequest } from "../clarificationParser";
 import { type BackendEffect, type BackendServices, fromPromise, runBackendEffect } from "../../runtime";
 import {
@@ -52,12 +58,8 @@ import {
   type RendererRunEventSink
 } from "../run-events";
 import {
-  agentTicketUpdateSchema,
-  draftIntakeResultSchema,
   isRelaySchemaError,
-  parseSchema,
-  ticketDraftSchema,
-  ticketSuggestionsResponseSchema
+  parseSchema
 } from "../schemas";
 import { logError, logInfo, logWarn } from "../logger";
 import { HostRuntime, pathIsAbsolute, pathRelative, pathResolve } from "../../io";
@@ -2945,7 +2947,9 @@ const updateTicketRunStateEffect = (
       (error) =>
         Effect.gen(function*() {
           if (isTicketNotFoundError(error)) {
-            yield* fromPromise(() => logWarn("codex:run", "ticket file missing", { projectPath, ticketId, filePath: error.filePath }));
+            yield* Effect.logWarning("ticket file missing").pipe(
+              Effect.annotateLogs({ scope: "codex:run", projectPath, ticketId, filePath: error.filePath })
+            );
           }
           return yield* Effect.fail(error);
         })

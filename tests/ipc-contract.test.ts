@@ -9,10 +9,11 @@ import {
   makeRelayIpcRpcServerProtocol,
   relayRpcClientMessageChannel,
   relayRpcServerMessageChannel,
+  type RelayIpcRouterService,
   type RelayIpcRpcServerPacket
 } from "../src/ipc";
 import { openProjectInEditor } from "../src/services/rpc/handlers";
-import type { ElectronIpcEvent, ElectronIpcListener, ElectronIpcService } from "../src/platform/electron";
+import type { IpcMainRouterEvent, IpcMainRouterListener } from "../src/platform/electron";
 
 const runTestEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
   Effect.runPromise(effect as Effect.Effect<A, E, never>);
@@ -34,11 +35,9 @@ test("Relay RPC group keeps one schema-backed RPC for every legacy tag", () => {
 });
 
 test("Electron IPC transport forwards encoded RPC requests and responses", async () => {
-  let listener: ElectronIpcListener | null = null;
+  let listener: IpcMainRouterListener | null = null;
   const sent: RelayIpcRpcServerPacket[] = [];
-  const electronIpc: ElectronIpcService = {
-    handle: () => Effect.void,
-    removeHandler: () => Effect.void,
+  const ipcRouter: RelayIpcRouterService = {
     on: (channel, nextListener) =>
       Effect.sync(() => {
         assert.equal(channel, relayRpcClientMessageChannel);
@@ -48,7 +47,7 @@ test("Electron IPC transport forwards encoded RPC requests and responses", async
         };
       })
   };
-  const event: ElectronIpcEvent = {
+  const event: IpcMainRouterEvent = {
     sender: {
       id: 42,
       isDestroyed: () => false,
@@ -75,7 +74,7 @@ test("Electron IPC transport forwards encoded RPC requests and responses", async
 
   const serverFiber = await runTestEffect(
     Effect.gen(function*() {
-      const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc, runTestEffect);
+      const protocol = yield* makeRelayIpcRpcServerProtocol(ipcRouter, runTestEffect);
       return yield* RpcServer.make(relayRpcGroup, { disableFatalDefects: true }).pipe(
         Effect.provideService(RpcServer.Protocol, protocol),
         Effect.provide(handlers),
@@ -85,7 +84,7 @@ test("Electron IPC transport forwards encoded RPC requests and responses", async
   );
 
   try {
-    const emit = listener as ElectronIpcListener | null;
+    const emit = listener as IpcMainRouterListener | null;
     assert.ok(emit);
     emit(event, {
       clientId: 7,
@@ -108,11 +107,9 @@ test("Electron IPC transport forwards encoded RPC requests and responses", async
 });
 
 test("Electron IPC transport forwards encoded RPC interrupts", async () => {
-  let listener: ElectronIpcListener | null = null;
+  let listener: IpcMainRouterListener | null = null;
   const forwarded: Array<{ readonly clientId: number; readonly message: { readonly _tag: string; readonly requestId?: string } }> = [];
-  const electronIpc: ElectronIpcService = {
-    handle: () => Effect.void,
-    removeHandler: () => Effect.void,
+  const ipcRouter: RelayIpcRouterService = {
     on: (_channel, nextListener) =>
       Effect.sync(() => {
         listener = nextListener;
@@ -121,7 +118,7 @@ test("Electron IPC transport forwards encoded RPC interrupts", async () => {
         };
       })
   };
-  const event: ElectronIpcEvent = {
+  const event: IpcMainRouterEvent = {
     sender: {
       id: 44,
       isDestroyed: () => false,
@@ -131,7 +128,7 @@ test("Electron IPC transport forwards encoded RPC interrupts", async () => {
 
   const runFiber = await runTestEffect(
     Effect.gen(function*() {
-      const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc, runTestEffect);
+      const protocol = yield* makeRelayIpcRpcServerProtocol(ipcRouter, runTestEffect);
       return yield* protocol.run((clientId, message) =>
         Effect.sync(() => {
           forwarded.push({ clientId, message });
@@ -141,7 +138,7 @@ test("Electron IPC transport forwards encoded RPC interrupts", async () => {
   );
 
   try {
-    const emit = listener as ElectronIpcListener | null;
+    const emit = listener as IpcMainRouterListener | null;
     assert.ok(emit);
     emit(event, { clientId: 9, message: { _tag: "Interrupt", requestId: "1" } });
 
@@ -154,19 +151,17 @@ test("Electron IPC transport forwards encoded RPC interrupts", async () => {
 });
 
 test("Electron IPC transport lets RPC schema rejection happen before handlers run", async () => {
-  let listener: ElectronIpcListener | null = null;
+  let listener: IpcMainRouterListener | null = null;
   let called = false;
   const sent: RelayIpcRpcServerPacket[] = [];
-  const electronIpc: ElectronIpcService = {
-    handle: () => Effect.void,
-    removeHandler: () => Effect.void,
+  const ipcRouter: RelayIpcRouterService = {
     on: (_channel, nextListener) =>
       Effect.sync(() => {
         listener = nextListener;
         return () => undefined;
       })
   };
-  const event: ElectronIpcEvent = {
+  const event: IpcMainRouterEvent = {
     sender: {
       id: 43,
       isDestroyed: () => false,
@@ -182,7 +177,7 @@ test("Electron IPC transport lets RPC schema rejection happen before handlers ru
 
   const serverFiber = await runTestEffect(
     Effect.gen(function*() {
-      const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc, runTestEffect);
+      const protocol = yield* makeRelayIpcRpcServerProtocol(ipcRouter, runTestEffect);
       return yield* RpcServer.make(relayRpcGroup, { disableFatalDefects: true }).pipe(
         Effect.provideService(RpcServer.Protocol, protocol),
         Effect.provide(handlers),
@@ -192,7 +187,7 @@ test("Electron IPC transport lets RPC schema rejection happen before handlers ru
   );
 
   try {
-    const emit = listener as ElectronIpcListener | null;
+    const emit = listener as IpcMainRouterListener | null;
     assert.ok(emit);
     emit(event, {
       clientId: 8,

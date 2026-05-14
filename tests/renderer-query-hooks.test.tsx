@@ -7,7 +7,7 @@ import {
   relayQueryKeys
 } from "../src/renderer/src/lib/relayQueries";
 import { setRelayRpcRunnerForTests } from "../src/renderer/src/lib/relayRpc";
-import type { ProjectOpenInEditorInput } from "../src/shared/types";
+import type { ProjectOpenInEditorInput } from "../src/shared/schemas";
 
 test("renderer query keys are stable and preserve disabled parameters", () => {
   assert.deepEqual(relayQueryKeys.projects, ["relay", "projects"]);

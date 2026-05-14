@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
-import type { RendererRunEvent } from "@shared/types";
-import type { RelayIpcRpcClientPacket, RelayIpcRpcServerPacket } from "../../ipc/protocol";
+import type { RendererRunEvent } from "@shared/schemas";
+import type { RelayIpcRpcClientPacket, RelayIpcRpcServerPacket } from "@platform/electron/Protocol";
 
 declare global {
   interface Window {

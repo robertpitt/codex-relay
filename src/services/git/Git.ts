@@ -5,9 +5,9 @@
  * to the renderer-compatible `GitMetadata` shape at the edge.
  */
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
-import type { GitMetadata } from "@shared/types";
-import { ProjectPathNotDirectory, ProjectPathUnavailable, errorMessage } from "../../domain";
-import { CommandExecutor } from "../../io";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import type { GitMetadata } from "@shared/schemas";
+import { ProjectPathNotDirectory, ProjectPathUnavailable, errorMessage } from "../../domain/errors";
 import { BackendConfig } from "../../runtime";
 import { GitCli } from "./GitCli";
 import { GitMetadataCache } from "./GitMetadataCache";
@@ -36,7 +36,7 @@ type GitServices =
   | Path.Path
   | Context.Service.Identifier<typeof GitCli>
   | Context.Service.Identifier<typeof GitMetadataCache>
-  | Context.Service.Identifier<typeof CommandExecutor>
+  | Context.Service.Identifier<typeof ChildProcessSpawner.ChildProcessSpawner>
   | Context.Service.Identifier<typeof BackendConfig>;
 
 const resolveProjectPath = (projectPath: string): Effect.Effect<string, never, Path.Path> =>

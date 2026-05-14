@@ -1,11 +1,67 @@
 # Effect-Layered Architecture
 
-Relay's Electron main process boots one long-lived Effect `ManagedRuntime` from `AppLayerLive` in `src/runtime/appLayer.ts`.
+Relay's Electron main process assembles the Electron live layer and app service graph directly in `src/main.app.ts`, then boots one long-lived Effect `ManagedRuntime`.
 The renderer, preload bridge, IPC transport, backend services, durable kernel, and filesystem stores are kept behind explicit runtime layers and service tags.
+
+## Architecture Cleanup Goal
+
+Relay should use Effect because its services and layers make the application easier to reason about, not because every module has been wrapped in Effect-shaped syntax.
+The target is a small, provable backend graph:
+
+- one composed main-process runtime;
+- explicit service requirements with no `any` service holes and no broad runtime casts;
+- Promise conversion only at renderer, IPC, HTTP, CLI/test, or SDK boundaries;
+- durable worker execution owned by the kernel, not by detached module-level async loops;
+- shared contracts that are intentionally shared, while backend runtime services stay backend-only.
+
+The cleanup work should proceed in thin vertical slices. After each slice, this document and its diagrams should be updated in the same change so the architecture description remains a constraint on the code, not a retrospective.
+
+```mermaid
+flowchart LR
+  Issue["Architectural issue"] --> Slice["Small cleanup slice"]
+  Slice --> Types["Tighter service types"]
+  Slice --> Tests["Typecheck + focused tests"]
+  Slice --> Docs["Update this doc + diagrams"]
+  Docs --> Next["Next cleanup slice"]
+  Tests --> Next
+```
+
+## Cleanup Sequence
+
+1. Restore the type system baseline.
+   Reintroduce or replace the missing runtime config exports used by tests, then keep `npm run typecheck` and `npm test` green before architectural work continues.
+
+2. Make the layer graph prove itself.
+   Remove main app requirement casts by composing the exact live layer requirements. A missing service should be a compile-time failure, not a runtime surprise. The remaining Promise runners should accept only the service sets they actually provide.
+
+3. Clarify shared Effect usage.
+   `src/shared/` may use Effect Schema/RPC only as transport contract definitions. Backend services, runtime layers, fibers, and application effects must not leak into renderer contracts. Renderer code may host the RPC client adapter, but it should not import backend platform modules beyond a small preload-safe protocol adapter.
+
+4. Make storage genuinely Effect-native.
+   Convert storage stores so they consume `FileSystem`, `Path`, `AtomicFile`, `BackendClock`, and config through their declared requirements instead of calling Promise functions that call `runBackendEffect` internally.
+
+5. Make the kernel own execution.
+   Move queued worker intent, scheduling, fibers, cancellation, and recovery behind kernel services. Codex should provide command-specific workers and event mapping; the kernel should own durable execution state and lifecycle.
+
+6. Shrink transitional facades.
+   Keep Promise-returning public APIs only where they are real boundaries. Internal services should compose with `Context.Service`, `Layer`, scoped resources, and typed errors.
+
+## Current Cleanup Status
+
+| Date | Slice | Status |
+| --- | --- | --- |
+| 2026-05-14 | Runtime config contract | `BackendConfigDefaults`, `BackendConfigSpec`, and `loadBackendConfig` are exported from `src/runtime/index.ts` again so contract tests use the same Effect config spec as the app. |
+| 2026-05-14 | Main layer graph | `src/main.app.ts` now builds `BackendBaseLive`, `CoreServicesLive`, and `AppLayerLive = RelayRpcHandlersLive.pipe(Layer.provideMerge(CoreServicesLive))`. The startup effect is typed against `Layer.Success<typeof AppLayerLive>` instead of casting layer requirements away. |
+| 2026-05-14 | RPC/schema service requirements | Shared RPC schemas now use a service-free `RelaySchema<T>` codec alias, and the IPC RPC server is forked as a scoped fiber. This prevents `unknown` schema services from widening the app layer requirements. |
+| 2026-05-15 | Runtime runner integrity | The mutable `configureBackendRuntime` service-locator bridge is removed. `runBackendEffect` now runs only `BackendServices` effects, while app-runtime work uses explicit boundary dependencies and runner options. |
+| 2026-05-15 | Renderer run-event boundary | The mutable `configureRendererRunEventSink` global is removed. RPC handlers derive a `RendererRunEventSink` from the typed `RelayWindow` service and pass it into Codex Promise facades explicitly; fallback run-event writes remain durable-only. |
+| 2026-05-15 | Electron app lifecycle supervision | Process and Electron lifecycle event routing moved out of `src/main.app.ts` and into the `ElectronApp` service. The entrypoint starts `electronApp.startLifecycleSupervision(...)` and awaits `electronApp.awaitShutdown()` instead of owning event loops inline. |
+| Open | Storage internals | Storage service signatures no longer use `any` requirements, but the store implementations still call Promise-facing filesystem functions that run nested backend effects. |
+| Open | Kernel and Codex workers | The kernel still records durable state while Codex scheduling and stream processing are owned by separate in-memory Promise loops. The target is scoped fibers owned by kernel services. |
 
 ## Runtime Config
 
-Backend process config is owned by `src/runtime/index.ts` and installed into the desktop app through `src/runtime/appLayer.ts`.
+Backend process config is owned by `src/runtime/index.ts` and installed into the desktop app through `src/main.app.ts`.
 The runtime reads these Effect `Config` keys from the default environment provider; missing values keep the listed defaults.
 
 | Env key | BackendConfig field | Default |
@@ -15,7 +71,7 @@ The runtime reads these Effect `Config` keys from the default environment provid
 | `RELAY_CODEX_STATUS_TIMEOUT_MS` | `codexStatusTimeoutMs` | `5000` |
 | `RELAY_STORAGE_ADAPTER` | `storageAdapter` | `filesystem` |
 
-Tests can parse the same config spec with `ConfigProvider.fromUnknown` through `loadBackendConfig`.
+`BackendConfigDefaults` is the single default table. `BackendConfigSpec`, `BackendConfigLive`, and the test-facing `loadBackendConfig` helper all consume that same table.
 
 ## Layer Diagram
 
@@ -32,15 +88,17 @@ flowchart TB
     Runtime["ManagedRuntime(AppLayerLive)"]
 
     subgraph A["AppLayerLive"]
+      RpcHandlers["RelayRpcHandlersLive<br/>RPC handler context"]
+      Core["CoreServicesLive"]
       Base["BackendServicesBaseLive<br/>BackendClock + BackendConfig"]
-      Io["IoLive<br/>FileSystem + Path + HostRuntime<br/>CommandExecutor + HttpClient + SocketBoundary"]
-      Electron["ElectronDesktopLive<br/>ElectronApp + ElectronWindow<br/>ElectronDialog + ElectronShell + ElectronIpc"]
-      Boundaries["Boundary services<br/>RelayIpc + RelayWindow"]
-      Infra["Infrastructure services<br/>BackendLogger + RelayEffectLogger<br/>AtomicFile + RegistryStore<br/>Git + Storage + RunEventSink"]
+      Io["IoLive<br/>FileSystem + Path + HostRuntime<br/>ChildProcessSpawner + HttpClient + SocketBoundary"]
+      Electron["ElectronDesktopLive<br/>ElectronApp lifecycle + ElectronWindow<br/>ElectronDialog + ElectronShell + IpcMainRouter"]
+      Boundaries["Boundary services<br/>RelayIpc RPC transport + RelayWindow"]
+      Infra["Infrastructure services<br/>LoggerLive<br/>AtomicFile + RegistryStore<br/>Git + Storage + RunEventSink"]
       Kernel["BackendKernelLive<br/>JobLedger + JobSupervisor<br/>KernelRunRegistry + WorkerRegistry<br/>Idempotency + Audit + WorkflowEngine"]
     end
 
-    Methods["IPC method registry<br/>projects + board + tickets + codex"]
+    RpcContracts["Shared RPC contracts<br/>src/shared/rpc + src/shared/schemas"]
     Codex["Codex orchestration module<br/>runs, drafts, updates, repository chat"]
   end
 
@@ -61,15 +119,24 @@ flowchart TB
   end
 
   UI --> RelayApi --> Preload
-  Preload -->|ipcRenderer.invoke / codex:runEvent| Methods
-  Main -->|installAppRuntime| Runtime
+  Preload -->|Effect RPC IPC packets| Boundaries
+  Main -->|ManagedRuntime.make| Runtime
   Runtime --> A
-  Main -->|installRelayIpcHandlers| Boundaries
-  Boundaries --> Methods
-  Methods --> Infra
-  Methods --> Kernel
-  Methods --> Codex
+  A --> RpcHandlers
+  A --> Core
+  Main -->|installRelayIpcTransport| Boundaries
+  Boundaries --> RpcContracts
+  Boundaries --> RpcHandlers
+  RpcHandlers --> Infra
+  RpcHandlers --> Kernel
+  RpcHandlers --> Codex
 
+  Core --> Base
+  Core --> Io
+  Core --> Electron
+  Core --> Boundaries
+  Core --> Infra
+  Core --> Kernel
   Boundaries --> Electron
   Infra --> Base
   Infra --> Io
@@ -98,16 +165,16 @@ flowchart TB
 
 | Layer | Services / modules | Role |
 | --- | --- | --- |
-| Bootstrap | `src/main.app.ts`, `installAppRuntime`, `runBackendEffect` | Installs the runtime, waits for Electron readiness, registers IPC handlers, creates the window, recovers kernel jobs, and wires shutdown. |
+| Bootstrap | `src/main.app.ts`, `ManagedRuntime.make`, `runBackendEffect` | Bootstrap assembles `CoreServicesLive`, provides RPC handlers to form `AppLayerLive`, creates the app runtime, waits for Electron readiness, installs the scoped RPC transport, creates the window, recovers kernel jobs, and wires shutdown. `runBackendEffect` is now a static backend-only Promise runner, not a reconfigurable app runtime. |
 | Base | `BackendClock`, `BackendConfig` | Shared time source and environment-backed config for backend services. |
-| IO adapters | `FileSystem`, `Path`, `HostRuntime`, `CommandExecutor`, `HttpClient`, `SocketBoundary` via `IoLive` | Single backend location for filesystem, paths, environment, child processes, fetch, and socket boundaries. |
-| Electron adapters | `ElectronApp`, `ElectronWindow`, `ElectronDialog`, `ElectronShell`, `ElectronIpc` | Single backend location for direct Electron API usage. |
-| Boundaries | `RelayIpc`, `RelayWindow` | Schema-decodes/encodes IPC calls, registers handlers, owns Relay window behavior, and sends run events to the renderer. |
-| Infrastructure | `BackendLogger`, `RelayEffectLoggerLive`, `AtomicFile`, `RegistryStore`, `Git`, `GitCli`, `GitMetadataCache`, `Storage`, `RunEventSink` | Logging, atomic writes, project registry, git metadata, project/ticket persistence, and renderer-facing run event persistence/emission. |
+| IO adapters | `FileSystem`, `Path`, `HostRuntime`, `ChildProcessSpawner`, `HttpClient`, `SocketBoundary` via `IoLive` | Single backend location for filesystem, paths, environment, child processes, fetch, and socket boundaries. |
+| Electron adapters | `ElectronApp`, `BrowserWindows`, `ElectronWindow`, `ElectronDialog`, `ElectronShell`, `IpcMainRouter` | Single backend location for direct Electron API usage. `ElectronApp` also owns scoped process/Electron lifecycle supervision and the app shutdown signal; the concrete Electron layer is assembled in `src/main.app.ts`. |
+| Boundaries | `RelayIpc`, `RelayWindow` | Runs the Effect RPC server over Electron IPC and owns Relay window behavior. RPC handlers derive renderer run-event sinks from `RelayWindow` at the request boundary instead of mutating module-global state. The RPC transport is a scoped fiber owned by app startup. |
+| Infrastructure | `LoggerLive`, `AtomicFile`, `RegistryStore`, `Git`, `GitCli`, `GitMetadataCache`, `Storage`, `RunEventSink` | Effect logging, atomic writes, project registry, git metadata, project/ticket persistence, and run-event persistence/emission. The Effect-native `RunEventSink` remains service-shaped; current Codex Promise facades receive renderer sinks explicitly from RPC handlers. |
 | Storage stores | `ProjectStore`, `TicketStore`, `ClarificationStore`, `ArtifactStore`, `AuditLog`, `RunLog` | Filesystem-backed stores merged into `FileSystemStoresLive`, then exposed as the higher-level `Storage` service. |
 | Kernel | `JobLedger`, `JobSupervisor`, `KernelRunRegistry`, `WorkerRegistry`, `IdempotencyService`, `AuditService`, `RelayWorkflowEngineLive` | Durable job submission, status transitions, cancellation/resume, in-memory active run registry, and Effect Workflow integration. |
-| Codex orchestration | `src/services/codex/index.ts` | Promise-facing orchestration for implementation runs, ticket drafts, ticket updates, and repository chat. It is not currently exposed as a production `Context.Service`; it submits kernel jobs and uses storage/run-event services through the backend runtime. |
-| Optional HTTP transport | `src/http/RelayHttpServer.ts` | Local HTTP adapter over the same `relayIpcMethods` and `runRelayIpcMethod` pipeline, mainly covered by transport tests. |
+| Codex orchestration | `src/services/codex/index.ts` | Current Promise-facing orchestration for implementation runs, ticket drafts, ticket updates, and repository chat. Cleanup target: split command-specific workers and event mapping from lifecycle ownership so scheduling, recovery, cancellation, and active fibers live in kernel services. |
+| Optional HTTP transport | `src/http/RelayHttpServer.ts` | Local HTTP adapter over the same shared RPC group and handler layer. Callers must pass an explicit `runEffect` runner for the handler layer they provide. |
 
 ## Request Flow
 
@@ -115,24 +182,24 @@ flowchart TB
 sequenceDiagram
   participant UI as React UI
   participant Preload as window.relay / preload
-  participant Ipc as RelayIpc
-  participant Method as IPC method handler
+  participant Ipc as RelayIpc RPC transport
+  participant Rpc as RelayRpcHandlersLive
   participant Runtime as ManagedRuntime(AppLayerLive)
   participant Service as Storage / Git / Codex / Kernel
   participant Disk as .relay / relay.log
   participant Window as RelayWindow
 
-  UI->>Preload: call window.relay.projects/ticket/codex
-  Preload->>Ipc: ipcRenderer.invoke(channel, args)
-  Ipc->>Runtime: runRelayIpcMethod(...)
-  Runtime->>Ipc: decode payload schema
-  Ipc->>Method: run typed Effect handler
-  Method->>Service: consume Context.Service tags or Promise facades
+  UI->>Preload: call RPC client method
+  Preload->>Ipc: send Relay RPC client packet over IPC
+  Ipc->>Runtime: scoped RpcServer fiber handles request
+  Runtime->>Rpc: decode payload with shared RPC schemas
+  Rpc->>Window: derive explicit RendererRunEventSink when needed
+  Rpc->>Service: consume Context.Service tags or Promise facades
   Service->>Disk: read/write project state, logs, registry, run logs
-  Service-->>Window: emit run event when applicable
+  Service-->>Window: emit run event through explicit sink when applicable
   Window-->>Preload: codex:runEvent
-  Method-->>Ipc: result
-  Ipc->>Runtime: encode result schema
+  Rpc-->>Runtime: typed handler result
+  Runtime->>Ipc: encode result with shared RPC schemas
   Ipc-->>Preload: result
   Preload-->>UI: typed response
 ```
@@ -150,7 +217,7 @@ flowchart LR
   Engine["RelayWorkflowEngineLive<br/>durable workflow engine wrapper"]
   Registry["KernelRunRegistry<br/>active/queued runs + scheduler wake queues"]
   CodexWorker["Codex orchestration worker<br/>@openai/codex-sdk stream"]
-  Events["RunEventSink<br/>write JSONL + notify renderer"]
+  Events["Run event writer<br/>write JSONL + explicit renderer sink"]
   Terminal["JobSupervisor.markRunStatus<br/>completed / failed / cancelled / suspended"]
   Store[".relay/kernel/jobs/{executionId}/"]
 
@@ -169,10 +236,11 @@ flowchart LR
 
 ## Boundary Rules
 
-- `src/main.app.ts` is the bootstrap: install runtime, register IPC, create the window, recover jobs, and wire lifecycle shutdown.
-- `src/runtime/` owns the shared `ManagedRuntime`, base services, runtime runner, config, and `AppLayerLive`.
+- `src/main.app.ts` is the Electron main entrypoint: compose live layers, install runtime, start `ElectronApp` lifecycle supervision, register IPC, create the window, recover jobs, and await shutdown.
+- `src/runtime/` owns base runtime services, config loading, and the Promise-facing runtime runner.
 - `src/io/` and `src/platform/` are the approved backend boundaries for Node and Electron runtime APIs.
-- `src/ipc/` owns schema-backed internal IPC. Shared renderer contracts live in `src/shared/ipc.ts`; no Effect types cross that boundary.
+- `src/ipc/` owns schema-backed internal IPC. Shared renderer contracts live under `src/shared/rpc/` and `src/shared/schemas/`. Effect Schema/RPC definitions are allowed there as contract definitions; backend runtime/service/fiber types must not cross into shared or renderer code.
+- `src/platform/electron/ElectronApp.ts` owns Electron main-process lifecycle policy. Lower-level platform adapters expose process and Electron event queues; `ElectronApp` decides how those events affect the desktop shell and accepts typed hooks for app-specific behavior such as window activation.
 - `src/storage/` owns `.relay` project persistence and storage service composition.
 - `src/services/kernel/` owns durable backend execution and is the only approved production import site for `effect/unstable/workflow`.
 - `src/services/codex/` owns Codex run orchestration and maps agent events into storage, kernel status, and renderer-facing run events.
@@ -181,7 +249,7 @@ flowchart LR
 ## Compatibility Rules
 
 - `window.relay` method names stay stable.
-- No Effect types are exported through shared renderer contracts.
+- No backend runtime services, layers, or application effects are exported through shared renderer contracts. Effect Schema/RPC may appear only as the deliberate shared transport contract layer.
 - `.relay` ticket, clarification, audit, and run log formats stay stable.
 - `.relay/kernel/jobs/{executionId}/snapshot.json` and `events.jsonl` are the durable backend execution store.
 - Codex still uses `@openai/codex-sdk`; the run sink replaces direct `BrowserWindow` coupling without changing event payloads.

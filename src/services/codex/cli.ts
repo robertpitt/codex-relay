@@ -1,6 +1,6 @@
-import { Effect } from "effect";
-import { ChildProcess } from "effect/unstable/process";
-import { CommandExecutor, HostRuntime, pathDirname, pathJoin } from "../../io";
+import { Effect, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostRuntime, pathDirname, pathJoin } from "../../io";
 import { BackendConfig, runBackendEffect } from "../../runtime";
 
 export type CodexCliCandidateSource = "bundled" | "path";
@@ -146,15 +146,48 @@ export const resolveCodexCliCandidatesEffect = (
     return candidates;
   });
 
-export const runCodexVersion = async (candidate: CodexCliCandidate): Promise<string> => {
-  const { stdout } = await runBackendEffect(
+const streamText = (stream: Stream.Stream<Uint8Array, unknown>): Effect.Effect<string, unknown> =>
+  stream.pipe(Stream.decodeText(), Stream.mkString);
+
+const codexVersionError = (
+  command: string,
+  exitCode: ChildProcessSpawner.ExitCode,
+  stdout: string,
+  stderr: string
+): Error & { readonly exitCode: ChildProcessSpawner.ExitCode; readonly stdout: string; readonly stderr: string } =>
+  Object.assign(new Error(`Codex CLI \`${command} --version\` exited with code ${exitCode}.`), {
+    exitCode,
+    stdout,
+    stderr
+  });
+
+const runCodexVersionWithTimeoutEffect = (candidate: CodexCliCandidate, timeoutMs: number) =>
+  Effect.scoped(
     Effect.gen(function*() {
-      const config = yield* BackendConfig;
-      return yield* CommandExecutor.use((executor) =>
-        executor.run(ChildProcess.make(candidate.command, ["--version"]), { timeoutMs: config.codexStatusTimeoutMs })
-      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handle = yield* spawner.spawn(ChildProcess.make(candidate.command, ["--version"]));
+      const output = yield* Effect.all({
+        stdout: streamText(handle.stdout),
+        stderr: streamText(handle.stderr),
+        exitCode: handle.exitCode
+      }, { concurrency: "unbounded" });
+
+      if (output.exitCode !== ChildProcessSpawner.ExitCode(0)) {
+        return yield* Effect.fail(codexVersionError(candidate.command, output.exitCode, output.stdout, output.stderr));
+      }
+
+      return output.stdout;
     })
-  );
+  ).pipe(Effect.timeout(timeoutMs));
+
+export const runCodexVersionEffect = (candidate: CodexCliCandidate) =>
+  Effect.gen(function*() {
+    const config = yield* BackendConfig;
+    return yield* runCodexVersionWithTimeoutEffect(candidate, config.codexStatusTimeoutMs);
+  });
+
+export const runCodexVersion = async (candidate: CodexCliCandidate): Promise<string> => {
+  const stdout = await runBackendEffect(runCodexVersionEffect(candidate));
   return stdout.trim();
 };
 
