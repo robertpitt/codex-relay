@@ -20,9 +20,9 @@ import {
   type RepositoryChatCodexClient,
   type RepositoryChatThread,
   type TicketDraftStartDependencies
-} from "../src/main/services/codex";
-import { resolveAvailableCodexCli, runCodexVersion, type CodexCliCandidate } from "../src/main/services/codex/cli";
-import { CommandExecutor } from "../src/main/services/io";
+} from "../src/services/codex";
+import { resolveAvailableCodexCli, runCodexVersion, type CodexCliCandidate } from "../src/services/codex/cli";
+import { CommandExecutor } from "../src/io";
 import {
   BackendKernelLive,
   JobLedger,
@@ -31,7 +31,7 @@ import {
   KernelRunRegistry,
   KernelRunRegistryLive,
   RELAY_EXTERNAL_JOB_WORKFLOW_NAME
-} from "../src/main/services/kernel";
+} from "../src/services/kernel";
 import {
   BackendClock,
   BackendConfig,
@@ -40,7 +40,7 @@ import {
   configureBackendRuntime,
   loadBackendConfig,
   runBackendEffect
-} from "../src/main/services/runtime";
+} from "../src/runtime";
 import {
   answerClarificationQuestion,
   createClarificationQuestions,
@@ -64,7 +64,7 @@ import {
   writeTicket,
   unlinkSubticket,
   writeProjectConfig
-} from "../src/main/services/storage";
+} from "../src/storage";
 import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
 
 const readyCodexStatus: CodexStatus = {
@@ -544,6 +544,12 @@ test("Codex CLI status command uses BackendConfig timeout", async () => {
         codexStatusTimeoutMs: 12_345
       }),
       Layer.succeed(CommandExecutor)({
+        run: (command, options = {}) =>
+          Effect.sync(() => {
+            if (command._tag !== "StandardCommand") throw new Error("Only standard commands are expected in this test.");
+            captured.push({ command: command.command, args: command.args, timeoutMs: options.timeoutMs });
+            return { stdout: "codex-cli 0.130.0\n", stderr: "" };
+          }),
         execFile: (command, args, options = {}) =>
           Effect.sync(() => {
             captured.push({ command, args, timeoutMs: options.timeoutMs });

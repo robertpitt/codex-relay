@@ -2,92 +2,216 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { Effect, Schema } from "effect";
-import { makeRelayIpcService, type AnyRelayIpcMethod } from "../src/main/ipc/RelayIpc";
-import { relayIpcMethods } from "../src/main/ipc/methods";
-import { openProjectInEditor } from "../src/main/ipc/methods/projects";
-import { ipcArgs, ipcString } from "../src/main/ipc/schema";
-import type { ElectronIpcInvokeHandler, ElectronIpcService } from "../src/main/electron";
-import { relayIpcChannels, type RelayIpcChannel } from "../src/shared/ipc";
+import { Effect, Fiber } from "effect";
+import { RpcServer } from "effect/unstable/rpc";
+import { relayRpcGroup, relayRpcTags } from "../src/shared/rpc";
+import {
+  makeRelayIpcRpcServerProtocol,
+  relayRpcClientMessageChannel,
+  relayRpcServerMessageChannel,
+  type RelayIpcRpcServerPacket
+} from "../src/ipc";
+import { openProjectInEditor } from "../src/services/rpc/handlers";
+import type { ElectronIpcEvent, ElectronIpcListener, ElectronIpcService } from "../src/platform/electron";
 
 const runTestEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
   Effect.runPromise(effect as Effect.Effect<A, E, never>);
 
-test("typed IPC contract has exactly one schema-backed method for every channel", () => {
-  const channels = Object.values(relayIpcChannels) as RelayIpcChannel[];
-  const methodChannels = relayIpcMethods.map((method) => method.channel);
+test("Relay RPC group keeps one schema-backed RPC for every legacy tag", () => {
+  const expected = Object.values(relayRpcTags).sort();
+  const actual = [...relayRpcGroup.requests.keys()].sort();
 
-  assert.deepEqual([...methodChannels].sort(), [...channels].sort());
-  assert.equal(new Set(methodChannels).size, channels.length);
-  for (const channel of channels) {
-    const method = relayIpcMethods.find((candidate) => candidate.channel === channel);
-    assert.equal(typeof method?.handler, "function", `${channel} handler is registered`);
-    assert.ok(method?.payload, `${channel} payload schema is registered`);
-    assert.ok(method?.result, `${channel} result schema is registered`);
+  assert.deepEqual(actual, expected);
+  assert.equal(new Set(actual).size, expected.length);
+
+  for (const tag of expected) {
+    const rpc = relayRpcGroup.requests.get(tag);
+    assert.ok(rpc, `${tag} RPC is registered`);
+    assert.ok("payloadSchema" in rpc, `${tag} payload schema is registered`);
+    assert.ok("successSchema" in rpc, `${tag} success schema is registered`);
+    assert.ok("errorSchema" in rpc, `${tag} error schema is registered`);
   }
 });
 
-test("RelayIpc registers, replaces, decodes, encodes, and removes handlers", async () => {
-  const handlers = new Map<string, ElectronIpcInvokeHandler>();
-  const removed: string[] = [];
+test("Electron IPC transport forwards encoded RPC requests and responses", async () => {
+  let listener: ElectronIpcListener | null = null;
+  const sent: RelayIpcRpcServerPacket[] = [];
   const electronIpc: ElectronIpcService = {
-    handle: (channel, handler) =>
+    handle: () => Effect.void,
+    removeHandler: () => Effect.void,
+    on: (channel, nextListener) =>
       Effect.sync(() => {
-        handlers.set(channel, handler);
-      }),
-    removeHandler: (channel) =>
-      Effect.sync(() => {
-        removed.push(channel);
-        handlers.delete(channel);
+        assert.equal(channel, relayRpcClientMessageChannel);
+        listener = nextListener;
+        return () => {
+          listener = null;
+        };
       })
   };
-  const relayIpc = makeRelayIpcService(electronIpc, runTestEffect);
-  const channel = relayIpcChannels.projectsRead;
-  const method = (label: string): AnyRelayIpcMethod => ({
-    channel,
-    payload: ipcArgs<[string]>([ipcString]),
-    result: Schema.String,
-    handler: (_event, projectPath) => Effect.succeed(`${label}:${projectPath}`)
-  });
+  const event: ElectronIpcEvent = {
+    sender: {
+      id: 42,
+      isDestroyed: () => false,
+      send: (channel, payload) => {
+        assert.equal(channel, relayRpcServerMessageChannel);
+        sent.push(payload as RelayIpcRpcServerPacket);
+      }
+    }
+  };
+  const handlers = relayRpcGroup.toLayerHandler("projects:read", ({ projectPath }) =>
+    Effect.succeed({
+      projectId: "project_1",
+      name: "Relay",
+      path: projectPath,
+      exists: true,
+      isGitRepository: true,
+      relayInitialized: true,
+      health: "ok" as const,
+      healthMessages: [],
+      activeRunCount: 0,
+      swimlanes: []
+    })
+  );
 
-  await Effect.runPromise(relayIpc.handle(method("first")));
-  assert.equal(await handlers.get(channel)?.({}, "/tmp/relay"), "first:/tmp/relay");
+  const serverFiber = await runTestEffect(
+    Effect.gen(function*() {
+      const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc, runTestEffect);
+      return yield* RpcServer.make(relayRpcGroup, { disableFatalDefects: true }).pipe(
+        Effect.provideService(RpcServer.Protocol, protocol),
+        Effect.provide(handlers),
+        Effect.forkDetach({ startImmediately: true })
+      );
+    })
+  );
 
-  await Effect.runPromise(relayIpc.handle(method("second")));
-  assert.equal(await handlers.get(channel)?.({}, "/tmp/relay"), "second:/tmp/relay");
-  assert.deepEqual(removed, [channel, channel]);
+  try {
+    const emit = listener as ElectronIpcListener | null;
+    assert.ok(emit);
+    emit(event, {
+      clientId: 7,
+      message: {
+        _tag: "Request",
+        id: "1",
+        tag: "projects:read",
+        payload: { projectPath: "/tmp/relay" },
+        headers: []
+      }
+    });
 
-  await Effect.runPromise(Effect.scoped(relayIpc.handleScoped(method("scoped"))));
-  assert.equal(handlers.has(channel), false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(sent[0]?.clientId, 7);
+    assert.equal(sent.some((packet) => packet.message._tag === "Exit"), true);
+  } finally {
+    await runTestEffect(Fiber.interrupt(serverFiber));
+  }
 });
 
-test("RelayIpc rejects invalid payloads before domain handlers run", async () => {
-  let called = false;
-  const handlers = new Map<string, ElectronIpcInvokeHandler>();
+test("Electron IPC transport forwards encoded RPC interrupts", async () => {
+  let listener: ElectronIpcListener | null = null;
+  const forwarded: Array<{ readonly clientId: number; readonly message: { readonly _tag: string; readonly requestId?: string } }> = [];
   const electronIpc: ElectronIpcService = {
-    handle: (channel, handler) =>
+    handle: () => Effect.void,
+    removeHandler: () => Effect.void,
+    on: (_channel, nextListener) =>
       Effect.sync(() => {
-        handlers.set(channel, handler);
-      }),
-    removeHandler: (channel) =>
-      Effect.sync(() => {
-        handlers.delete(channel);
+        listener = nextListener;
+        return () => {
+          listener = null;
+        };
       })
   };
-  const relayIpc = makeRelayIpcService(electronIpc, runTestEffect);
-  const method: AnyRelayIpcMethod = {
-    channel: relayIpcChannels.projectsRead,
-    payload: ipcArgs<[string]>([ipcString]),
-    result: Schema.String,
-    handler: () => {
-      called = true;
-      return Effect.succeed("ok");
+  const event: ElectronIpcEvent = {
+    sender: {
+      id: 44,
+      isDestroyed: () => false,
+      send: () => undefined
     }
   };
 
-  await Effect.runPromise(relayIpc.handle(method));
-  await assert.rejects(() => handlers.get(method.channel)?.({}, 123) as Promise<unknown>);
-  assert.equal(called, false);
+  const runFiber = await runTestEffect(
+    Effect.gen(function*() {
+      const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc, runTestEffect);
+      return yield* protocol.run((clientId, message) =>
+        Effect.sync(() => {
+          forwarded.push({ clientId, message });
+        })
+      ).pipe(Effect.forkDetach({ startImmediately: true }));
+    })
+  );
+
+  try {
+    const emit = listener as ElectronIpcListener | null;
+    assert.ok(emit);
+    emit(event, { clientId: 9, message: { _tag: "Interrupt", requestId: "1" } });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(forwarded, [{ clientId: 1, message: { _tag: "Interrupt", requestId: "1" } }]);
+  } finally {
+    await runTestEffect(Fiber.interrupt(runFiber));
+  }
+});
+
+test("Electron IPC transport lets RPC schema rejection happen before handlers run", async () => {
+  let listener: ElectronIpcListener | null = null;
+  let called = false;
+  const sent: RelayIpcRpcServerPacket[] = [];
+  const electronIpc: ElectronIpcService = {
+    handle: () => Effect.void,
+    removeHandler: () => Effect.void,
+    on: (_channel, nextListener) =>
+      Effect.sync(() => {
+        listener = nextListener;
+        return () => undefined;
+      })
+  };
+  const event: ElectronIpcEvent = {
+    sender: {
+      id: 43,
+      isDestroyed: () => false,
+      send: (_channel, payload) => {
+        sent.push(payload as RelayIpcRpcServerPacket);
+      }
+    }
+  };
+  const handlers = relayRpcGroup.toLayerHandler("projects:read", () => {
+    called = true;
+    return Effect.die("handler should not run");
+  });
+
+  const serverFiber = await runTestEffect(
+    Effect.gen(function*() {
+      const protocol = yield* makeRelayIpcRpcServerProtocol(electronIpc, runTestEffect);
+      return yield* RpcServer.make(relayRpcGroup, { disableFatalDefects: true }).pipe(
+        Effect.provideService(RpcServer.Protocol, protocol),
+        Effect.provide(handlers),
+        Effect.forkDetach({ startImmediately: true })
+      );
+    })
+  );
+
+  try {
+    const emit = listener as ElectronIpcListener | null;
+    assert.ok(emit);
+    emit(event, {
+      clientId: 8,
+      message: {
+        _tag: "Request",
+        id: "1",
+        tag: "projects:read",
+        payload: { projectPath: 123 },
+        headers: []
+      }
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(called, false);
+    assert.equal(sent.length > 0, true);
+  } finally {
+    await runTestEffect(Fiber.interrupt(serverFiber));
+  }
 });
 
 test("project open-in-editor maps editor ids to commands and returns success after spawn", async () => {

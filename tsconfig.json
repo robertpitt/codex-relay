@@ -13,7 +13,15 @@
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
+      "@domain/*": ["src/domain/*"],
+      "@http/*": ["src/http/*"],
+      "@io/*": ["src/io/*"],
+      "@ipc/*": ["src/ipc/*"],
+      "@platform/*": ["src/platform/*"],
       "@shared/*": ["src/shared/*"],
+      "@runtime/*": ["src/runtime/*"],
+      "@services/*": ["src/services/*"],
+      "@storage/*": ["src/storage/*"],
       "@renderer/*": ["src/renderer/src/*"]
     },
     "resolveJsonModule": true,

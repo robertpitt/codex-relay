@@ -1,14 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Effect, Layer } from "effect";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Git, GitCliFromRunner, GitLive, GitMetadataCacheLive } from "../src/services/git";
 import {
   parsePorcelainChangedFileCount,
   readGitMetadata,
   type GitCommandRunner
-} from "../src/main/services/git";
+} from "../src/services/git";
+import { BackendConfig, BackendConfigDefaults, runBackendEffect } from "../src/runtime";
 import { GitMetadataPill } from "../src/renderer/src/components/GitMetadata";
 import type { GitMetadata } from "../src/shared/types";
 
@@ -31,7 +34,7 @@ const metadata = (patch: Partial<GitMetadata>): GitMetadata => ({
 test("porcelain parser counts staged, unstaged, untracked, and renamed files once", () => {
   const output = [
     " M src/App.tsx",
-    "M  src/main/index.ts",
+    "M  src/main.app.ts",
     "?? src/new-file.ts",
     "R  src/new-name.ts",
     "src/old-name.ts"
@@ -79,6 +82,29 @@ test("readGitMetadata reports detached dirty repositories with a short commit SH
   assert.equal(result.commitSha, "deadbeef");
   assert.equal(result.isDirty, true);
   assert.equal(result.changedFileCount, 2);
+});
+
+test("readGitMetadata handles an unborn branch without failing the repository", async () => {
+  const projectPath = await createProjectPath();
+  const execGit: GitCommandRunner = async (_projectPath, args) => {
+    if (args.join(" ") === "rev-parse --is-inside-work-tree") return { stdout: "true\n", stderr: "" };
+    if (args.join(" ") === "branch --show-current") return { stdout: "main\n", stderr: "" };
+    if (args.join(" ") === "rev-parse --short=8 HEAD") {
+      throw Object.assign(new Error("fatal: ambiguous argument 'HEAD'"), {
+        stderr: "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree."
+      });
+    }
+    if (args.join(" ") === "status --porcelain=v1 -z --untracked-files=all") return { stdout: "", stderr: "" };
+    throw new Error(`Unexpected git command: ${args.join(" ")}`);
+  };
+
+  const result = await readGitMetadata(projectPath, { execGit, now: () => "2026-05-11T10:00:00.000Z" });
+
+  assert.equal(result.state, "ready");
+  assert.equal(result.isGitRepository, true);
+  assert.equal(result.branchName, "main");
+  assert.equal(result.commitSha, null);
+  assert.equal(result.isDetachedHead, false);
 });
 
 test("readGitMetadata distinguishes not-git, missing-git, missing-path, and command failures", async () => {
@@ -140,4 +166,49 @@ test("GitMetadataPill renders clean, dirty, detached, loading, and non-Git state
     <GitMetadataPill metadata={metadata({ state: "not_git", isGitRepository: false, branchName: null, commitSha: null })} />
   );
   assert.match(notGitMarkup, /No Git/);
+});
+
+test("Git service opens repositories and caches metadata in a Ref-backed layer", async () => {
+  const projectPath = await createProjectPath();
+  let statusReads = 0;
+  const execGit: GitCommandRunner = async (_projectPath, args) => {
+    if (args.join(" ") === "rev-parse --is-inside-work-tree") return { stdout: "true\n", stderr: "" };
+    if (args.join(" ") === "branch --show-current") return { stdout: "main\n", stderr: "" };
+    if (args.join(" ") === "rev-parse --short=8 HEAD") return { stdout: "abc12345\n", stderr: "" };
+    if (args.join(" ") === "status --porcelain=v1 -z --untracked-files=all") {
+      statusReads += 1;
+      return { stdout: "", stderr: "" };
+    }
+    throw new Error(`Unexpected git command: ${args.join(" ")}`);
+  };
+  const layer = Layer.mergeAll(
+    GitLive,
+    GitCliFromRunner(execGit),
+    GitMetadataCacheLive,
+    Layer.succeed(BackendConfig)({
+      ...BackendConfigDefaults,
+      gitMetadataCacheTtlMs: 60_000
+    })
+  );
+
+  await runBackendEffect(
+    Effect.provide(
+      Effect.gen(function*() {
+        const git = yield* Git;
+        const repository = yield* git.open(projectPath);
+        assert.equal(repository.projectPath, path.resolve(projectPath));
+
+        const first = yield* git.readCachedMetadata(projectPath, { now: () => "2026-05-11T10:00:00.000Z" });
+        const second = yield* git.readCachedMetadata(projectPath, { now: () => "2026-05-11T10:00:01.000Z" });
+        assert.equal(first.commitSha, "abc12345");
+        assert.equal(second.commitSha, "abc12345");
+
+        const forced = yield* git.readCachedMetadata(projectPath, { force: true, now: () => "2026-05-11T10:00:02.000Z" });
+        assert.equal(forced.commitSha, "abc12345");
+      }),
+      layer
+    )
+  );
+
+  assert.equal(statusReads, 2);
 });

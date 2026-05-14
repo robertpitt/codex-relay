@@ -6,7 +6,8 @@ import {
   relayOpenProjectInEditor,
   relayQueryKeys
 } from "../src/renderer/src/lib/relayQueries";
-import type { ProjectOpenInEditorInput, RelayApi } from "../src/shared/types";
+import { setRelayRpcRunnerForTests } from "../src/renderer/src/lib/relayRpc";
+import type { ProjectOpenInEditorInput } from "../src/shared/types";
 
 test("renderer query keys are stable and preserve disabled parameters", () => {
   assert.deepEqual(relayQueryKeys.projects, ["relay", "projects"]);
@@ -40,24 +41,18 @@ test("ticket invalidation marks related renderer IPC data stale", async () => {
   }
 });
 
-test("query layer actions use the typed preload Relay API", async () => {
+test("query layer actions use the typed Relay RPC runner", async () => {
   const calls: ProjectOpenInEditorInput[] = [];
-  const previousWindow = (globalThis as { window?: unknown }).window;
-  (globalThis as { window?: unknown }).window = {
-    relay: {
-      projects: {
-        openInEditor: async (input: ProjectOpenInEditorInput) => {
-          calls.push(input);
-          return { ok: true };
-        }
-      }
-    } as Partial<RelayApi>
-  };
+  const restore = setRelayRpcRunnerForTests(async (tag, payload) => {
+    assert.equal(tag, "projects:openInEditor");
+    calls.push(payload as ProjectOpenInEditorInput);
+    return { ok: true } as never;
+  });
 
   try {
     await relayOpenProjectInEditor({ projectPath: "/tmp/project", editorId: "vscode" });
     assert.deepEqual(calls, [{ projectPath: "/tmp/project", editorId: "vscode" }]);
   } finally {
-    (globalThis as { window?: unknown }).window = previousWindow;
+    restore();
   }
 });

@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Effect } from "effect";
 import type { RendererRunEvent } from "../src/shared/types";
-import { makeRelayWindowService, type RelayWindowOptions } from "../src/main/window/RelayWindow";
-import type { ElectronMainWindowOptions, ElectronWindowService } from "../src/main/electron";
+import { makeRelayWindowService, type RelayWindowOptions } from "../src/services/window/RelayWindow";
+import type { ElectronMainWindowOptions, ElectronWindowService } from "../src/platform/electron";
 
 const options: RelayWindowOptions = {
   preloadPath: "/tmp/preload.js",

@@ -4,6 +4,7 @@ export const RELAY_READY_STATUS = "ready";
 export const RELAY_IN_PROGRESS_STATUS = "in_progress";
 export const RELAY_NEEDS_CLARIFICATION_STATUS = "needs_clarification";
 export const RELAY_REVIEW_STATUS = "review";
+export const RELAY_NOT_DOING_STATUS = "not_doing";
 export const RELAY_COMPLETED_STATUS = "completed";
 
 export const DEFAULT_COLUMNS: RelayColumn[] = [
@@ -12,6 +13,7 @@ export const DEFAULT_COLUMNS: RelayColumn[] = [
   { id: RELAY_IN_PROGRESS_STATUS, name: "In Progress", position: 3000, terminal: false },
   { id: RELAY_NEEDS_CLARIFICATION_STATUS, name: "Needs Clarification", position: 4000, terminal: false },
   { id: RELAY_REVIEW_STATUS, name: "Review", position: 5000, terminal: false },
+  { id: RELAY_NOT_DOING_STATUS, name: "Not Doing", position: 6000, terminal: true },
   { id: RELAY_COMPLETED_STATUS, name: "Completed", position: 7000, terminal: true }
 ];
 
@@ -628,53 +630,4 @@ export type RunSummary = {
   usage: RunUsageSummary | null;
   eventCount: number;
   latestEventAt: string | null;
-};
-
-export type RelayApi = {
-  projects: {
-    list: () => Promise<ProjectSummary[]>;
-    addFolder: () => Promise<AddProjectResult | null>;
-    removeFromSidebar: (projectPath: string) => Promise<ProjectSummary[]>;
-    read: (projectPath: string) => Promise<ProjectSummary>;
-    gitMetadata: (projectPath: string, options?: GitMetadataOptions) => Promise<GitMetadata>;
-    revealInFinder: (projectPath: string) => Promise<void>;
-    openInEditor: (input: ProjectOpenInEditorInput) => Promise<ProjectOpenInEditorResult>;
-  };
-  board: {
-    read: (projectPath: string) => Promise<BoardSnapshot>;
-  };
-  ticket: {
-    intakeDraft: (input: DraftIntakeInput) => Promise<DraftIntakeResult>;
-    createDraft: (input: CreateDraftInput) => Promise<TicketDraftStartResult>;
-    redraft: (input: TicketRedraftInput) => Promise<TicketDraftStartResult>;
-    generateSuggestions: (projectPath: string) => Promise<TicketSuggestionsGenerateResult>;
-    createManual: (projectPath: string, input: TicketCreateInput) => Promise<TicketRecord>;
-    createSubticket: (input: EpicSubticketCreateInput) => Promise<TicketRecord>;
-    linkSubticket: (input: EpicSubticketLinkInput) => Promise<BoardSnapshot>;
-    unlinkSubticket: (input: EpicSubticketUnlinkInput) => Promise<BoardSnapshot>;
-    startAgentUpdate: (input: AgentTicketUpdateInput) => Promise<AgentTicketUpdateStartResult>;
-    cancelAgentUpdate: (runId: string) => Promise<void>;
-    references: (projectPath: string) => Promise<TicketReferenceCandidate[]>;
-    read: (projectPath: string, ticketId: string) => Promise<TicketRecord>;
-    save: (input: TicketSaveInput) => Promise<TicketRecord>;
-    saveAttachment: (input: TicketAttachmentSaveInput) => Promise<TicketAttachmentSaveResult>;
-    move: (input: TicketMoveInput) => Promise<BoardSnapshot>;
-    clarifications: (projectPath: string, ticketId: string) => Promise<ClarificationQuestion[]>;
-    answerClarification: (input: ClarificationAnswerInput) => Promise<ClarificationQuestion>;
-    delete: (projectPath: string, ticketId: string) => Promise<BoardSnapshot>;
-    duplicate: (projectPath: string, ticketId: string) => Promise<TicketRecord>;
-    revealFile: (projectPath: string, ticketId: string) => Promise<void>;
-  };
-  codex: {
-    status: () => Promise<CodexStatus>;
-    preflightRun: (input: StartRunInput) => Promise<CodexRunPreflightResult>;
-    startRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
-    resumeRun: (input: StartRunInput) => Promise<CodexRunStartResult>;
-    cancelRun: (input: CancelRunInput) => Promise<void>;
-    approveAction: (approvalId: string, decision: RelayApprovalDecision) => Promise<void>;
-    sendRepositoryChatMessage: (input: RepositoryChatInput) => Promise<RepositoryChatResponse>;
-    readRunEvents: (projectPath: string, ticketId: string, runId: string) => Promise<RendererRunEvent[]>;
-    readLatestRunSummary: (projectPath: string, ticketId: string) => Promise<RunSummary | null>;
-    onRunEvent: (listener: (event: RendererRunEvent) => void) => () => void;
-  };
 };

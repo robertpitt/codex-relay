@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "executionId": "6c6f0a758bf078b8a5c34613da69ccc3",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krhvn9zcvesp76z2wabm71pb:run_01krhvn9x8ehqrkznks45pv7qx",
+  "status": "suspended",
+  "attempts": 1,
+  "createdAt": "2026-05-13T23:44:55.792Z",
+  "updatedAt": "2026-05-14T12:21:08.214Z",
+  "runId": "run_01krhvn9x8ehqrkznks45pv7qx",
+  "ticketId": "tkt_01krhvn9zcvesp76z2wabm71pb",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Based on the v4 layout, I would not make IPC itself the typed API. I would make IPC a transport, then let existing Rpc / RpcGroup provide the typed request, response, stream, interruption, middleware, and schema layer.",
+    "priority": "medium",
+    "effort": "xhigh",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krhvn9x8ehqrkznks45pv7qx",
+    "ticketId": "tkt_01krhvn9zcvesp76z2wabm71pb"
+  },
+  "message": "Recovered incomplete workflow on boot.",
+  "metadata": {
+    "clarificationQuestionCount": 2,
+    "recovered": true
+  }
+}

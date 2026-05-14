@@ -17,7 +17,7 @@ import {
   type TicketDraftDependencies,
   type TicketDraftStartDependencies,
   type TicketDraftThread
-} from "../src/main/services/codex";
+} from "../src/services/codex";
 import {
   answerClarificationQuestion,
   createTicket,
@@ -27,7 +27,7 @@ import {
   readProjectConfig,
   readTicket,
   writeProjectConfig
-} from "../src/main/services/storage";
+} from "../src/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
 import type { CodexStatus, RendererRunEvent } from "../src/shared/types";
 
@@ -910,10 +910,10 @@ test("ticket draft URL research fetches detected URLs and renders source metadat
 
 test("ticket draft codebase research inspects matching project files before prompting Codex", async () => {
   const projectPath = await createProject();
-  await mkdir(path.join(projectPath, "src", "main", "services"), { recursive: true });
+  await mkdir(path.join(projectPath, "src", "services"), { recursive: true });
   await mkdir(path.join(projectPath, "tests"), { recursive: true });
   await writeFile(
-    path.join(projectPath, "src", "main", "services", "codex.ts"),
+    path.join(projectPath, "src", "services", "codex.ts"),
     "export const createTicketDraft = async () => 'draft';\nexport const draftToCreateInput = () => 'markdown';\n",
     "utf8"
   );
@@ -939,9 +939,9 @@ test("ticket draft codebase research inspects matching project files before prom
     dependencies
   );
 
-  assert.ok(draft.research.inspectedFiles.some((file) => file.path === "src/main/services/codex.ts"));
+  assert.ok(draft.research.inspectedFiles.some((file) => file.path === "src/services/codex.ts"));
   assert.ok(draft.research.inspectedFiles.some((file) => file.path === "tests/ticket-draft.test.ts"));
-  assert.match(prompt, /src\/main\/services\/codex\.ts/);
+  assert.match(prompt, /src\/services\/codex\.ts/);
   assert.match(prompt, /createTicketDraft/);
   assert.match(prompt, /tests\/ticket-draft\.test\.ts/);
 });

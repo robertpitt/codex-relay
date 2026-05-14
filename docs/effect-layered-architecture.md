@@ -1,10 +1,12 @@
 # Effect-Layered Architecture
 
-Relay's Electron main process now boots a single Effect runtime from `AppLayerLive`.
+Relay's Electron main process boots one long-lived Effect `ManagedRuntime` from `AppLayerLive` in `src/runtime/appLayer.ts`.
+The renderer, preload bridge, IPC transport, backend services, durable kernel, and filesystem stores are kept behind explicit runtime layers and service tags.
 
 ## Runtime Config
 
-Backend process config is owned by `src/main/services/runtime/index.ts` and installed into the desktop app through `src/main/services/runtime/appLayer.ts`. The runtime reads these Effect `Config` keys from the default environment provider; missing values keep the listed defaults.
+Backend process config is owned by `src/runtime/index.ts` and installed into the desktop app through `src/runtime/appLayer.ts`.
+The runtime reads these Effect `Config` keys from the default environment provider; missing values keep the listed defaults.
 
 | Env key | BackendConfig field | Default |
 | --- | --- | --- |
@@ -15,136 +17,166 @@ Backend process config is owned by `src/main/services/runtime/index.ts` and inst
 
 Tests can parse the same config spec with `ConfigProvider.fromUnknown` through `loadBackendConfig`.
 
-## Boundaries
-
-- `src/main/index.ts` is the bootstrap: install runtime, register IPC, create the window, wire lifecycle shutdown.
-- `src/main/services/runtime/` owns the shared `ManagedRuntime`, `BackendConfig`, clock, logger service tag, and `AppLayerLive`.
-- `src/main/services/io/` is the only backend location for direct Node filesystem, path, child process, fetch, and future socket adapters. Domain services consume Effect services or IO facades from here.
-- `src/main/electron/` is the only backend location that imports Electron runtime APIs directly. It is split into primitive services for app lifecycle, windows, dialogs, shell, and raw IPC.
-- `src/main/window/RelayWindow.ts` owns Relay-specific window orchestration: main-window creation, reveal/focus behavior, renderer load failure logging, and run-event dispatch.
-- `src/main/ipc/` owns the internal IPC boundary. `RelayIpc` registers handlers through the Electron IPC adapter, schema-decodes renderer args, runs Effect handlers, schema-encodes results, and can remove handlers on scope close.
-- `src/main/ipc/methods/` owns schema-backed method definitions by public API area: projects, board, tickets, and Codex.
-- `src/shared/ipc.ts` owns channel names, argument tuples, and result types used by preload and main.
-- `src/main/services/run-events/` owns run JSONL persistence plus renderer event emission.
-- `src/main/services/git/` and `src/main/services/registry/` expose Effect services with Promise facades for compatibility.
-- `src/main/services/storage/` owns `.relay` persistence helpers, paths, file operations, IDs, ticket errors, and ticket/project behavior.
-- `src/main/services/kernel/` owns durable backend execution: `JobLedger`, `JobSupervisor`, `RelayWorkflowEngineLive`, idempotency, worker registry, and the only approved production import of `effect/unstable/workflow`.
-- `src/main/services/codex/` owns Codex status, draft research, draft generation, ticket update, run execution, cancellation, and error payload mapping.
-- `src/renderer/src/lib/relayApi.ts` is the renderer access point for the preload API.
-
-## Backend Kernel Layers
+## Layer Diagram
 
 ```mermaid
-flowchart TD
-  subgraph L0["Layer 0: Root Host"]
-    ElectronMain["Electron Main Process"]
-    NodeRuntime["Node Runtime"]
+flowchart TB
+  subgraph R["Renderer Process"]
+    UI["React UI"]
+    RelayApi["window.relay API"]
+    Preload["preload.app.ts"]
   end
 
-  subgraph L1["Layer 1: Bootloader"]
-    MainEntry["src/main/index.ts"]
-    InstallRuntime["installAppRuntime()"]
-    Ready["ElectronApp.whenReady()"]
-    RegisterIpc["installRelayIpcHandlers()"]
-    CreateWindow["RelayWindow.createMain()"]
-    Recovery["JobSupervisor.recoverFromRegistry()"]
+  subgraph M["Electron Main Process"]
+    Main["main.app.ts"]
+    Runtime["ManagedRuntime(AppLayerLive)"]
+
+    subgraph A["AppLayerLive"]
+      Base["BackendServicesBaseLive<br/>BackendClock + BackendConfig"]
+      Io["IoLive<br/>FileSystem + Path + HostRuntime<br/>CommandExecutor + HttpClient + SocketBoundary"]
+      Electron["ElectronDesktopLive<br/>ElectronApp + ElectronWindow<br/>ElectronDialog + ElectronShell + ElectronIpc"]
+      Boundaries["Boundary services<br/>RelayIpc + RelayWindow"]
+      Infra["Infrastructure services<br/>BackendLogger + RelayEffectLogger<br/>AtomicFile + RegistryStore<br/>Git + Storage + RunEventSink"]
+      Kernel["BackendKernelLive<br/>JobLedger + JobSupervisor<br/>KernelRunRegistry + WorkerRegistry<br/>Idempotency + Audit + WorkflowEngine"]
+    end
+
+    Methods["IPC method registry<br/>projects + board + tickets + codex"]
+    Codex["Codex orchestration module<br/>runs, drafts, updates, repository chat"]
   end
 
-  subgraph L2["Layer 2: App Runtime / Bootstrap"]
-    AppLayer["AppLayerLive"]
-    Base["Clock + BackendConfig"]
-    Logger["BackendLogger"]
-    IO["IoLive"]
-    ElectronAdapters["Electron adapters"]
+  subgraph P["Platform / External Boundaries"]
+    ElectronRuntime["Electron APIs"]
+    NodeRuntime["Node APIs"]
+    CodexSdk["@openai/codex-sdk + Codex CLI"]
+    GitCli["git CLI"]
   end
 
-  subgraph L3["Layer 3: Backend Kernel"]
-    WorkflowEngine["RelayWorkflowEngineLive"]
-    JobLedger["JobLedger"]
-    Supervisor["JobSupervisor"]
-    Idempotency["IdempotencyService"]
-    WorkerRegistry["WorkerRegistry"]
+  subgraph D["Durable Project State"]
+    RelayDir[".relay/"]
+    Tickets["tickets + board + project config"]
+    RunLogs["runs/**/*.jsonl"]
+    KernelStore["kernel/jobs/{executionId}/<br/>snapshot.json + events.jsonl"]
+    Registry["registry store"]
+    AppLog["relay.log"]
   end
 
-  subgraph L4["Layer 4: Domain Services"]
-    Storage["Storage Service"]
-    Codex["Codex Service"]
-    GitSync["Git Sync Service"]
-    Workers["Local/Remote Workers"]
-  end
+  UI --> RelayApi --> Preload
+  Preload -->|ipcRenderer.invoke / codex:runEvent| Methods
+  Main -->|installAppRuntime| Runtime
+  Runtime --> A
+  Main -->|installRelayIpcHandlers| Boundaries
+  Boundaries --> Methods
+  Methods --> Infra
+  Methods --> Kernel
+  Methods --> Codex
 
-  subgraph L5["Layer 5: Durable State"]
-    Tickets[".relay/tickets/*.md"]
-    Runs[".relay/runs/**/*.jsonl"]
-    Kernel[".relay/kernel/jobs/{executionId}/"]
-  end
+  Boundaries --> Electron
+  Infra --> Base
+  Infra --> Io
+  Infra --> Electron
+  Kernel --> Base
+  Kernel --> Io
+  Kernel --> Infra
+  Codex --> Kernel
+  Codex --> Infra
+  Codex --> Io
 
-  ElectronMain --> MainEntry
-  NodeRuntime --> MainEntry
-  MainEntry --> InstallRuntime
-  MainEntry --> Ready
-  Ready --> RegisterIpc
-  Ready --> CreateWindow
-  Ready --> Recovery
+  Electron --> ElectronRuntime
+  Io --> NodeRuntime
+  Codex --> CodexSdk
+  Infra --> GitCli
 
-  InstallRuntime --> AppLayer
-  AppLayer --> Base
-  AppLayer --> Logger
-  AppLayer --> IO
-  AppLayer --> ElectronAdapters
-  AppLayer --> WorkflowEngine
-  AppLayer --> Supervisor
-  AppLayer --> Storage
-  AppLayer --> Codex
-
-  Supervisor --> WorkflowEngine
-  Supervisor --> JobLedger
-  Supervisor --> Idempotency
-  WorkflowEngine --> JobLedger
-  WorkflowEngine --> WorkerRegistry
-
-  Codex --> Supervisor
-  Codex --> Storage
-  Storage --> Tickets
-  Codex --> Runs
-  JobLedger --> Kernel
-  GitSync --> Supervisor
-  Workers --> Supervisor
+  Infra --> RelayDir
+  Infra --> Tickets
+  Infra --> RunLogs
+  Infra --> Registry
+  Infra --> AppLog
+  Kernel --> KernelStore
 ```
 
-## Runtime Flow
+## Service Inventory
+
+| Layer | Services / modules | Role |
+| --- | --- | --- |
+| Bootstrap | `src/main.app.ts`, `installAppRuntime`, `runBackendEffect` | Installs the runtime, waits for Electron readiness, registers IPC handlers, creates the window, recovers kernel jobs, and wires shutdown. |
+| Base | `BackendClock`, `BackendConfig` | Shared time source and environment-backed config for backend services. |
+| IO adapters | `FileSystem`, `Path`, `HostRuntime`, `CommandExecutor`, `HttpClient`, `SocketBoundary` via `IoLive` | Single backend location for filesystem, paths, environment, child processes, fetch, and socket boundaries. |
+| Electron adapters | `ElectronApp`, `ElectronWindow`, `ElectronDialog`, `ElectronShell`, `ElectronIpc` | Single backend location for direct Electron API usage. |
+| Boundaries | `RelayIpc`, `RelayWindow` | Schema-decodes/encodes IPC calls, registers handlers, owns Relay window behavior, and sends run events to the renderer. |
+| Infrastructure | `BackendLogger`, `RelayEffectLoggerLive`, `AtomicFile`, `RegistryStore`, `Git`, `GitCli`, `GitMetadataCache`, `Storage`, `RunEventSink` | Logging, atomic writes, project registry, git metadata, project/ticket persistence, and renderer-facing run event persistence/emission. |
+| Storage stores | `ProjectStore`, `TicketStore`, `ClarificationStore`, `ArtifactStore`, `AuditLog`, `RunLog` | Filesystem-backed stores merged into `FileSystemStoresLive`, then exposed as the higher-level `Storage` service. |
+| Kernel | `JobLedger`, `JobSupervisor`, `KernelRunRegistry`, `WorkerRegistry`, `IdempotencyService`, `AuditService`, `RelayWorkflowEngineLive` | Durable job submission, status transitions, cancellation/resume, in-memory active run registry, and Effect Workflow integration. |
+| Codex orchestration | `src/services/codex/index.ts` | Promise-facing orchestration for implementation runs, ticket drafts, ticket updates, and repository chat. It is not currently exposed as a production `Context.Service`; it submits kernel jobs and uses storage/run-event services through the backend runtime. |
+| Optional HTTP transport | `src/http/RelayHttpServer.ts` | Local HTTP adapter over the same `relayIpcMethods` and `runRelayIpcMethod` pipeline, mainly covered by transport tests. |
+
+## Request Flow
 
 ```mermaid
 sequenceDiagram
-  participant Root as Electron Main
-  participant Boot as Bootloader
+  participant UI as React UI
+  participant Preload as window.relay / preload
+  participant Ipc as RelayIpc
+  participant Method as IPC method handler
   participant Runtime as ManagedRuntime(AppLayerLive)
-  participant IPC as Relay IPC
-  participant Supervisor as JobSupervisor
-  participant WF as RelayWorkflowEngine
-  participant Ledger as JobLedger
-  participant Domain as Domain Service
-  participant Events as RunEventSink
-  participant Disk as .relay
+  participant Service as Storage / Git / Codex / Kernel
+  participant Disk as .relay / relay.log
+  participant Window as RelayWindow
 
-  Root->>Boot: load src/main/index.ts
-  Boot->>Runtime: installAppRuntime()
-  Boot->>IPC: installRelayIpcHandlers()
-  Boot->>Runtime: RelayWindow.createMain()
-  Boot->>Supervisor: recover incomplete executions
-
-  IPC->>Supervisor: submit typed command
-  Supervisor->>Ledger: append submitted event + snapshot
-  Supervisor->>WF: Workflow.execute(payload, discard: true)
-  WF-->>Supervisor: executionId
-  Supervisor-->>IPC: execution handle
-
-  Domain->>Supervisor: mark running/suspended/completed/failed
-  Supervisor->>Ledger: append status event + snapshot
-  Domain->>Events: emit renderer-facing event
-  Events->>Disk: append run JSONL
-  Ledger->>Disk: write kernel snapshot/event log
+  UI->>Preload: call window.relay.projects/ticket/codex
+  Preload->>Ipc: ipcRenderer.invoke(channel, args)
+  Ipc->>Runtime: runRelayIpcMethod(...)
+  Runtime->>Ipc: decode payload schema
+  Ipc->>Method: run typed Effect handler
+  Method->>Service: consume Context.Service tags or Promise facades
+  Service->>Disk: read/write project state, logs, registry, run logs
+  Service-->>Window: emit run event when applicable
+  Window-->>Preload: codex:runEvent
+  Method-->>Ipc: result
+  Ipc->>Runtime: encode result schema
+  Ipc-->>Preload: result
+  Preload-->>UI: typed response
 ```
+
+## Kernel Job Flow
+
+```mermaid
+flowchart LR
+  CodexApi["Codex API call<br/>startRun / draft / update"]
+  Submit["JobSupervisor.submit*"]
+  IdKey["IdempotencyService<br/>stable execution id input"]
+  LedgerSubmitted["JobLedger.recordSubmitted<br/>status: submitted"]
+  LedgerQueued["JobLedger.transition<br/>status: queued"]
+  Workflow["RelayExternalJobWorkflow.execute(discard: true)"]
+  Engine["RelayWorkflowEngineLive<br/>durable workflow engine wrapper"]
+  Registry["KernelRunRegistry<br/>active/queued runs + scheduler wake queues"]
+  CodexWorker["Codex orchestration worker<br/>@openai/codex-sdk stream"]
+  Events["RunEventSink<br/>write JSONL + notify renderer"]
+  Terminal["JobSupervisor.markRunStatus<br/>completed / failed / cancelled / suspended"]
+  Store[".relay/kernel/jobs/{executionId}/"]
+
+  CodexApi --> Submit
+  Submit --> IdKey
+  Submit --> LedgerSubmitted --> LedgerQueued --> Workflow
+  Workflow --> Engine
+  Engine --> Store
+  CodexApi --> Registry
+  Registry --> CodexWorker
+  CodexWorker --> Events
+  CodexWorker --> Terminal
+  Terminal --> Store
+  Events --> Store
+```
+
+## Boundary Rules
+
+- `src/main.app.ts` is the bootstrap: install runtime, register IPC, create the window, recover jobs, and wire lifecycle shutdown.
+- `src/runtime/` owns the shared `ManagedRuntime`, base services, runtime runner, config, and `AppLayerLive`.
+- `src/io/` and `src/platform/` are the approved backend boundaries for Node and Electron runtime APIs.
+- `src/ipc/` owns schema-backed internal IPC. Shared renderer contracts live in `src/shared/ipc.ts`; no Effect types cross that boundary.
+- `src/storage/` owns `.relay` project persistence and storage service composition.
+- `src/services/kernel/` owns durable backend execution and is the only approved production import site for `effect/unstable/workflow`.
+- `src/services/codex/` owns Codex run orchestration and maps agent events into storage, kernel status, and renderer-facing run events.
+- `tests/import-boundaries.test.ts` enforces the raw IO, Electron, Workflow, and Codex lifecycle-map boundaries.
 
 ## Compatibility Rules
 
@@ -153,10 +185,10 @@ sequenceDiagram
 - `.relay` ticket, clarification, audit, and run log formats stay stable.
 - `.relay/kernel/jobs/{executionId}/snapshot.json` and `events.jsonl` are the durable backend execution store.
 - Codex still uses `@openai/codex-sdk`; the run sink replaces direct `BrowserWindow` coupling without changing event payloads.
-- Raw Node IO imports, raw fetch calls, raw socket usage, direct Electron imports, and unstable Workflow imports are guarded by `tests/import-boundaries.test.ts`. Electron imports are allowed only in `src/main/electron/` and preload. Unstable Workflow imports are allowed only in `src/main/services/kernel/`.
 
 ## Transitional Facades
 
-Some modules still expose Promise-returning functions because Electron IPC and existing tests use Promise boundaries. New backend internals should prefer `Context.Service` plus `Layer`, consume IO through `src/main/services/io/`, and keep Promise conversion at IPC or test adapter edges.
+Some modules still expose Promise-returning functions because Electron IPC and existing tests use Promise boundaries.
+New backend internals should prefer `Context.Service` plus `Layer`, consume IO through `src/io/`, and keep Promise conversion at IPC or test adapter edges.
 
 For backend execution control, see `docs/effect-workflow-lifecycle-evaluation.md`; Relay keeps board columns plus ticket `runStatus` user-visible while the kernel ledger becomes authoritative for backend job execution state.

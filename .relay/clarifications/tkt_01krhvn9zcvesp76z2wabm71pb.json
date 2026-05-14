@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krhvn9zcvesp76z2wabm71pb",
+  "questions": [
+    {
+      "id": "clar_01krhvp12dcxe908f5a2mcz0hk",
+      "ticketId": "tkt_01krhvn9zcvesp76z2wabm71pb",
+      "question": "Should this task migrate all existing Relay IPC methods to the Rpc/RpcGroup layer, or establish the new pattern with one representative vertical slice first?\n\nWhy it matters: This determines whether the implementation ticket is a broad boundary migration or a smaller architecture slice with follow-up work.\nRecommended answer: Establish the Rpc/RpcGroup pattern with one representative method group first, keep all existing behavior compatible, and document the migration path for the remaining methods.",
+      "answerType": "text",
+      "answer": "rewrite the existing to Rpc and RpcGroup",
+      "createdAt": "2026-05-13T23:45:19.437Z",
+      "updatedAt": "2026-05-13T23:46:02.712Z",
+      "answeredAt": "2026-05-13T23:46:02.712Z",
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krhvn9x8ehqrkznks45pv7qx",
+      "codexThreadId": "draft_run_01krhvn9x8ehqrkznks45pv7qx"
+    },
+    {
+      "id": "clar_01krhvp12d2e4q4r86m1y9szye",
+      "ticketId": "tkt_01krhvn9zcvesp76z2wabm71pb",
+      "question": "Which method area should be the first representative slice: tickets, projects, runs, or repository chat?\n\nWhy it matters: A concrete slice lets the ticket specify affected files, acceptance criteria, and regression tests without leaving the agent to choose a risky migration target.\nRecommended answer: Use a low-to-moderate-risk ticket/project read path as the first slice, because it exercises request/response schemas without immediately coupling the task to streaming run orchestration.",
+      "answerType": "text",
+      "answer": "all should be refactored to an approach that fits cleanly on top of existing rpc layer",
+      "createdAt": "2026-05-13T23:45:19.437Z",
+      "updatedAt": "2026-05-13T23:46:44.363Z",
+      "answeredAt": "2026-05-13T23:46:44.363Z",
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krhvn9x8ehqrkznks45pv7qx",
+      "codexThreadId": "draft_run_01krhvn9x8ehqrkznks45pv7qx"
+    }
+  ]
+}

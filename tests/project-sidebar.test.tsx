@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { openProjectInEditorFromHeader, ProjectEditorDropdown, ProjectSidebar } from "../src/renderer/src/App";
-import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectSummary, RelayApi } from "../src/shared/types";
+import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectSummary } from "../src/shared/types";
 
 const projectPath = "/tmp/relay-sidebar-project";
 
@@ -136,55 +136,36 @@ test("project header editor dropdown replaces raw path subtitle", () => {
 
 test("project header open-in-editor handler sends editor id and active project path", async () => {
   const calls: ProjectOpenInEditorInput[] = [];
-  const previousWindow = (globalThis as { window?: unknown }).window;
-  (globalThis as { window?: unknown }).window = {
-    relay: {
-      projects: {
-        openInEditor: async (input: ProjectOpenInEditorInput) => {
-          calls.push(input);
-          return { ok: true };
-        }
-      }
-    } as Partial<RelayApi>
+
+  const openInEditor = async (input: ProjectOpenInEditorInput) => {
+    calls.push(input);
+    return { ok: true } as const;
   };
 
-  try {
-    const toasts: unknown[] = [];
-    const setToast = (toast: unknown): void => {
-      toasts.push(toast);
-    };
-    await openProjectInEditorFromHeader(projectPath, "vscode", setToast);
-    await openProjectInEditorFromHeader(projectPath, "cursor", setToast);
+  const toasts: unknown[] = [];
+  const setToast = (toast: unknown): void => {
+    toasts.push(toast);
+  };
+  await openProjectInEditorFromHeader(projectPath, "vscode", setToast, openInEditor);
+  await openProjectInEditorFromHeader(projectPath, "cursor", setToast, openInEditor);
 
-    assert.deepEqual(calls, [
-      { projectPath, editorId: "vscode" },
-      { projectPath, editorId: "cursor" }
-    ]);
-    assert.deepEqual(toasts, []);
-  } finally {
-    (globalThis as { window?: unknown }).window = previousWindow;
-  }
+  assert.deepEqual(calls, [
+    { projectPath, editorId: "vscode" },
+    { projectPath, editorId: "cursor" }
+  ]);
+  assert.deepEqual(toasts, []);
 });
 
 test("project header open-in-editor handler shows returned failures as toast errors", async () => {
-  const previousWindow = (globalThis as { window?: unknown }).window;
-  (globalThis as { window?: unknown }).window = {
-    relay: {
-      projects: {
-        openInEditor: async (_input: ProjectOpenInEditorInput) => ({
-          ok: false,
-          message: "Relay could not open this project in Cursor."
-        })
-      }
-    } as Partial<RelayApi>
-  };
+  const openInEditor = async (_input: ProjectOpenInEditorInput) => ({
+    ok: false,
+    message: "Relay could not open this project in Cursor."
+  } as const);
 
-  try {
-    const toasts: unknown[] = [];
-    await openProjectInEditorFromHeader(projectPath, "cursor" satisfies ProjectEditorId, (toast) => toasts.push(toast));
+  const toasts: unknown[] = [];
+  await openProjectInEditorFromHeader(projectPath, "cursor" satisfies ProjectEditorId, (toast) => {
+    toasts.push(toast);
+  }, openInEditor);
 
-    assert.deepEqual(toasts, [{ kind: "error", message: "Relay could not open this project in Cursor." }]);
-  } finally {
-    (globalThis as { window?: unknown }).window = previousWindow;
-  }
+  assert.deepEqual(toasts, [{ kind: "error", message: "Relay could not open this project in Cursor." }]);
 });

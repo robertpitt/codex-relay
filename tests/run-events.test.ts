@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { summarizeRunLogLines, summarizeRunUsage } from "../src/main/services/run-events";
+import { summarizeRunLogLines, summarizeRunUsage } from "../src/services/run-events";
 import type { RunLogLine } from "../src/shared/types";
 
 const baseLine = (patch: Partial<RunLogLine> & Pick<RunLogLine, "timestamp" | "type" | "payload">): RunLogLine => ({

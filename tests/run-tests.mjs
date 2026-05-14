@@ -18,7 +18,9 @@ const entryPoints = [
   path.join(testsDir, "import-boundaries.test.ts"),
   path.join(testsDir, "ipc-contract.test.ts"),
   path.join(testsDir, "keyboard-shortcuts.test.ts"),
+  path.join(testsDir, "logger.test.ts"),
   path.join(testsDir, "markdown-block.test.tsx"),
+  path.join(testsDir, "http-transport.test.ts"),
   path.join(testsDir, "project-sidebar.test.tsx"),
   path.join(testsDir, "renderer-query-hooks.test.tsx"),
   path.join(testsDir, "run-events.test.ts"),
@@ -77,7 +79,7 @@ await build({
 });
 
 const builtTests = entryPoints.map((entry) => path.join(outdir, `${path.basename(entry).replace(/\.(tsx|ts)$/, "")}.js`));
-const result = spawnSync(process.execPath, ["--test", ...builtTests], {
+const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", ...builtTests], {
   cwd: projectRoot,
   stdio: "inherit"
 });

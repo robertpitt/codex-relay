@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "executionId": "c47adf718737bab3b57b30c0e2f52226",
+  "workflowName": "relay.externalJob",
+  "commandType": "codex.ticketDraft",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "idempotencyKey": "codex.ticketDraft:/Users/robertpitt/Projects/relay:tkt_01krhmsbpyf6ytkx5240zkzge3:run_01krhmsbms520jdm5cwtrw82rt",
+  "status": "suspended",
+  "attempts": 1,
+  "createdAt": "2026-05-13T21:44:48.608Z",
+  "updatedAt": "2026-05-14T12:21:08.212Z",
+  "runId": "run_01krhmsbms520jdm5cwtrw82rt",
+  "ticketId": "tkt_01krhmsbpyf6ytkx5240zkzge3",
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Create a detailed README in each service folder",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krhmsbms520jdm5cwtrw82rt",
+    "ticketId": "tkt_01krhmsbpyf6ytkx5240zkzge3"
+  },
+  "message": "Recovered incomplete workflow on boot.",
+  "metadata": {
+    "clarificationQuestionCount": 2,
+    "recovered": true
+  }
+}

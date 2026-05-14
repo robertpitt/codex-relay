@@ -10,7 +10,7 @@ import {
   ticketDraftSchema,
   ticketFrontMatterSchema,
   ticketSuggestionsResponseSchema
-} from "../src/main/services/schemas";
+} from "../src/services/schemas";
 import type { TicketDraftSubticket } from "../src/shared/types";
 
 const expectSchemaError = (error: unknown, message?: RegExp): true => {

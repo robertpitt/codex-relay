@@ -9,7 +9,7 @@ import {
   type TicketUpdateCodexClient,
   type TicketUpdateDependencies,
   type TicketUpdateThread
-} from "../src/main/services/codex";
+} from "../src/services/codex";
 import {
   createTicket,
   initializeProject,
@@ -17,7 +17,7 @@ import {
   readProjectConfig,
   readTicket,
   writeProjectConfig
-} from "../src/main/services/storage";
+} from "../src/storage";
 import type { AgentTicketUpdate, RendererRunEvent } from "../src/shared/types";
 
 const createProject = async (): Promise<string> => {

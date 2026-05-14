@@ -9,8 +9,8 @@ import {
   type TicketDraftCodexClient,
   type TicketDraftThread,
   type TicketSuggestionDependencies
-} from "../src/main/services/codex";
-import { createTicket, initializeProject } from "../src/main/services/storage";
+} from "../src/services/codex";
+import { createTicket, initializeProject } from "../src/storage";
 import type { CodexStatus, TicketSuggestion } from "../src/shared/types";
 
 const readyStatus: CodexStatus = {
