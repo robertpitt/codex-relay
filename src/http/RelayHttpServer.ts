@@ -6,7 +6,7 @@ import { relayRpcGroup } from "@shared/rpc";
 import { relayTransportFailureFromError, transportBodyDecodeError } from "../ipc";
 import { logInfo } from "../services/logger";
 import { runBackendEffect } from "../runtime";
-import { HostRuntime } from "../io";
+import { ElectronApp } from "../platform";
 import { RelayRpcHandlersLive } from "../services/rpc/handlers";
 import { addRelayHttpRunEventClient } from "./RelayHttpEvents";
 
@@ -234,7 +234,7 @@ export const startRelayHttpServer = async ({
 
   const baseUrl = serverAddress(server, host);
   const rendererBaseUrl =
-    (await runBackendEffect(HostRuntime.use((runtime) => runtime.envVar("ELECTRON_RENDERER_URL")))) ?? "http://localhost:5173";
+    (await runBackendEffect(ElectronApp.use((electronApp) => electronApp.envVar("ELECTRON_RENDERER_URL")))) ?? "http://localhost:5173";
   await logInfo("http", "Relay local RPC listening", {
     baseUrl,
     token,

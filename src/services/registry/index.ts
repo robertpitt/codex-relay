@@ -1,7 +1,7 @@
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import type { AppRegistry } from "@shared/schemas";
 import { appRegistrySchema } from "@shared/schemas";
-import { getElectronPath } from "../../platform/electron";
+import { ElectronApp } from "../../platform";
 import { runBackendEffect } from "../../runtime";
 import { parseSchema } from "../schemas";
 
@@ -28,7 +28,9 @@ export const RegistryStoreLive = Layer.effect(
   Effect.gen(function*() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const registryPath = (): string => path.join(getElectronPath("userData"), "registry.json");
+    const electronApp = yield* ElectronApp;
+    const userData = yield* electronApp.getPath("userData");
+    const registryPath = (): string => path.join(userData, "registry.json");
 
     const read = (): Effect.Effect<AppRegistry> =>
       fs.readFileString(registryPath(), "utf8").pipe(

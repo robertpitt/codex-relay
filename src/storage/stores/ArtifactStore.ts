@@ -1,23 +1,22 @@
 /**
  * Artifact storage for user-provided ticket attachments.
  */
-import { Context, Effect, FileSystem, Layer } from "effect";
+import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import type { TicketAttachmentSaveInput, TicketAttachmentSaveResult } from "@shared/schemas";
 import { imageAttachmentExtension, isSupportedImageAttachment } from "@shared/attachments";
-import { pathBasename, pathExtname, pathJoin, pathRelative } from "../../io";
 import { newId } from "../ids";
 import { attachmentsPath, slashPath } from "../paths";
 import { mapStoreWriteError, type StoreEffect } from "./effects";
 
 export type ArtifactStoreService = {
-  readonly saveAttachment: (input: TicketAttachmentSaveInput) => StoreEffect<TicketAttachmentSaveResult, FileSystem.FileSystem>;
+  readonly saveAttachment: (input: TicketAttachmentSaveInput) => StoreEffect<TicketAttachmentSaveResult, FileSystem.FileSystem | Path.Path>;
 };
 
 export const ArtifactStore = Context.Service<ArtifactStoreService>("relay/storage/ArtifactStore");
 
-const sanitizeAttachmentBaseName = (fileName: string): string => {
-  const baseName = pathBasename(fileName.trim() || "image");
-  const extension = pathExtname(baseName);
+const sanitizeAttachmentBaseName = (path: Path.Path, fileName: string): string => {
+  const baseName = path.basename(fileName.trim() || "image");
+  const extension = path.extname(baseName);
   const withoutExtension = extension ? baseName.slice(0, -extension.length) : baseName;
   const sanitized = withoutExtension
     .normalize("NFKD")
@@ -38,8 +37,9 @@ const decodeBase64Content = (contentBase64: string): Uint8Array => {
 
 export const makeFileSystemArtifactStore = (): ArtifactStoreService => ({
   saveAttachment: (input) => {
-    const targetDirectory = attachmentsPath(input.projectPath);
     return Effect.gen(function*() {
+      const path = yield* Path.Path;
+      const targetDirectory = attachmentsPath(path, input.projectPath);
       const mimeType = input.mimeType ?? null;
       if (!isSupportedImageAttachment({ fileName: input.fileName, mimeType })) {
         throw new Error("Only image attachments can be saved.");
@@ -47,19 +47,19 @@ export const makeFileSystemArtifactStore = (): ArtifactStoreService => ({
 
       const content = decodeBase64Content(input.contentBase64);
       const extension = imageAttachmentExtension(input.fileName, mimeType);
-      const safeBaseName = sanitizeAttachmentBaseName(input.fileName);
+      const safeBaseName = sanitizeAttachmentBaseName(path, input.fileName);
       const fileName = `${safeBaseName}-${newId("att")}${extension}`;
-      const absolutePath = pathJoin(targetDirectory, fileName);
+      const absolutePath = path.join(targetDirectory, fileName);
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
       yield* fs.writeFile(absolutePath, content);
 
       return {
         fileName,
-        markdownPath: slashPath(pathRelative(input.projectPath, absolutePath)),
+        markdownPath: slashPath(path.relative(input.projectPath, absolutePath)),
         absolutePath
       };
-    }).pipe(Effect.mapError(mapStoreWriteError(targetDirectory, "Save Relay ticket attachment")));
+    }).pipe(Effect.mapError(mapStoreWriteError(input.projectPath, "Save Relay ticket attachment")));
   }
 });
 

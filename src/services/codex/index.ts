@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schedule } from "effect";
+import { Context, Effect, Layer, Path, Schedule } from "effect";
 import { Codex, type CodexOptions, type Input, type Thread, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
 import {
   type AgentTicketUpdate,
@@ -62,7 +62,7 @@ import {
   parseSchema
 } from "../schemas";
 import { logError, logInfo, logWarn } from "../logger";
-import { HostRuntime, pathIsAbsolute, pathRelative, pathResolve } from "../../io";
+import { ElectronApp } from "../../platform";
 import {
   markKernelRunStatus,
   submitCodexImplementationJob,
@@ -109,6 +109,8 @@ type QueuedRunIntent = Omit<KernelQueuedRunIntent, "dependencies"> & {
 };
 
 const IMPLEMENTATION_WORKER_CONCURRENCY = 1;
+const backendPath = (): Promise<Path.Path> => runBackendEffect(Path.Path.use((path) => Effect.succeed(path)));
+const resolveBackendPath = async (...parts: string[]): Promise<string> => (await backendPath()).resolve(...parts);
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -287,7 +289,7 @@ const completeTicketUpdateRun = (runId: string): Promise<void> =>
 const schedulerRetryPolicy = Schedule.addDelay(Schedule.recurs(2), () => Effect.succeed("25 millis"));
 
 const ensureProjectSchedulerLoop = async (projectPath: string): Promise<void> => {
-  const resolvedProjectPath = pathResolve(projectPath);
+  const resolvedProjectPath = await resolveBackendPath(projectPath);
   const claimed = await registry(KernelRunRegistry.use((runRegistry) => runRegistry.claimProjectSchedulerLoop(resolvedProjectPath)));
   if (!claimed) return;
 
@@ -307,7 +309,7 @@ const ensureProjectSchedulerLoop = async (projectPath: string): Promise<void> =>
 };
 
 const wakeProjectScheduler = async (projectPath: string): Promise<void> => {
-  const resolvedProjectPath = pathResolve(projectPath);
+  const resolvedProjectPath = await resolveBackendPath(projectPath);
   await ensureProjectSchedulerLoop(resolvedProjectPath);
   await registry(KernelRunRegistry.use((runRegistry) => runRegistry.wakeProjectScheduler(resolvedProjectPath)));
 };
@@ -360,7 +362,7 @@ export const createCodex = async (dependencies: CreateCodexDependencies = {}): P
 
   const options: CodexOptions = {
     codexPathOverride: cliResolution.candidate.command,
-    env: await (dependencies.createEnv ?? (() => runBackendEffect(HostRuntime.use((host) => host.env))))()
+    env: await (dependencies.createEnv ?? (() => runBackendEffect(ElectronApp.use((electronApp) => electronApp.env))))()
   };
   return (dependencies.createClient ?? ((codexOptions) => new Codex(codexOptions)))(options);
 };
@@ -602,7 +604,6 @@ const parseJsonResponse = (value: string): unknown => {
   }
 };
 
-type DraftTimeoutHandle = ReturnType<typeof setTimeout>;
 type DraftProgressIntervalHandle = ReturnType<typeof setInterval>;
 type TicketDraftProgressReporter = (message: string) => void | Promise<void>;
 type RepositoryChatTimeoutHandle = ReturnType<typeof setTimeout>;
@@ -618,8 +619,6 @@ export type TicketDraftCodexClient = {
 export type TicketDraftDependencies = {
   getStatus?: () => Promise<CodexStatus>;
   createCodexClient?: () => TicketDraftCodexClient;
-  /** @deprecated Draft generation no longer has an internal timeout. */
-  draftTimeoutMs?: number;
   researchLimits?: Partial<TicketDraftResearchLimits>;
   fetchUrl?: typeof fetch;
   disableResearch?: boolean;
@@ -628,12 +627,6 @@ export type TicketDraftDependencies = {
   abortController?: AbortController;
   onProgress?: TicketDraftProgressReporter;
   draftProgressIntervalMs?: number;
-  /** @deprecated Draft generation no longer starts an internal timeout. */
-  setTimeoutFn?: (callback: () => void, ms: number) => DraftTimeoutHandle;
-  /** @deprecated Draft generation no longer starts an internal timeout. */
-  clearTimeoutFn?: (handle: DraftTimeoutHandle) => void;
-  /** @deprecated Draft generation no longer starts an internal timeout. */
-  unrefTimeout?: boolean;
 };
 
 export type TicketSuggestionDependencies = {
@@ -717,7 +710,7 @@ export class TicketDraftServiceError extends Error {
 const isAbortLikeError = (error: unknown): boolean =>
   error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("abort"));
 
-const unrefTimerHandle = (handle: DraftTimeoutHandle | DraftProgressIntervalHandle): void => {
+const unrefTimerHandle = (handle: DraftProgressIntervalHandle): void => {
   if (typeof handle === "object" && handle && "unref" in handle && typeof handle.unref === "function") {
     handle.unref();
   }
@@ -1151,7 +1144,7 @@ export const createDraftIntake = async (
   input: DraftIntakeInput,
   dependencies: TicketDraftDependencies = {}
 ): Promise<DraftIntakeResult> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const idea = input.idea.trim();
   if (!idea) throw new Error("Describe the ticket idea before drafting with the agent.");
 
@@ -1701,7 +1694,7 @@ export const startTicketDraftRun = async (
   input: CreateDraftInput,
   dependencies: TicketDraftStartDependencies = {}
 ): Promise<TicketDraftStart> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const idea = input.idea.trim();
   const runId = dependencies.createRunId?.() ?? newId("run");
   const threadId = draftRunThreadId(runId);
@@ -2036,7 +2029,7 @@ export const startTicketRedraftRun = async (
   input: TicketRedraftInput,
   dependencies: TicketDraftStartDependencies = {}
 ): Promise<TicketDraftStart> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const existingTicket = await readTicket(projectPath, input.ticketId);
   assertRedraftEligibleTicket(existingTicket);
   const idea = redraftIdeaFromTicket(existingTicket, input.idea);
@@ -2252,7 +2245,7 @@ export const maybeResumeTicketDraftAfterClarification = async (
   ticketId: string,
   dependencies: TicketDraftStartDependencies = {}
 ): Promise<TicketDraftStart | null> => {
-  const projectPath = pathResolve(projectPathInput);
+  const projectPath = await resolveBackendPath(projectPathInput);
   const ticket = await readTicket(projectPath, ticketId);
   if (ticket.frontMatter.runStatus !== "blocked") return null;
   if (!/Ticket draft generation is blocked on clarification\./.test(ticket.markdown)) return null;
@@ -2530,7 +2523,7 @@ function formatClarificationsForPrompt(clarifications: ClarificationQuestion[]):
     .join("\n");
 }
 
-const ticketUpdateRunKey = (projectPath: string, ticketId: string): string => `${pathResolve(projectPath)}:${ticketId}`;
+const ticketUpdateRunKey = (projectPath: string, ticketId: string): string => `${projectPath}:${ticketId}`;
 
 const assertAgentMarkdownBody = (markdown: string, fieldName: string): string => {
   const normalized = markdown.trimStart();
@@ -2613,7 +2606,7 @@ const startTicketUpdateRunPromise = async (
   input: AgentTicketUpdateInput,
   dependencies: TicketUpdateDependencies = {}
 ): Promise<AgentTicketUpdateStartResult> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const ticketId = input.ticketId;
   const request = input.request.trim();
   if (!request) throw new Error("Enter a ticket update request before starting the agent.");
@@ -2888,13 +2881,14 @@ const normalizeMarkdownImageDestination = (destination: string): string | null =
   }
 };
 
-const isPathInsideDirectory = (directory: string, target: string): boolean => {
-  const relative = pathRelative(directory, target);
-  return relative === "" || (!relative.startsWith("..") && !pathIsAbsolute(relative));
+const isPathInsideDirectory = (path: Path.Path, directory: string, target: string): boolean => {
+  const relative = path.relative(directory, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 };
 
-export const extractLocalMarkdownImagePaths = (projectPath: string, ticketMarkdown: string): string[] => {
-  const projectRoot = pathResolve(projectPath);
+export const extractLocalMarkdownImagePaths = async (projectPath: string, ticketMarkdown: string): Promise<string[]> => {
+  const path = await backendPath();
+  const projectRoot = path.resolve(projectPath);
   const imagePaths: string[] = [];
   const seen = new Set<string>();
 
@@ -2902,8 +2896,8 @@ export const extractLocalMarkdownImagePaths = (projectPath: string, ticketMarkdo
     const destination = normalizeMarkdownImageDestination(match[1] ?? "");
     if (!destination) continue;
 
-    const absolutePath = pathResolve(projectRoot, destination);
-    if (!isPathInsideDirectory(projectRoot, absolutePath) || seen.has(absolutePath)) continue;
+    const absolutePath = path.resolve(projectRoot, destination);
+    if (!isPathInsideDirectory(path, projectRoot, absolutePath) || seen.has(absolutePath)) continue;
     seen.add(absolutePath);
     imagePaths.push(absolutePath);
   }
@@ -2911,13 +2905,13 @@ export const extractLocalMarkdownImagePaths = (projectPath: string, ticketMarkdo
   return imagePaths;
 };
 
-export const buildExecutionInput = (
+export const buildExecutionInput = async (
   projectPath: string,
   ticketMarkdown: string,
   clarifications: ClarificationQuestion[]
-): CodexRunInput => {
+): Promise<CodexRunInput> => {
   const prompt = buildExecutionPrompt(ticketMarkdown, clarifications);
-  const imagePaths = extractLocalMarkdownImagePaths(projectPath, ticketMarkdown);
+  const imagePaths = await extractLocalMarkdownImagePaths(projectPath, ticketMarkdown);
   if (imagePaths.length === 0) return prompt;
 
   return [
@@ -2985,7 +2979,7 @@ const preflightCodexRunInternal = async (
   input: StartRunInput,
   options: CodexRunPreflightOptions = {}
 ): Promise<CodexRunPreflightResult> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const ticketId = input.ticketId;
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -3099,7 +3093,7 @@ const startQueuedRunNow = async (
   runId: string,
   dependencies: CodexRunDependencies = {}
 ): Promise<CodexRunStartResult | null> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const ticketId = input.ticketId;
   const freshThread = input.freshThread;
   const runEventSink = dependencies.runEventSink;
@@ -3143,7 +3137,7 @@ const startQueuedRunNow = async (
     const clarifications = await readClarificationQuestions(projectPath, ticketId);
     const options = await implementationThreadOptionsForProject(projectPath, ticket.frontMatter.effort);
     existingThreadId = resume && !freshThread ? ticket.frontMatter.codexThreadId : null;
-    executionInput = buildExecutionInput(projectPath, ticket.markdown, clarifications);
+    executionInput = await buildExecutionInput(projectPath, ticket.markdown, clarifications);
     status = config.columns.some((column) => column.id === RELAY_IN_PROGRESS_STATUS) ? RELAY_IN_PROGRESS_STATUS : ticket.frontMatter.status;
     if (!(await getQueuedImplementationRun(runId))) {
       await completeImplementationRun(runId);
@@ -3436,7 +3430,7 @@ const enqueueCodexRunPromise = async (
   resume: boolean,
   dependencies: CodexRunDependencies = {}
 ): Promise<CodexRunStartResult> => {
-  const projectPath = pathResolve(input.projectPath);
+  const projectPath = await resolveBackendPath(input.projectPath);
   const ticketId = input.ticketId;
   const normalizedInput: StartRunInput = { ...input, projectPath };
   await logInfo("codex:run", "queueing run", { projectPath, ticketId, resume, freshThread: input.freshThread });
@@ -3492,7 +3486,7 @@ export const reconcileTicketQueueState = async (
   ticketId: string,
   dependencies: CodexRunDependencies = {}
 ): Promise<TicketRecord> => {
-  const resolvedProjectPath = pathResolve(projectPath);
+  const resolvedProjectPath = await resolveBackendPath(projectPath);
   const ticket = await readTicket(resolvedProjectPath, ticketId);
 
   if (ticket.frontMatter.status === RELAY_READY_STATUS) {
@@ -3558,8 +3552,10 @@ type CancelRunTarget = {
   readonly ticketId?: string;
 };
 
-const normalizeCancelRunInput = (input: string | CancelRunInput): CancelRunTarget =>
-  typeof input === "string" ? { runId: input } : { runId: input.runId, projectPath: pathResolve(input.projectPath), ticketId: input.ticketId };
+const normalizeCancelRunInput = async (input: string | CancelRunInput): Promise<CancelRunTarget> =>
+  typeof input === "string"
+    ? { runId: input }
+    : { runId: input.runId, projectPath: await resolveBackendPath(input.projectPath), ticketId: input.ticketId };
 
 const cancelPersistedTicketRun = async ({ projectPath, ticketId, runId }: CancelRunTarget): Promise<boolean> => {
   if (!projectPath || !ticketId) return false;
@@ -3611,7 +3607,7 @@ const cancelPersistedTicketRun = async ({ projectPath, ticketId, runId }: Cancel
 };
 
 export const cancelCodexRun = async (input: string | CancelRunInput): Promise<void> => {
-  const cancelInput = normalizeCancelRunInput(input);
+  const cancelInput = await normalizeCancelRunInput(input);
   const runId = cancelInput.runId;
   const queued = await getQueuedImplementationRun(runId);
   if (queued) {
@@ -3624,7 +3620,7 @@ export const cancelCodexRun = async (input: string | CancelRunInput): Promise<vo
       await markKernelRunStatusSafely(active.projectPath, runId, "cancelled", { message: "Codex implementation cancellation requested." });
       return;
     }
-    const projectPath = pathResolve(queued.input.projectPath);
+    const projectPath = await resolveBackendPath(queued.input.projectPath);
     const targetStatus = (await readProjectConfig(projectPath)).columns.some((column) => column.id === RELAY_TODO_STATUS)
       ? RELAY_TODO_STATUS
       : null;

@@ -1,6 +1,6 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import type { CodexStatus } from "@shared/schemas";
-import { HostRuntime, pathJoin } from "../../io";
+import { ElectronApp } from "../../platform";
 import { runBackendEffect } from "../../runtime";
 import { resolveAvailableCodexCli, type CodexCliResolution } from "./cli";
 
@@ -15,15 +15,16 @@ const getCodexStatusPromise = async (dependencies: CodexStatusDependencies = {})
 
   let authenticated: boolean | null = null;
   const hasApiKey = await runBackendEffect(
-    HostRuntime.use((host) => host.env.pipe(Effect.map((env) => Boolean(env.OPENAI_API_KEY || env.CODEX_API_KEY))))
+    ElectronApp.use((electronApp) => electronApp.env.pipe(Effect.map((env) => Boolean(env.OPENAI_API_KEY || env.CODEX_API_KEY))))
   );
   try {
     await runBackendEffect(
       Effect.gen(function*() {
-        const host = yield* HostRuntime;
+        const electronApp = yield* ElectronApp;
         const fs = yield* FileSystem.FileSystem;
-        const home = yield* host.homeDirectory;
-        yield* fs.readFileString(pathJoin(home, ".codex", "auth.json"), "utf8");
+        const path = yield* Path.Path;
+        const home = yield* electronApp.homeDirectory;
+        yield* fs.readFileString(path.join(home, ".codex", "auth.json"), "utf8");
       })
     );
     authenticated = true;

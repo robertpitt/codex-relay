@@ -12,8 +12,8 @@ Scope: backend and shared contract surfaces only. Renderer matches for `effect` 
 ## Direct Effect Touch Points
 
 - `src/main/services/effectRuntime.ts`
-  - Backend runtime adapter surface: `BackendClock`, `BackendRuntimeLive`, `BackendEffect`, `runBackendEffect`, `fromPromise`, and `fromSync`.
-  - Uses Effect v4 APIs: `Context.Service`, `Layer.succeed`, `Effect.Effect`, `Effect.provide`, `Effect.runPromise`, `Effect.tryPromise`, `Effect.suspend`, `Effect.succeed`, and `Effect.fail`.
+  - Backend runtime adapter surface: `BackendClock`, `BackendRuntimeLive`, `BackendEffect`, `runBackendEffect`, and `fromPromise`.
+  - Uses Effect v4 APIs: `Context.Service`, `Layer.succeed`, `Effect.Effect`, `Effect.provide`, `Effect.runPromise`, and `Effect.tryPromise`.
 - `src/main/services/codex.ts`
   - Main migration surface for Codex status, ticket drafting, ticket update runs, execution runs, run event persistence, cancellation, and ticket run state.
   - Uses service layers for `CodexRunDependencies`, `TicketUpdateDependencies`, and `TicketDraftDependencies`.
@@ -49,7 +49,7 @@ Scope: backend and shared contract surfaces only. Renderer matches for `effect` 
   - Shared backend services -> `BackendClock` and `BackendRuntimeLive`; future services should be added behind the adapter instead of imported ad hoc across modules.
 - Async IO
   - `Promise`/`async` file, SDK, fetch, and child-process operations -> `Effect.tryPromise` through `fromPromise`.
-  - Synchronous side effects and thrown errors -> `Effect.suspend` with `Effect.succeed`/`Effect.fail` through `fromSync`.
+  - Synchronous side effects should use focused services directly instead of a generic runtime helper.
 - Errors
   - Existing thrown/rejected error values are intentionally preserved at Promise boundaries.
   - `TicketDraftServiceError` and `TicketDraftErrorPayload` should remain compatibility adapters for `TicketDraftResult`.

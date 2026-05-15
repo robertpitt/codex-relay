@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Effect } from "effect";
 import type { RendererRunEvent } from "../src/shared/schemas";
 import { makeRelayWindowService } from "../src/services/window/RelayWindow";
-import type { ElectronMainWindowOptions, ElectronWindowService } from "../src/platform/electron";
+import type { ElectronMainWindowOptions, ElectronWindowService } from "../src/platform";
 
 test("RelayWindow revealOrCreateMain creates when absent and focuses when present", async () => {
   let open = false;

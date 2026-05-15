@@ -1,1 +1,1 @@
-export * from "@platform/electron/Protocol";
+export * from "@platform/Protocol";

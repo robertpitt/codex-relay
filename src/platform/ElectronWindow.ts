@@ -1,8 +1,7 @@
-import { app } from "electron";
 import { Context, Effect, Layer, Path, Scope } from "effect";
 import type { RendererRunEvent } from "@shared/schemas";
-import { HostRuntime } from "../../io/HostRuntime";
 import { electronError, type ElectronError } from "./Errors";
+import { ElectronApp } from "./ElectronApp";
 import { BrowserWindows, secureWebPreferences, type ElectronBrowserWindow } from "./BrowserWindows";
 
 export type ElectronMainWindowOptions = {
@@ -35,15 +34,15 @@ const destroyWindow = (window: ElectronBrowserWindow): Effect.Effect<void> =>
     if (mainWindow === window) mainWindow = null;
   });
 
-const mainWindowPaths = (): Effect.Effect<ElectronMainWindowPaths, never, Path.Path | Context.Service.Identifier<typeof HostRuntime>> =>
+const mainWindowPaths = (): Effect.Effect<ElectronMainWindowPaths, never, Path.Path | Context.Service.Identifier<typeof ElectronApp>> =>
   Effect.gen(function*() {
     const path = yield* Path.Path;
-    const host = yield* HostRuntime;
-    const appPath = app.getAppPath();
+    const electronApp = yield* ElectronApp;
+    const appPath = yield* electronApp.appPath;
     return {
       preloadPath: path.join(appPath, "out/preload/index.cjs"),
       rendererHtmlPath: path.join(appPath, "out/renderer/index.html"),
-      rendererUrl: yield* host.envVar("ELECTRON_RENDERER_URL")
+      rendererUrl: yield* electronApp.envVar("ELECTRON_RENDERER_URL")
     };
   });
 

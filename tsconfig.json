@@ -15,7 +15,6 @@
     "paths": {
       "@domain/*": ["src/domain/*"],
       "@http/*": ["src/http/*"],
-      "@io/*": ["src/io/*"],
       "@ipc/*": ["src/ipc/*"],
       "@platform/*": ["src/platform/*"],
       "@shared/*": ["src/shared/*"],

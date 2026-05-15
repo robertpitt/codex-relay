@@ -1,6 +1,6 @@
-import { Effect, Stream } from "effect";
+import { Effect, Path, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { HostRuntime, pathDirname, pathJoin } from "../../io";
+import { ElectronApp } from "../../platform";
 import { BackendConfig, runBackendEffect } from "../../runtime";
 
 export type CodexCliCandidateSource = "bundled" | "path";
@@ -79,32 +79,13 @@ export const targetTripleForPlatform = (platform: NodeJS.Platform, arch: NodeJS.
   }
 };
 
-export const resolveBundledCodexPath = (options: ResolveBundledCodexPathOptions = {}): string | null => {
-  if (!options.platform || !options.arch || !options.resolvePackageJson) return null;
-  const platform = options.platform;
-  const arch = options.arch;
-  const targetTriple = targetTripleForPlatform(platform, arch);
-  if (!targetTriple) return null;
-
-  const platformPackage = PLATFORM_PACKAGE_BY_TARGET[targetTriple];
-  if (!platformPackage) return null;
-
-  try {
-    const codexPackageJsonPath = options.resolvePackageJson(`${CODEX_NPM_NAME}/package.json`);
-    const platformPackageJsonPath = options.resolvePackageJson(`${platformPackage}/package.json`, codexPackageJsonPath);
-    const codexBinaryName = platform === "win32" ? "codex.exe" : "codex";
-    return pathJoin(pathDirname(platformPackageJsonPath), "vendor", targetTriple, "codex", codexBinaryName);
-  } catch {
-    return null;
-  }
-};
-
 export const resolveBundledCodexPathEffect = (
   options: ResolveBundledCodexPathOptions = {}
 ) =>
   Effect.gen(function*() {
-    const host = yield* HostRuntime;
-    const runtime = options.platform && options.arch ? { platform: options.platform, arch: options.arch } : yield* host.platform;
+    const electronApp = yield* ElectronApp;
+    const path = yield* Path.Path;
+    const runtime = options.platform && options.arch ? { platform: options.platform, arch: options.arch } : yield* electronApp.runtime;
     const targetTriple = targetTripleForPlatform(runtime.platform, runtime.arch);
     if (!targetTriple) return null;
 
@@ -114,25 +95,14 @@ export const resolveBundledCodexPathEffect = (
     return yield* Effect.gen(function*() {
       const codexPackageJsonPath = options.resolvePackageJson
         ? options.resolvePackageJson(`${CODEX_NPM_NAME}/package.json`)
-        : yield* host.resolvePackageJson(`${CODEX_NPM_NAME}/package.json`);
+        : yield* electronApp.resolvePackageJson(`${CODEX_NPM_NAME}/package.json`);
       const platformPackageJsonPath = options.resolvePackageJson
         ? options.resolvePackageJson(`${platformPackage}/package.json`, codexPackageJsonPath)
-        : yield* host.resolvePackageJson(`${platformPackage}/package.json`, codexPackageJsonPath);
+        : yield* electronApp.resolvePackageJson(`${platformPackage}/package.json`, codexPackageJsonPath);
       const codexBinaryName = runtime.platform === "win32" ? "codex.exe" : "codex";
-      return pathJoin(pathDirname(platformPackageJsonPath), "vendor", targetTriple, "codex", codexBinaryName);
+      return path.join(path.dirname(platformPackageJsonPath), "vendor", targetTriple, "codex", codexBinaryName);
     }).pipe(Effect.catch(() => Effect.succeed(null)));
   });
-
-export const resolveCodexCliCandidates = (options: ResolveCodexCliCandidatesOptions = {}): CodexCliCandidate[] => {
-  const pathCommand = options.pathCommand ?? CODEX_PATH_COMMAND;
-  const bundledPath = resolveBundledCodexPath(options);
-  const candidates: CodexCliCandidate[] = [];
-  if (bundledPath) {
-    candidates.push({ source: "bundled", command: bundledPath });
-  }
-  candidates.push({ source: "path", command: pathCommand });
-  return candidates;
-};
 
 export const resolveCodexCliCandidatesEffect = (
   options: ResolveCodexCliCandidatesOptions = {}

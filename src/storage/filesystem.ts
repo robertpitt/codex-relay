@@ -43,14 +43,8 @@ import { uniqueTicketIds } from "@shared/blockers";
 import { clarificationStoreSchema, projectConfigSchema, ticketFrontMatterSchema } from "@shared/schemas";
 import { extractTicketChecklist } from "@shared/ticketMetadata";
 import { BackendClock, type BackendEffect, runBackendEffect } from "../runtime";
-import { showElectronItemInFolder } from "../platform/electron";
+import { showElectronItemInFolder } from "../platform";
 import { isFileNotFoundError } from "../platform/PlatformError";
-import {
-  pathBasename,
-  pathExtname,
-  pathJoin,
-  pathRelative
-} from "../io";
 import { parseSchema } from "../services/schemas";
 import { TicketNotFoundError, isTicketNotFoundError } from "./errors";
 import { atomicWriteJson, atomicWriteText } from "./files";
@@ -86,6 +80,7 @@ const defaultSettings = (): ProjectSettings => ({
 });
 
 const nowIso = (): string => new Date().toISOString();
+const backendPath = (): Promise<Path.Path> => runBackendEffect(Path.Path.use((path) => Effect.succeed(path)));
 
 const isSidebarActiveRunStatus = (status: TicketSummary["runStatus"]): boolean =>
   status === "queued" || status === "drafting" || status === "running" || status === "blocked";
@@ -124,8 +119,10 @@ const normalizeProjectConfig = (config: ProjectConfig): ProjectConfig => ({
   columns: normalizeProjectColumns(config.columns)
 });
 
-export const isGitRepository = async (projectPath: string): Promise<boolean> =>
-  runBackendEffect(FileSystem.FileSystem.use((fs) => fs.exists(pathJoin(projectPath, ".git"))));
+export const isGitRepository = async (projectPath: string): Promise<boolean> => {
+  const path = await backendPath();
+  return runBackendEffect(FileSystem.FileSystem.use((fs) => fs.exists(path.join(projectPath, ".git"))));
+};
 
 const appendAuditEventEffect = (
   projectPath: string,
@@ -140,7 +137,7 @@ const appendAuditEventEffect = (
       timestamp: clock.nowIso(),
       ...event
     };
-    const target = auditLogPath(projectPath);
+    const target = auditLogPath(path, projectPath);
     yield* fs.makeDirectory(path.dirname(target), { recursive: true });
     yield* fs.writeFileString(target, `${JSON.stringify(record)}\n`, { flag: "a" });
   });
@@ -155,11 +152,14 @@ const assertDirectory = async (projectPath: string): Promise<void> => {
   }
 };
 
-export const isRelayInitialized = async (projectPath: string): Promise<boolean> =>
-  runBackendEffect(FileSystem.FileSystem.use((fs) => fs.exists(projectConfigPath(projectPath))));
+export const isRelayInitialized = async (projectPath: string): Promise<boolean> => {
+  const path = await backendPath();
+  return runBackendEffect(FileSystem.FileSystem.use((fs) => fs.exists(projectConfigPath(path, projectPath))));
+};
 
 export const initializeProject = async (projectPath: string): Promise<ProjectConfig> => {
-  const resolved = resolveProjectPath(projectPath);
+  const path = await backendPath();
+  const resolved = resolveProjectPath(path, projectPath);
   await assertDirectory(resolved);
   const existing = await isRelayInitialized(resolved);
   if (existing) return readProjectConfig(resolved);
@@ -168,7 +168,7 @@ export const initializeProject = async (projectPath: string): Promise<ProjectCon
   const config: ProjectConfig = {
     schemaVersion: RELAY_SCHEMA_VERSION,
     projectId: newId("prj"),
-    name: pathBasename(resolved),
+    name: path.basename(resolved),
     createdAt: now,
     updatedAt: now,
     columns: DEFAULT_COLUMNS.map((column) => ({ ...column })),
@@ -178,32 +178,34 @@ export const initializeProject = async (projectPath: string): Promise<ProjectCon
   await runBackendEffect(
     FileSystem.FileSystem.use((fs) =>
       Effect.gen(function*() {
-        yield* fs.makeDirectory(ticketsPath(resolved), { recursive: true });
-        yield* fs.makeDirectory(runsPath(resolved), { recursive: true });
-        yield* fs.makeDirectory(clarificationsPath(resolved), { recursive: true });
-        yield* fs.makeDirectory(attachmentsPath(resolved), { recursive: true });
-        yield* fs.makeDirectory(backupsPath(resolved), { recursive: true });
+        yield* fs.makeDirectory(ticketsPath(path, resolved), { recursive: true });
+        yield* fs.makeDirectory(runsPath(path, resolved), { recursive: true });
+        yield* fs.makeDirectory(clarificationsPath(path, resolved), { recursive: true });
+        yield* fs.makeDirectory(attachmentsPath(path, resolved), { recursive: true });
+        yield* fs.makeDirectory(backupsPath(path, resolved), { recursive: true });
       })
     )
   );
-  await atomicWriteJson(projectConfigPath(resolved), config);
+  await atomicWriteJson(projectConfigPath(path, resolved), config);
   return config;
 };
 
 export const readProjectConfig = async (projectPath: string): Promise<ProjectConfig> => {
-  const raw = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.readFileString(projectConfigPath(projectPath), "utf8")));
+  const path = await backendPath();
+  const raw = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.readFileString(projectConfigPath(path, projectPath), "utf8")));
   return normalizeProjectConfig(parseSchema(projectConfigSchema, JSON.parse(raw)));
 };
 
 export const writeProjectConfig = async (projectPath: string, config: ProjectConfig): Promise<ProjectConfig> => {
+  const path = await backendPath();
   const updated = normalizeProjectConfig({ ...config, updatedAt: nowIso() });
-  await atomicWriteJson(projectConfigPath(projectPath), updated);
+  await atomicWriteJson(projectConfigPath(path, projectPath), updated);
   return updated;
 };
 
-const sanitizeAttachmentBaseName = (fileName: string): string => {
-  const baseName = pathBasename(fileName.trim() || "image");
-  const extension = pathExtname(baseName);
+const sanitizeAttachmentBaseName = (path: Path.Path, fileName: string): string => {
+  const baseName = path.basename(fileName.trim() || "image");
+  const extension = path.extname(baseName);
   const withoutExtension = extension ? baseName.slice(0, -extension.length) : baseName;
   const sanitized = withoutExtension
     .normalize("NFKD")
@@ -228,7 +230,8 @@ const decodeBase64Content = (contentBase64: string): Uint8Array => {
 };
 
 export const saveTicketAttachment = async (input: TicketAttachmentSaveInput): Promise<TicketAttachmentSaveResult> => {
-  const projectPath = resolveProjectPath(input.projectPath);
+  const path = await backendPath();
+  const projectPath = resolveProjectPath(path, input.projectPath);
   const mimeType = input.mimeType ?? null;
   if (!isSupportedImageAttachment({ fileName: input.fileName, mimeType })) {
     throw new Error("Only image attachments can be saved.");
@@ -236,10 +239,10 @@ export const saveTicketAttachment = async (input: TicketAttachmentSaveInput): Pr
 
   const content = decodeBase64Content(input.contentBase64);
   const extension = imageAttachmentExtension(input.fileName, mimeType);
-  const safeBaseName = sanitizeAttachmentBaseName(input.fileName);
+  const safeBaseName = sanitizeAttachmentBaseName(path, input.fileName);
   const fileName = `${safeBaseName}-${newId("att")}${extension}`;
-  const attachmentDirectory = attachmentsPath(projectPath);
-  const absolutePath = pathJoin(attachmentDirectory, fileName);
+  const attachmentDirectory = attachmentsPath(path, projectPath);
+  const absolutePath = path.join(attachmentDirectory, fileName);
 
   await runBackendEffect(
     FileSystem.FileSystem.use((fs) =>
@@ -252,13 +255,14 @@ export const saveTicketAttachment = async (input: TicketAttachmentSaveInput): Pr
 
   return {
     fileName,
-    markdownPath: slashPath(pathRelative(projectPath, absolutePath)),
+    markdownPath: slashPath(path.relative(projectPath, absolutePath)),
     absolutePath
   };
 };
 
 export const summarizeProject = async (projectPath: string, lastOpenedAt?: string): Promise<ProjectSummary> => {
-  const resolved = resolveProjectPath(projectPath);
+  const path = await backendPath();
+  const resolved = resolveProjectPath(path, projectPath);
   const exists = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.exists(resolved)));
   const healthMessages: string[] = [];
   let config: ProjectConfig | null = null;
@@ -269,7 +273,7 @@ export const summarizeProject = async (projectPath: string, lastOpenedAt?: strin
   if (!exists) {
     return {
       projectId: null,
-      name: pathBasename(resolved),
+      name: path.basename(resolved),
       path: resolved,
       exists: false,
       isGitRepository: false,
@@ -326,7 +330,7 @@ export const summarizeProject = async (projectPath: string, lastOpenedAt?: strin
 
   return {
     projectId: config?.projectId ?? null,
-    name: config?.name ?? pathBasename(resolved),
+    name: config?.name ?? path.basename(resolved),
     path: resolved,
     exists,
     isGitRepository: git,
@@ -390,7 +394,8 @@ const readTickets = async (
   projectPath: string,
   columns: RelayColumn[]
 ): Promise<{ tickets: TicketSummary[]; records: TicketRecord[]; invalidTickets: InvalidTicket[] }> => {
-  const ticketDirectory = ticketsPath(projectPath);
+  const path = await backendPath();
+  const ticketDirectory = ticketsPath(path, projectPath);
   const entries = await runBackendEffect(
     FileSystem.FileSystem.use((fs) =>
       Effect.gen(function*() {
@@ -406,7 +411,7 @@ const readTickets = async (
 
   for (const entry of entries) {
     if (!entry.endsWith(".md")) continue;
-    const filePath = pathJoin(ticketDirectory, entry);
+    const filePath = path.join(ticketDirectory, entry);
     const info = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.stat(filePath)));
     if (info.type !== "File") continue;
     try {
@@ -439,7 +444,8 @@ const readTickets = async (
 };
 
 export const readBoard = async (projectPath: string, lastOpenedAt?: string): Promise<BoardSnapshot> => {
-  const resolved = resolveProjectPath(projectPath);
+  const path = await backendPath();
+  const resolved = resolveProjectPath(path, projectPath);
   const project = await summarizeProject(resolved, lastOpenedAt);
 
   if (!project.exists || !project.relayInitialized) {
@@ -493,19 +499,20 @@ const assertRelationshipShape = (frontMatter: TicketFrontMatter): void => {
   }
 };
 
-const relativeMarkdownPath = (fromDirectory: string, toFile: string): string => {
-  const relativePath = slashPath(pathRelative(fromDirectory, toFile));
+const relativeMarkdownPath = (path: Path.Path, fromDirectory: string, toFile: string): string => {
+  const relativePath = slashPath(path.relative(fromDirectory, toFile));
   if (relativePath.startsWith(".") || relativePath.startsWith("/")) return relativePath;
   return `./${relativePath}`;
 };
 
 export const listTicketReferenceCandidates = async (projectPath: string): Promise<TicketReferenceCandidate[]> => {
-  const resolvedProjectPath = resolveProjectPath(projectPath);
+  const path = await backendPath();
+  const resolvedProjectPath = resolveProjectPath(path, projectPath);
   const config = await readProjectConfig(resolvedProjectPath);
   const columnNames = new Map(config.columns.map((column) => [column.id, column.name]));
   const columnPositions = new Map(config.columns.map((column) => [column.id, column.position]));
   const { tickets } = await readTickets(resolvedProjectPath, config.columns);
-  const ticketDirectory = ticketsPath(resolvedProjectPath);
+  const ticketDirectory = ticketsPath(path, resolvedProjectPath);
 
   return [...tickets]
     .sort((a, b) => {
@@ -518,14 +525,15 @@ export const listTicketReferenceCandidates = async (projectPath: string): Promis
       title: ticket.title,
       status: ticket.status,
       columnName: columnNames.get(ticket.status) ?? ticket.status,
-      relativePath: slashPath(pathRelative(resolvedProjectPath, ticket.filePath)),
-      linkPath: relativeMarkdownPath(ticketDirectory, ticket.filePath)
+      relativePath: slashPath(path.relative(resolvedProjectPath, ticket.filePath)),
+      linkPath: relativeMarkdownPath(path, ticketDirectory, ticket.filePath)
     }));
 };
 
 export const readTicket = async (projectPath: string, ticketId: string): Promise<TicketRecord> => {
-  const resolvedProjectPath = resolveProjectPath(projectPath);
-  const target = ticketPath(resolvedProjectPath, ticketId);
+  const path = await backendPath();
+  const resolvedProjectPath = resolveProjectPath(path, projectPath);
+  const target = ticketPath(path, resolvedProjectPath, ticketId);
   try {
     return await readTicketFile(target);
   } catch (error) {
@@ -589,7 +597,8 @@ const stringifyTicket = (ticket: TicketRecord): string => {
 };
 
 export const writeTicket = async (projectPath: string, ticket: TicketRecord): Promise<TicketRecord> => {
-  const target = ticketPath(projectPath, ticket.frontMatter.id);
+  const path = await backendPath();
+  const target = ticketPath(path, projectPath, ticket.frontMatter.id);
   const frontMatter = normalizeFrontMatterRelationships(ticket.frontMatter);
   assertRelationshipShape(frontMatter);
   const next: TicketRecord = {
@@ -835,10 +844,11 @@ const createSingleTicket = async (projectPath: string, input: TicketCreateInput)
     lastRunStartedAt: null
   };
   await validateParentEpic(projectPath, frontMatter);
+  const path = await backendPath();
   const ticket: TicketRecord = {
     frontMatter,
     markdown: input.markdown,
-    filePath: ticketPath(projectPath, frontMatter.id),
+    filePath: ticketPath(path, projectPath, frontMatter.id),
     checklist: extractTicketChecklist(input.markdown)
   };
   return writeTicket(projectPath, ticket);
@@ -1247,12 +1257,14 @@ const writeClarificationQuestions = async (
     ticketId,
     questions
   };
-  await atomicWriteJson(clarificationStorePath(projectPath, ticketId), store);
+  const path = await backendPath();
+  await atomicWriteJson(clarificationStorePath(path, projectPath, ticketId), store);
   return questions;
 };
 
 export const readClarificationQuestions = async (projectPath: string, ticketId: string): Promise<ClarificationQuestion[]> => {
-  const target = clarificationStorePath(projectPath, ticketId);
+  const path = await backendPath();
+  const target = clarificationStorePath(path, projectPath, ticketId);
   const raw = await runBackendEffect(
     FileSystem.FileSystem.use((fs) =>
       fs.readFileString(target, "utf8").pipe(
@@ -1407,9 +1419,10 @@ const unlinkTicketRelationshipsBeforeDelete = async (projectPath: string, ticket
 export const deleteTicket = async (projectPath: string, ticketId: string): Promise<BoardSnapshot> => {
   const ticket = await readTicket(projectPath, ticketId);
   await unlinkTicketRelationshipsBeforeDelete(projectPath, ticket);
-  const source = ticketPath(projectPath, ticketId);
+  const path = await backendPath();
+  const source = ticketPath(path, projectPath, ticketId);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const target = pathJoin(trashPath(projectPath), stamp, `${ticketId}.md`);
+  const target = path.join(trashPath(path, projectPath), stamp, `${ticketId}.md`);
   await runBackendEffect(
     Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem;
@@ -1436,7 +1449,8 @@ export const duplicateTicket = async (projectPath: string, ticketId: string): Pr
 };
 
 export const revealTicketFile = async (projectPath: string, ticketId: string): Promise<void> => {
-  showElectronItemInFolder(ticketPath(projectPath, ticketId));
+  const path = await backendPath();
+  showElectronItemInFolder(ticketPath(path, projectPath, ticketId));
 };
 
 export const appendCodexHandoff = (markdown: string, handoff: string): string => {

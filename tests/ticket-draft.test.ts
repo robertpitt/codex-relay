@@ -979,8 +979,6 @@ test("ticket draft waits for slow Codex responses without an internal timeout", 
     const dependencies: TicketDraftDependencies = {
       getStatus: async () => readyStatus,
       createRequestId: () => "tdr_slow_draft",
-      draftTimeoutMs: 1,
-      unrefTimeout: false,
       createCodexClient: () =>
         createDraftCodexClient((_prompt, options) => {
           signals.push(options.signal);

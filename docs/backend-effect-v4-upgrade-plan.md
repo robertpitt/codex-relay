@@ -31,8 +31,8 @@ The existing Effect usage is an adapter-style first pass, not a complete Effect 
 ### Backend Services
 
 - `src/main/services/effectRuntime.ts`
-  - Current Effect adapter: `BackendClock`, `BackendClockLive`, `BackendRuntimeLive`, `BackendEffect`, `runBackendEffect`, `fromPromise`, and `fromSync`.
-  - Uses `Context.Service`, `Layer.succeed`, `Effect.provide`, `Effect.runPromise`, `Effect.tryPromise`, `Effect.suspend`, `Effect.succeed`, and `Effect.fail`.
+  - Current Effect adapter: `BackendClock`, `BackendClockLive`, `BackendRuntimeLive`, `BackendEffect`, `runBackendEffect`, and `fromPromise`.
+  - Uses `Context.Service`, `Layer.succeed`, `Effect.provide`, `Effect.runPromise`, and `Effect.tryPromise`.
   - This should become the single backend runtime composition point before more services are migrated.
 - `src/main/services/logger.ts`
   - Console and file logging to Electron `app.getPath("userData")/relay.log`.
@@ -621,7 +621,7 @@ Files to inspect/change:
 
 Expected code patterns:
 
-- Replace `fromPromise`/`fromSync` call sites with domain-specific services where practical.
+- Replace `fromPromise` call sites with domain-specific services where practical.
 - Add Effect logging/metrics/tracing in one place.
 - Keep compatibility facades only where IPC or tests need them.
 

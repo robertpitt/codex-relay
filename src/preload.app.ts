@@ -12,7 +12,7 @@ import {
   relayRunEventChannel,
   type RelayIpcRpcClientPacket,
   type RelayIpcRpcServerPacket
-} from "@platform/electron/Protocol";
+} from "@platform/Protocol";
 import type { RendererRunEvent } from "@shared/schemas";
 
 

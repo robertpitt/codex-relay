@@ -1,8 +1,7 @@
-import { Effect } from "effect";
+import { Effect, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectOpenInEditorResult } from "@shared/schemas";
-import { pathResolve } from "../io";
-import { ElectronDialog, ElectronShell } from "../platform/electron";
+import { ElectronDialog, ElectronShell } from "../platform";
 import { BackendClock } from "../runtime";
 import { Git } from "../services/git";
 import { RegistryStore } from "../services/registry";
@@ -74,13 +73,14 @@ export const addProjectFolder = () =>
     const dialog = yield* ElectronDialog;
     const storage = yield* Storage;
     const clock = yield* BackendClock;
+    const path = yield* Path.Path;
     const result = yield* dialog.showOpenDialog({
       title: "Add Relay Project",
       properties: ["openDirectory", "createDirectory"]
     });
     if (result.canceled || result.filePaths.length === 0) return null;
 
-    const projectPath = pathResolve(result.filePaths[0]);
+    const projectPath = path.resolve(result.filePaths[0]);
     const summary = yield* storage.getProjectSummary(projectPath);
     let initialized = false;
 

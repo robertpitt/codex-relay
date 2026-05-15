@@ -1,6 +1,5 @@
-import { Context, Effect, Layer, ManagedRuntime, Queue, Ref } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Path, Queue, Ref } from "effect";
 import type { StartRunInput } from "@shared/schemas";
-import { pathResolve } from "../../io";
 
 type RegistryEffect<A> = Effect.Effect<A, unknown>;
 
@@ -93,10 +92,11 @@ const activeRunIdForTicketInMap = (
 
 const getProjectSchedulerState = (
   stateRef: Ref.Ref<RegistryState>,
+  path: Path.Path,
   projectPathInput: string
 ): RegistryEffect<ProjectSchedulerState> =>
   Effect.gen(function*() {
-    const projectPath = pathResolve(projectPathInput);
+    const projectPath = path.resolve(projectPathInput);
     const current = yield* Ref.get(stateRef);
     const existing = current.projectSchedulers.get(projectPath);
     if (existing) return existing;
@@ -114,10 +114,11 @@ const getProjectSchedulerState = (
 
 const makeKernelRunRegistry = Effect.gen(function*() {
   const stateRef = yield* Ref.make(emptyState());
+  const path = yield* Path.Path;
 
   const activeRunIdForTicket: KernelRunRegistryService["activeRunIdForTicket"] = (projectPathInput, ticketId) =>
     Effect.map(Ref.get(stateRef), (state) => {
-      const projectPath = pathResolve(projectPathInput);
+      const projectPath = path.resolve(projectPathInput);
       return (
         activeRunIdForTicketInMap(state.activeImplementationRuns, projectPath, ticketId) ??
         activeRunIdForTicketInMap(state.activeDraftRuns, projectPath, ticketId)
@@ -146,7 +147,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
   const markImplementationStarting: KernelRunRegistryService["markImplementationStarting"] = (runId, runRef) =>
     Ref.update(stateRef, (state) => {
       const startingRuns = new Map(state.startingRuns);
-      startingRuns.set(runId, { ...runRef, projectPath: pathResolve(runRef.projectPath) });
+      startingRuns.set(runId, { ...runRef, projectPath: path.resolve(runRef.projectPath) });
       return { ...state, startingRuns };
     });
 
@@ -164,7 +165,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
       const activeImplementationRuns = new Map(state.activeImplementationRuns);
       const startingRuns = new Map(state.startingRuns);
       const queuedRunIntents = new Map(state.queuedRunIntents);
-      activeImplementationRuns.set(runId, { ...activeRun, projectPath: pathResolve(activeRun.projectPath) });
+      activeImplementationRuns.set(runId, { ...activeRun, projectPath: path.resolve(activeRun.projectPath) });
       startingRuns.delete(runId);
       queuedRunIntents.delete(runId);
       return { ...state, activeImplementationRuns, startingRuns, queuedRunIntents };
@@ -181,7 +182,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
 
   const activeImplementationRunCount: KernelRunRegistryService["activeImplementationRunCount"] = (projectPathInput) =>
     Effect.map(Ref.get(stateRef), (state) => {
-      const projectPath = pathResolve(projectPathInput);
+      const projectPath = path.resolve(projectPathInput);
       let count = 0;
       for (const run of state.activeImplementationRuns.values()) {
         if (run.projectPath === projectPath) count += 1;
@@ -195,7 +196,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
   const registerDraft: KernelRunRegistryService["registerDraft"] = (runId, activeRun) =>
     Ref.update(stateRef, (state) => {
       const activeDraftRuns = new Map(state.activeDraftRuns);
-      activeDraftRuns.set(runId, { ...activeRun, projectPath: pathResolve(activeRun.projectPath) });
+      activeDraftRuns.set(runId, { ...activeRun, projectPath: path.resolve(activeRun.projectPath) });
       return { ...state, activeDraftRuns };
     });
 
@@ -218,7 +219,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
       }
       const activeTicketUpdateRuns = new Map(state.activeTicketUpdateRuns);
       const activeTicketUpdateRunsByTicket = new Map(state.activeTicketUpdateRunsByTicket);
-      activeTicketUpdateRuns.set(runId, { ...activeRun, projectPath: pathResolve(activeRun.projectPath) });
+      activeTicketUpdateRuns.set(runId, { ...activeRun, projectPath: path.resolve(activeRun.projectPath) });
       activeTicketUpdateRunsByTicket.set(ticketKey, runId);
       const started: KernelTicketUpdateBeginResult = { started: true };
       return [started, { ...state, activeTicketUpdateRuns, activeTicketUpdateRunsByTicket }];
@@ -234,7 +235,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
       const activeTicketUpdateRunsByTicket = new Map(state.activeTicketUpdateRunsByTicket);
       activeTicketUpdateRuns.delete(runId);
       if (active) {
-        activeTicketUpdateRunsByTicket.delete(`${pathResolve(active.projectPath)}:${active.ticketId}`);
+        activeTicketUpdateRunsByTicket.delete(`${path.resolve(active.projectPath)}:${active.ticketId}`);
       } else {
         for (const [ticketKey, ticketRunId] of activeTicketUpdateRunsByTicket) {
           if (ticketRunId === runId) activeTicketUpdateRunsByTicket.delete(ticketKey);
@@ -245,7 +246,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
 
   const claimProjectSchedulerLoop: KernelRunRegistryService["claimProjectSchedulerLoop"] = (projectPathInput) =>
     Effect.gen(function*() {
-      const scheduler = yield* getProjectSchedulerState(stateRef, projectPathInput);
+      const scheduler = yield* getProjectSchedulerState(stateRef, path, projectPathInput);
       return yield* Ref.modify(stateRef, (state) => {
         const current = state.projectSchedulers.get(scheduler.projectPath);
         if (!current || current.loopStarted) return [false, state];
@@ -257,7 +258,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
 
   const releaseProjectSchedulerLoop: KernelRunRegistryService["releaseProjectSchedulerLoop"] = (projectPathInput) =>
     Effect.gen(function*() {
-      const projectPath = pathResolve(projectPathInput);
+      const projectPath = path.resolve(projectPathInput);
       yield* Ref.update(stateRef, (state) => {
         const current = state.projectSchedulers.get(projectPath);
         if (!current || !current.loopStarted) return state;
@@ -269,13 +270,13 @@ const makeKernelRunRegistry = Effect.gen(function*() {
 
   const wakeProjectScheduler: KernelRunRegistryService["wakeProjectScheduler"] = (projectPath) =>
     Effect.gen(function*() {
-      const scheduler = yield* getProjectSchedulerState(stateRef, projectPath);
+      const scheduler = yield* getProjectSchedulerState(stateRef, path, projectPath);
       yield* Queue.offer(scheduler.wakeQueue, undefined);
     });
 
   const takeProjectSchedulerWake: KernelRunRegistryService["takeProjectSchedulerWake"] = (projectPath) =>
     Effect.gen(function*() {
-      const scheduler = yield* getProjectSchedulerState(stateRef, projectPath);
+      const scheduler = yield* getProjectSchedulerState(stateRef, path, projectPath);
       yield* Queue.take(scheduler.wakeQueue);
     });
 
@@ -305,7 +306,7 @@ const makeKernelRunRegistry = Effect.gen(function*() {
 
 export const KernelRunRegistryLive = Layer.effect(KernelRunRegistry, makeKernelRunRegistry);
 
-const fallbackRegistryRuntime = ManagedRuntime.make(KernelRunRegistryLive);
+const fallbackRegistryRuntime = ManagedRuntime.make(KernelRunRegistryLive.pipe(Layer.provide(Path.layer)));
 
 export const runKernelRunRegistryEffect = async <A>(
   effect: Effect.Effect<A, unknown, Context.Service.Identifier<typeof KernelRunRegistry>>

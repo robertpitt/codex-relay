@@ -6,7 +6,7 @@ import {
   electronPreloadRpcBridgeFromWindow,
   makeElectronRpcClientProtocol,
   type ElectronPreloadRpcBridge
-} from "@platform/electron/Renderer";
+} from "@platform/Renderer";
 
 type RelayRpcFlatClient = RpcClient.RpcClient.Flat<RelayRpcs>;
 export type RelayRpcPayload<Tag extends RelayRpcs["_tag"]> = Rpc.PayloadConstructor<Rpc.ExtractTag<RelayRpcs, Tag>>;

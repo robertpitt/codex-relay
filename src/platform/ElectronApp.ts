@@ -1,9 +1,14 @@
 import { app } from "electron";
+import { createRequire } from "node:module";
 import { Cause, Context, Deferred, Effect, Layer, Queue, Scope } from "effect";
-import { ProcessLifecycle, type ProcessLifecycleEvent, type ProcessLifecycleService } from "../ProcessLifecycle";
+import { ProcessLifecycle, type ProcessLifecycleEvent, type ProcessLifecycleService } from "./ProcessLifecycle";
 import { electronError, type ElectronError } from "./Errors";
 
-export type ElectronAppPathName = "userData";
+export type ElectronAppPathName = "home" | "userData";
+export type ElectronRuntimePlatform = {
+  readonly platform: NodeJS.Platform;
+  readonly arch: NodeJS.Architecture;
+};
 export type ElectronAppLifecycleEvent =
   | { readonly type: "activate" }
   | { readonly type: "beforeQuit" }
@@ -15,19 +20,31 @@ export type ElectronAppLifecycleHandlers = {
 
 type ElectronAppNativeService = {
   readonly getPath: (name: ElectronAppPathName) => Effect.Effect<string>;
+  readonly appPath: Effect.Effect<string>;
+  readonly homeDirectory: Effect.Effect<string>;
+  readonly runtime: Effect.Effect<ElectronRuntimePlatform>;
+  readonly env: Effect.Effect<Record<string, string>>;
+  readonly envVar: (name: string) => Effect.Effect<string | undefined>;
+  readonly resolvePackageJson: (specifier: string, fromPackageJsonPath?: string) => Effect.Effect<string, unknown>;
   readonly whenReady: () => Effect.Effect<void, ElectronError>;
   readonly lifecycleEvents: () => Effect.Effect<Queue.Dequeue<ElectronAppLifecycleEvent>, never, Scope.Scope>;
-  readonly onActivate: (listener: () => void | Promise<void>) => Effect.Effect<void>;
-  readonly onBeforeQuit: (listener: () => void | Promise<void>) => Effect.Effect<void>;
-  readonly onWindowAllClosed: (listener: () => void | Promise<void>) => Effect.Effect<void>;
   readonly quit: () => Effect.Effect<void>;
   readonly platform: NodeJS.Platform;
 };
 
-export type ElectronAppService = ElectronAppNativeService & {
+export type ElectronAppService = {
+  readonly getPath: (name: ElectronAppPathName) => Effect.Effect<string>;
+  readonly appPath: Effect.Effect<string>;
+  readonly homeDirectory: Effect.Effect<string>;
+  readonly runtime: Effect.Effect<ElectronRuntimePlatform>;
+  readonly env: Effect.Effect<Record<string, string>>;
+  readonly envVar: (name: string) => Effect.Effect<string | undefined>;
+  readonly resolvePackageJson: (specifier: string, fromPackageJsonPath?: string) => Effect.Effect<string, unknown>;
+  readonly whenReady: () => Effect.Effect<void, ElectronError>;
   readonly startLifecycleSupervision: (handlers: ElectronAppLifecycleHandlers) => Effect.Effect<void, unknown, Scope.Scope>;
   readonly awaitShutdown: () => Effect.Effect<void>;
-  readonly requestShutdown: () => Effect.Effect<void>;
+  readonly quit: () => Effect.Effect<void>;
+  readonly platform: NodeJS.Platform;
 };
 
 export const ElectronApp = Context.Service<ElectronAppService>("relay/ElectronApp");
@@ -56,8 +73,29 @@ const forkLifecycleEventSupervisor = <Event extends { readonly type: string }>(
     Effect.asVoid
   );
 
+const environmentRecord = (): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  return env;
+};
+
+const defaultRequireFrom = (): string =>
+  typeof __filename === "string" ? __filename : `${app.getAppPath().replace(/\/+$/g, "")}/package.json`;
+
 const makeElectronAppNativeService = (): ElectronAppNativeService => ({
   getPath: (name) => Effect.sync(() => app.getPath(name)),
+  appPath: Effect.sync(() => app.getAppPath()),
+  homeDirectory: Effect.sync(() => app.getPath("home")),
+  runtime: Effect.sync(() => ({ platform: process.platform, arch: process.arch })),
+  env: Effect.sync(environmentRecord),
+  envVar: (name) => Effect.sync(() => (typeof process.env[name] === "string" ? process.env[name] : undefined)),
+  resolvePackageJson: (specifier, fromPackageJsonPath) =>
+    Effect.try({
+      try: () => createRequire(fromPackageJsonPath ?? defaultRequireFrom()).resolve(specifier),
+      catch: (error) => error
+    }),
   whenReady: () =>
     Effect.tryPromise({
       try: () => app.whenReady().then(() => undefined),
@@ -92,18 +130,6 @@ const makeElectronAppNativeService = (): ElectronAppNativeService => ({
       );
 
       return queue;
-    }),
-  onActivate: (listener) =>
-    Effect.sync(() => {
-      app.on("activate", () => void listener());
-    }),
-  onBeforeQuit: (listener) =>
-    Effect.sync(() => {
-      app.on("before-quit", () => void listener());
-    }),
-  onWindowAllClosed: (listener) =>
-    Effect.sync(() => {
-      app.on("window-all-closed", () => void listener());
     }),
   quit: () => Effect.sync(() => app.quit()),
   platform: process.platform
@@ -140,7 +166,16 @@ export const makeElectronAppService = (
   };
 
   return {
-    ...native,
+    getPath: native.getPath,
+    appPath: native.appPath,
+    homeDirectory: native.homeDirectory,
+    runtime: native.runtime,
+    env: native.env,
+    envVar: native.envVar,
+    resolvePackageJson: native.resolvePackageJson,
+    whenReady: native.whenReady,
+    quit: native.quit,
+    platform: native.platform,
     startLifecycleSupervision: (handlers) =>
       Effect.gen(function*() {
         const processEvents = yield* processLifecycle.events();
@@ -149,8 +184,7 @@ export const makeElectronAppService = (
         const electronEvents = yield* native.lifecycleEvents();
         yield* forkLifecycleEventSupervisor("electron", electronEvents, (event) => handleElectronEvent(handlers, event));
       }),
-    awaitShutdown: () => Deferred.await(shutdown),
-    requestShutdown
+    awaitShutdown: () => Deferred.await(shutdown)
   };
 };
 
@@ -162,5 +196,3 @@ export const ElectronAppLive = Layer.effect(
     return makeElectronAppService(makeElectronAppNativeService(), processLifecycle, shutdown);
   })
 );
-
-export const getElectronPath = (name: ElectronAppPathName): string => app.getPath(name);

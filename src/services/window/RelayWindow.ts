@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import type { RendererRunEvent } from "@shared/schemas";
-import { ElectronWindow, type ElectronMainWindowOptions, type ElectronWindowService } from "../../platform/electron";
+import { ElectronWindow, type ElectronMainWindowOptions, type ElectronWindowService } from "../../platform";
 import { logError } from "../logger";
 
 export type RelayWindowService = {

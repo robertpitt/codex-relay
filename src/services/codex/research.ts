@@ -1,4 +1,4 @@
-import { FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import type {
   CreateDraftInput,
   TicketDraftResearch,
@@ -6,17 +6,12 @@ import type {
   TicketDraftResearchLimits,
   TicketDraftResearchUrl
 } from "@shared/schemas";
-import {
-  fetchUrlEffect,
-  pathBasename,
-  pathExtname,
-  pathJoin,
-  pathRelative
-} from "../../io";
+import { fetchUrlEffect } from "../../platform/fetch";
 import { runBackendEffect } from "../../runtime";
 
 const errorMessage = (error: unknown, fallback: string): string => (error instanceof Error ? error.message : fallback);
 const nowIso = (): string => new Date().toISOString();
+const backendPath = (): Promise<Path.Path> => runBackendEffect(Path.Path.use((path) => Effect.succeed(path)));
 
 export const DEFAULT_TICKET_DRAFT_RESEARCH_LIMITS: TicketDraftResearchLimits = {
   maxResearchMs: 10_000,
@@ -324,10 +319,10 @@ const TEXT_RESEARCH_EXTENSIONS = new Set([
 
 const TEXT_RESEARCH_FILENAMES = new Set(["dockerfile", "makefile", "readme", "spec", "license"]);
 
-const isResearchTextFile = (filePath: string): boolean => {
-  const base = pathBasename(filePath).toLowerCase();
+const isResearchTextFile = (path: Path.Path, filePath: string): boolean => {
+  const base = path.basename(filePath).toLowerCase();
   if (TEXT_RESEARCH_FILENAMES.has(base)) return true;
-  return TEXT_RESEARCH_EXTENSIONS.has(pathExtname(base));
+  return TEXT_RESEARCH_EXTENSIONS.has(path.extname(base));
 };
 
 const researchEntryPriority = (name: string): number => {
@@ -344,6 +339,7 @@ const collectResearchFiles = async (
   deadlineMs: number,
   limitations: string[]
 ): Promise<CandidateResearchFile[]> => {
+  const path = await backendPath();
   const files: CandidateResearchFile[] = [];
 
   const visit = async (directory: string): Promise<void> => {
@@ -352,7 +348,7 @@ const collectResearchFiles = async (
     try {
       entries = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.readDirectory(directory)));
     } catch (error) {
-      limitations.push(`Could not read directory ${slashPath(pathRelative(projectPath, directory)) || "."}: ${errorMessage(error, "unknown error")}`);
+      limitations.push(`Could not read directory ${slashPath(path.relative(projectPath, directory)) || "."}: ${errorMessage(error, "unknown error")}`);
       return;
     }
 
@@ -363,7 +359,7 @@ const collectResearchFiles = async (
 
     for (const entryName of entries) {
       if (Date.now() >= deadlineMs || files.length >= limits.maxFilesToScan) return;
-      const absolutePath = pathJoin(directory, entryName);
+      const absolutePath = path.join(directory, entryName);
       let info: FileSystem.File.Info;
       try {
         info = await runBackendEffect(FileSystem.FileSystem.use((fs) => fs.stat(absolutePath)));
@@ -374,10 +370,10 @@ const collectResearchFiles = async (
         if (!IGNORED_RESEARCH_DIRS.has(entryName)) await visit(absolutePath);
         continue;
       }
-      if (info.type !== "File" || !isResearchTextFile(absolutePath)) continue;
+      if (info.type !== "File" || !isResearchTextFile(path, absolutePath)) continue;
       files.push({
         absolutePath,
-        relativePath: slashPath(pathRelative(projectPath, absolutePath)),
+        relativePath: slashPath(path.relative(projectPath, absolutePath)),
         size: Number(info.size)
       });
     }
@@ -554,7 +550,7 @@ export const researchTicketDraft = async (
 
   const fetchUrl =
     dependencies.fetchUrl ??
-    (((url, init) => runBackendEffect(fetchUrlEffect(String(url), init))) as typeof fetch);
+    (((url, init) => runBackendEffect(fetchUrlEffect(url, init))) as typeof fetch);
   for (const url of urls.slice(0, limits.maxUrls)) {
     const remainingMs = deadlineMs - Date.now();
     if (remainingMs <= 0) {
@@ -609,30 +605,30 @@ export const renderResearchForPrompt = (research: TicketDraftResearchContext): s
   const urlLines =
     research.metadata.checkedUrls.length > 0
       ? research.metadata.checkedUrls
-          .map((source) => {
-            const title = source.title ? `, title: ${source.title}` : "";
-            const reason = source.reason ? `, reason: ${source.reason}` : "";
-            return `- ${source.status}: ${source.url}${title}, characters read: ${source.charactersRead}${reason}`;
-          })
-          .join("\n")
+        .map((source) => {
+          const title = source.title ? `, title: ${source.title}` : "";
+          const reason = source.reason ? `, reason: ${source.reason}` : "";
+          return `- ${source.status}: ${source.url}${title}, characters read: ${source.charactersRead}${reason}`;
+        })
+        .join("\n")
       : "- No URLs detected in the idea.";
 
   const urlExcerptLines =
     research.urlExcerpts.length > 0
       ? research.urlExcerpts
-          .map((source) => `- ${source.title ?? source.url} (${source.url}): ${truncateText(source.text, 1200)}`)
-          .join("\n")
+        .map((source) => `- ${source.title ?? source.url} (${source.url}): ${truncateText(source.text, 1200)}`)
+        .join("\n")
       : "- No URL content excerpts available.";
 
   const fileLines =
     research.metadata.inspectedFiles.length > 0
       ? research.metadata.inspectedFiles
-          .map((file) => {
-            const symbols = file.symbols.length > 0 ? `\n  Symbols: ${file.symbols.slice(0, 6).join(", ")}` : "";
-            const matches = file.matches.length > 0 ? `\n  Matches: ${file.matches.join(" | ")}` : "";
-            return `- ${file.path}: ${file.reason}; characters read: ${file.charactersRead}${symbols}${matches}`;
-          })
-          .join("\n")
+        .map((file) => {
+          const symbols = file.symbols.length > 0 ? `\n  Symbols: ${file.symbols.slice(0, 6).join(", ")}` : "";
+          const matches = file.matches.length > 0 ? `\n  Matches: ${file.matches.join(" | ")}` : "";
+          return `- ${file.path}: ${file.reason}; characters read: ${file.charactersRead}${symbols}${matches}`;
+        })
+        .join("\n")
       : "- No matching project files were inspected.";
 
   const limitationLines =

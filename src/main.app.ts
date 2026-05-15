@@ -1,15 +1,8 @@
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
-import { BrowserWindowsLive } from "./platform/electron/BrowserWindows";
-import { ElectronApp, ElectronAppLive } from "./platform/electron/ElectronApp";
-import { ElectronDialogLive } from "./platform/electron/ElectronDialog";
-import { ElectronShellLive } from "./platform/electron/ElectronShell";
-import { ElectronWindowLive } from "./platform/electron/ElectronWindow";
-import { IpcMainRouterLive } from "./platform/electron/IpcMainRouter";
-import { ProcessLifecycleLive } from "./platform/ProcessLifecycle";
+import { ElectronApp, PlatformLive } from "./platform";
 import { installRelayIpcTransport } from "./ipc";
 import { RelayWindow, RelayWindowLive } from "./services/window/RelayWindow";
 import { BackendServicesBaseLive } from "./runtime";
-import { IoLive } from "./io";
 import { getLogPath, LoggerLive } from "./services/logger";
 import { BackendKernelLive, JobSupervisor } from "./services/kernel";
 import { GitServiceLive } from "./services/git";
@@ -19,34 +12,25 @@ import { RelayRpcHandlersLive } from "./services/rpc/handlers";
 import { AtomicFileLive, StorageLive } from "./storage";
 
 /**
- * Electron Desktop Layer
- */
-const ElectronDesktopLive = Layer.mergeAll(
-  ElectronAppLive.pipe(Layer.provide(ProcessLifecycleLive)),
-  ElectronWindowLive.pipe(Layer.provideMerge(BrowserWindowsLive)),
-  ElectronDialogLive,
-  ElectronShellLive,
-  IpcMainRouterLive
-).pipe(Layer.provide(IoLive));
-
-/**
  * Backend Base Layer
  */
-const BackendBaseLive = Layer.mergeAll(BackendServicesBaseLive, IoLive);
+const BackendBaseLive = Layer.mergeAll(BackendServicesBaseLive, PlatformLive);
 
 /**
  * Core App Services
  */
-const RelayWindowServiceLive = RelayWindowLive.pipe(Layer.provide(ElectronDesktopLive));
+const RelayWindowServiceLive = RelayWindowLive.pipe(Layer.provide(PlatformLive));
 
+/**
+ * Core Services Layer
+ */
 const CoreServicesLive = Layer.mergeAll(
   BackendBaseLive,
-  ElectronDesktopLive,
   RelayWindowServiceLive,
-  LoggerLive.pipe(Layer.provide(IoLive)),
+  LoggerLive.pipe(Layer.provide(PlatformLive)),
   AtomicFileLive,
   GitServiceLive,
-  RegistryStoreLive.pipe(Layer.provide(IoLive)),
+  RegistryStoreLive.pipe(Layer.provide(PlatformLive)),
   BackendKernelLive.pipe(Layer.provide(BackendBaseLive)),
   StorageLive.pipe(Layer.provide(BackendServicesBaseLive)),
   RunEventSinkLive
@@ -72,7 +56,8 @@ const relayApp = Effect.scoped(Effect.gen(function* () {
 
   // Wait for Electron to be ready
   yield* electronApp.whenReady();
-  yield* Effect.logInfo("Relay starting").pipe(Effect.annotateLogs({ scope: "app", logPath: getLogPath() }));
+  const logPath = yield* getLogPath;
+  yield* Effect.logInfo("Relay starting").pipe(Effect.annotateLogs({ scope: "app", logPath }));
 
   // Install IPC transport
   yield* installRelayIpcTransport();

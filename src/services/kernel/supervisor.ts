@@ -1,7 +1,6 @@
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { WorkflowEngine } from "effect/unstable/workflow";
 import type { AgentTicketUpdateInput, CreateDraftInput, StartRunInput } from "@shared/schemas";
-import { pathResolve } from "../../io";
 import { RegistryStore, RegistryStoreLive } from "../registry";
 import { BackendClock, type BackendIoServices, type BackendServicesBase, runBackendEffect } from "../../runtime";
 import { kernelAuditLogPath } from "../../storage/paths";
@@ -31,6 +30,9 @@ type SupervisorCoreServices =
 type SupervisorServices = SupervisorCoreServices | Context.Service.Identifier<typeof RegistryStore>;
 type SupervisorEffect<A, Extra = never> = Effect.Effect<A, KernelError, SupervisorCoreServices | Extra>;
 type AuditEffect<A> = Effect.Effect<A, KernelPersistenceError, BackendServicesBase | BackendIoServices>;
+
+const resolvePath = (target: string): Effect.Effect<string, never, Path.Path> =>
+  Path.Path.use((path) => Effect.succeed(path.resolve(target)));
 
 export type IdempotencyService = {
   readonly key: (parts: readonly unknown[]) => string;
@@ -63,11 +65,11 @@ export type AuditService = {
 export const AuditService = Context.Service<AuditService>("relay/AuditService");
 
 export const AuditServiceLive = Layer.succeed(AuditService)({
-  emit: (event) => {
-    const target = kernelAuditLogPath(event.projectPath);
-    return Effect.gen(function*() {
+  emit: (event) =>
+    Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const target = kernelAuditLogPath(path, event.projectPath);
       const clock = yield* BackendClock;
       const record = {
         schemaVersion: RELAY_KERNEL_SCHEMA_VERSION,
@@ -85,10 +87,11 @@ export const AuditServiceLive = Layer.succeed(AuditService)({
       yield* fs.writeFileString(target, `${JSON.stringify(record)}\n`, { flag: "a" });
     }).pipe(
       Effect.mapError((cause) =>
-        cause instanceof KernelPersistenceError ? cause : kernelPersistenceError(target, "append kernel audit event", cause)
+        cause instanceof KernelPersistenceError
+          ? cause
+          : kernelPersistenceError(event.projectPath, "append kernel audit event", cause)
       )
-    );
-  }
+    )
 });
 
 export type WorkerRegistry = {
@@ -183,7 +186,7 @@ const submitCommand = (
 ): SupervisorEffect<JobExecutionHandle> =>
   Effect.gen(function*() {
     const idempotency = yield* IdempotencyService;
-    const projectPath = pathResolve(projectPathInput);
+    const projectPath = yield* resolvePath(projectPathInput);
     const idempotencyKey = idempotency.key([commandType, projectPath, ...idempotencyKeyParts]);
     const workflowPayload: ExternalJobWorkflowPayload = {
       projectPath,
@@ -208,35 +211,44 @@ const submitCommand = (
   });
 
 const submitCodexImplementation: JobSupervisorService["submitCodexImplementation"] = (input, options) =>
-  submitCommand(
-    "codex.implementation",
-    input.projectPath,
-    [input.ticketId, options.runId],
-    { ...input, projectPath: pathResolve(input.projectPath), runId: options.runId, resume: options.resume },
-    { runId: options.runId, ticketId: input.ticketId, metadata: { resume: options.resume } }
-  );
+  Effect.gen(function*() {
+    const projectPath = yield* resolvePath(input.projectPath);
+    return yield* submitCommand(
+      "codex.implementation",
+      projectPath,
+      [input.ticketId, options.runId],
+      { ...input, projectPath, runId: options.runId, resume: options.resume },
+      { runId: options.runId, ticketId: input.ticketId, metadata: { resume: options.resume } }
+    );
+  });
 
 const submitTicketDraft: JobSupervisorService["submitTicketDraft"] = (input, options) =>
-  submitCommand(
-    "codex.ticketDraft",
-    input.projectPath,
-    [options.ticketId, options.runId],
-    { ...input, projectPath: pathResolve(input.projectPath), runId: options.runId, ticketId: options.ticketId },
-    { runId: options.runId, ticketId: options.ticketId }
-  );
+  Effect.gen(function*() {
+    const projectPath = yield* resolvePath(input.projectPath);
+    return yield* submitCommand(
+      "codex.ticketDraft",
+      projectPath,
+      [options.ticketId, options.runId],
+      { ...input, projectPath, runId: options.runId, ticketId: options.ticketId },
+      { runId: options.runId, ticketId: options.ticketId }
+    );
+  });
 
 const submitTicketUpdate: JobSupervisorService["submitTicketUpdate"] = (input, options) =>
-  submitCommand(
-    "codex.ticketUpdate",
-    input.projectPath,
-    [input.ticketId, options.runId],
-    { ...input, projectPath: pathResolve(input.projectPath), runId: options.runId },
-    { runId: options.runId, ticketId: input.ticketId }
-  );
+  Effect.gen(function*() {
+    const projectPath = yield* resolvePath(input.projectPath);
+    return yield* submitCommand(
+      "codex.ticketUpdate",
+      projectPath,
+      [input.ticketId, options.runId],
+      { ...input, projectPath, runId: options.runId },
+      { runId: options.runId, ticketId: input.ticketId }
+    );
+  });
 
 const markRunStatus: JobSupervisorService["markRunStatus"] = (projectPathInput, runId, status, options = {}) =>
   Effect.gen(function*() {
-    const projectPath = pathResolve(projectPathInput);
+    const projectPath = yield* resolvePath(projectPathInput);
     const ledger = yield* JobLedger;
     const audit = yield* AuditService;
     const snapshot = yield* ledger.findByRunId(projectPath, runId);
@@ -266,13 +278,17 @@ const markRunStatus: JobSupervisorService["markRunStatus"] = (projectPathInput, 
     return updated;
   });
 
-const poll: JobSupervisorService["poll"] = (projectPath, executionId) =>
-  JobLedger.use((ledger) => ledger.readSnapshot(pathResolve(projectPath), executionId));
-
-const cancel: JobSupervisorService["cancel"] = (projectPath, executionId) =>
+const poll: JobSupervisorService["poll"] = (projectPathInput, executionId) =>
   Effect.gen(function*() {
+    const projectPath = yield* resolvePath(projectPathInput);
+    return yield* JobLedger.use((ledger) => ledger.readSnapshot(projectPath, executionId));
+  });
+
+const cancel: JobSupervisorService["cancel"] = (projectPathInput, executionId) =>
+  Effect.gen(function*() {
+    const projectPath = yield* resolvePath(projectPathInput);
     const ledger = yield* JobLedger;
-    const snapshot = yield* ledger.readSnapshot(pathResolve(projectPath), executionId);
+    const snapshot = yield* ledger.readSnapshot(projectPath, executionId);
     if (snapshot && snapshot.status !== "cancelled") {
       yield* ledger.transition({
         projectPath: snapshot.projectPath,
@@ -284,10 +300,11 @@ const cancel: JobSupervisorService["cancel"] = (projectPath, executionId) =>
     yield* Effect.catch(RelayExternalJobWorkflow.interrupt(executionId), () => Effect.void);
   });
 
-const resume: JobSupervisorService["resume"] = (projectPath, executionId) =>
+const resume: JobSupervisorService["resume"] = (projectPathInput, executionId) =>
   Effect.gen(function*() {
+    const projectPath = yield* resolvePath(projectPathInput);
     const ledger = yield* JobLedger;
-    const snapshot = yield* ledger.readSnapshot(pathResolve(projectPath), executionId);
+    const snapshot = yield* ledger.readSnapshot(projectPath, executionId);
     if (!snapshot) return;
     if (snapshot.status === "suspended") {
       yield* ledger.transition({
@@ -302,7 +319,7 @@ const resume: JobSupervisorService["resume"] = (projectPath, executionId) =>
 
 const recoverProject: JobSupervisorService["recoverProject"] = (projectPathInput) =>
   Effect.gen(function*() {
-    const projectPath = pathResolve(projectPathInput);
+    const projectPath = yield* resolvePath(projectPathInput);
     const ledger = yield* JobLedger;
     const incomplete = yield* ledger.listIncomplete(projectPath);
     const handles: JobExecutionHandle[] = [];

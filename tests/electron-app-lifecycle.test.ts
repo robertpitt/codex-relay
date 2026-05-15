@@ -4,7 +4,7 @@ import {
   makeElectronAppService,
   type ElectronAppLifecycleEvent,
   type ElectronAppService
-} from "../src/platform/electron/ElectronApp";
+} from "../src/platform/ElectronApp";
 import type { ProcessLifecycleEvent, ProcessLifecycleService } from "../src/platform/ProcessLifecycle";
 
 type ElectronAppLifecycleTestServices = {
@@ -28,11 +28,14 @@ const makeElectronAppLifecycleTestService = async ({
   return makeElectronAppService(
     {
       getPath: () => Effect.succeed(""),
+      appPath: Effect.succeed(""),
+      homeDirectory: Effect.succeed(""),
+      runtime: Effect.succeed({ platform, arch: "arm64" }),
+      env: Effect.succeed({}),
+      envVar: () => Effect.succeed(undefined),
+      resolvePackageJson: (specifier) => Effect.succeed(specifier),
       whenReady: () => Effect.void,
       lifecycleEvents: () => Effect.succeed(electronEvents),
-      onActivate: () => Effect.void,
-      onBeforeQuit: () => Effect.void,
-      onWindowAllClosed: () => Effect.void,
       quit,
       platform
     },

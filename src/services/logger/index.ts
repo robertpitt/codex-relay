@@ -1,8 +1,7 @@
-import { Effect, Logger } from "effect";
+import { Effect, Logger, Path } from "effect";
 import { CurrentLogAnnotations } from "effect/References";
-import { getElectronPath } from "../../platform/electron";
+import { ElectronApp } from "../../platform";
 import { runBackendEffect } from "../../runtime";
-import { pathJoin } from "../../io";
 
 export type RelayLogLevel = "info" | "warn" | "error";
 
@@ -79,11 +78,16 @@ export const logWithRelayAnnotations = (
   return log.pipe(Effect.annotateLogs(relayAnnotations(scope, meta)));
 };
 
-export const getLogPath = (): string => pathJoin(getElectronPath("userData"), "relay.log");
+export const getLogPath = Effect.gen(function*() {
+  const electronApp = yield* ElectronApp;
+  const path = yield* Path.Path;
+  const userData = yield* electronApp.getPath("userData");
+  return path.join(userData, "relay.log");
+});
 
 export const LoggerLive = Logger.layer([
   Logger.withLeveledConsole(relayLogger),
-  Effect.flatMap(Effect.sync(getLogPath), (target) => Logger.toFile(relayLogger, target, { flag: "a" }))
+  Effect.flatMap(getLogPath, (target) => Logger.toFile(relayLogger, target, { flag: "a" }))
 ]);
 
 export const log = (level: RelayLogLevel, scope: string, message: string, meta?: unknown): Promise<void> =>

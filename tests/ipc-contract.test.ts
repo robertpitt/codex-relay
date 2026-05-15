@@ -13,7 +13,7 @@ import {
   type RelayIpcRpcServerPacket
 } from "../src/ipc";
 import { openProjectInEditor } from "../src/services/rpc/handlers";
-import type { IpcMainRouterEvent, IpcMainRouterListener } from "../src/platform/electron";
+import type { IpcMainRouterEvent, IpcMainRouterListener } from "../src/platform";
 
 const runTestEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
   Effect.runPromise(effect as Effect.Effect<A, E, never>);

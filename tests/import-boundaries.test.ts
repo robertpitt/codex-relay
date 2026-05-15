@@ -7,7 +7,6 @@ const projectRoot = process.cwd();
 const sourceEntries = [
   path.join(projectRoot, "src", "domain"),
   path.join(projectRoot, "src", "platform"),
-  path.join(projectRoot, "src", "io"),
   path.join(projectRoot, "src", "runtime"),
   path.join(projectRoot, "src", "services"),
   path.join(projectRoot, "src", "workflows"),
@@ -17,7 +16,7 @@ const sourceEntries = [
   path.join(projectRoot, "src", "main.app.ts"),
   path.join(projectRoot, "src", "preload.app.ts")
 ];
-const preloadAllowedImports = new Set(["electron", "@platform/electron/Protocol", "@shared/schemas"]);
+const preloadAllowedImports = new Set(["electron", "@platform/Protocol", "@shared/schemas"]);
 const unstableWorkflowImportPattern =
   /(?:from\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\)|require\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\))/;
 const codexLifecycleMapNames = [
@@ -49,7 +48,7 @@ const sourceFiles = async (entryPath: string): Promise<string[]> => {
 
 const relativeSourcePath = (absolutePath: string): string => path.relative(projectRoot, absolutePath).split(path.sep).join("/");
 
-test("backend IO, Electron, and unstable Workflow imports stay behind approved service boundaries", async () => {
+test("backend Node, Electron, and unstable Workflow imports stay behind approved service boundaries", async () => {
   const files = (await Promise.all(sourceEntries.map(sourceFiles))).flat();
   const violations: string[] = [];
 
@@ -57,29 +56,36 @@ test("backend IO, Electron, and unstable Workflow imports stay behind approved s
     const relativePath = relativeSourcePath(file);
     const content = await readFile(file, "utf8");
     const platformBoundary = relativePath.startsWith("src/platform/");
-    const rawNodeBoundary =
-      platformBoundary ||
-      relativePath.startsWith("src/http/") ||
+    const rawNodeIoBoundary = relativePath.startsWith("src/http/");
+    const directNodeBoundary =
+      rawNodeIoBoundary ||
+      relativePath === "src/platform/ElectronApp.ts" ||
       relativePath === "src/main.app.ts" ||
       relativePath === "src/preload.app.ts";
+    const rawFetchBoundary = relativePath === "src/platform/fetch.ts";
     const kernelBoundary = relativePath.startsWith("src/services/kernel/");
     const electronBoundary =
-      relativePath.startsWith("src/platform/electron/") ||
-      relativePath === "src/preload.app.ts";
+      [
+        "src/platform/BrowserWindows.ts",
+        "src/platform/ElectronApp.ts",
+        "src/platform/ElectronDialog.ts",
+        "src/platform/ElectronShell.ts",
+        "src/platform/IpcMainRouter.ts"
+      ].includes(relativePath) || relativePath === "src/preload.app.ts";
 
-    if (!platformBoundary && /from\s+["'](?:node:fs|node:fs\/promises|fs\/promises|node:path|node:child_process|node:net|node:tls|net|tls)["']/.test(content)) {
+    if (!rawNodeIoBoundary && /from\s+["'](?:node:fs|node:fs\/promises|fs\/promises|node:path|node:child_process|node:net|node:tls|net|tls)["']/.test(content)) {
       violations.push(`${relativePath}: raw Node IO import`);
     }
-    if (!rawNodeBoundary && /\bfrom\s+["']node:[^"']+["']/.test(content)) {
+    if (!directNodeBoundary && /\bfrom\s+["']node:[^"']+["']/.test(content)) {
       violations.push(`${relativePath}: direct node:* import`);
     }
-    if (!platformBoundary && /(?:\bglobalThis\.fetch\s*\(|(^|[^\w.])fetch\s*\()/.test(content)) {
+    if (!rawFetchBoundary && /(?:\bglobalThis\.fetch\s*\(|(^|[^\w.])fetch\s*\()/.test(content)) {
       violations.push(`${relativePath}: raw fetch call`);
     }
     if (!platformBoundary && /\bWebSocket\b/.test(content)) {
       violations.push(`${relativePath}: raw WebSocket usage`);
     }
-    if (!rawNodeBoundary && /\bBuffer\b/.test(content)) {
+    if (!rawNodeIoBoundary && /\bBuffer\b/.test(content)) {
       violations.push(`${relativePath}: direct Node Buffer usage`);
     }
     if (!electronBoundary && /^import\s+(?!type\b)[\s\S]*?from\s+["']electron["']/m.test(content)) {

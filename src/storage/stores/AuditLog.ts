@@ -13,15 +13,14 @@ export type AuditLogService = {
 export const AuditLog = Context.Service<AuditLogService>("relay/storage/AuditLog");
 
 export const makeFileSystemAuditLog = (): AuditLogService => ({
-  append: (projectPath, event) => {
-    const target = auditLogPath(projectPath);
-    return Effect.gen(function*() {
+  append: (projectPath, event) =>
+    Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const target = auditLogPath(path, projectPath);
       yield* fs.makeDirectory(path.dirname(target), { recursive: true });
       yield* fs.writeFileString(target, `${JSON.stringify(event)}\n`, { flag: "a" });
-    }).pipe(Effect.mapError(mapStoreWriteError(target, "Append Relay audit event")));
-  }
+    }).pipe(Effect.mapError(mapStoreWriteError(projectPath, "Append Relay audit event")))
 });
 
 export const FileSystemAuditLogLive = Layer.succeed(AuditLog)(makeFileSystemAuditLog());

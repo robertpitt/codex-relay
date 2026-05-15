@@ -5,7 +5,7 @@ import { GitCli, GitCliFromRunner, GitCliLive, type GitCommandResult, type GitCo
 import { GitMetadataCache, GitMetadataCacheLive } from "./GitMetadataCache";
 import { parsePorcelainChangedFileCount } from "./GitStatus";
 import { BackendServicesBaseLive, runBackendEffect, type BackendServices } from "../../runtime";
-import { IoLive } from "../../io";
+import { BackendPlatformLive } from "../../platform/BackendPlatform";
 
 export { Git, GitCliFromRunner, GitCliLive, GitLive, GitMetadataCacheLive, parsePorcelainChangedFileCount };
 export type { GitCommandResult, GitCommandRunner };
@@ -35,7 +35,7 @@ type GitRunnerServices =
   | Context.Service.Identifier<typeof GitMetadataCache>;
 
 const runGit = <A>(effect: Effect.Effect<A, unknown, GitRunnerServices>, layer = GitServiceLive): Promise<A> =>
-  runBackendEffect(Effect.provide(effect, layer.pipe(Layer.provideMerge(BackendServicesBaseLive), Layer.provideMerge(IoLive))));
+  runBackendEffect(Effect.provide(effect, layer.pipe(Layer.provideMerge(BackendServicesBaseLive), Layer.provideMerge(BackendPlatformLive))));
 
 export const readGitMetadata = (projectPath: string, dependencies: GitMetadataDependencies = {}): Promise<GitMetadata> =>
   runGit(Git.use((service) => service.readMetadata(projectPath, { now: dependencies.now })), layerForDependencies(dependencies));

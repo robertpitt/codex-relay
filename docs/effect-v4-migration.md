@@ -6,7 +6,7 @@ The first migration pass keeps existing IPC-facing Promise APIs intact and moves
 
 - `runBackendEffect` for running backend Effect programs at existing Promise boundaries.
 - `BackendClock` and `BackendRuntimeLive` as the initial dependency-injection layer.
-- `fromPromise` and `fromSync` helpers that preserve existing thrown/rejected error values while routing async work through Effect v4.
+- `fromPromise` for preserving existing rejected error values while routing async work through Effect v4.
 
 Codex backend entry points keep their public Promise signatures, but test and production dependencies are adapted into Effect layers at the boundary:
 

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Path } from "effect";
 import type {
   ClarificationAnswerInput,
   EpicSubticketCreateInput,
@@ -10,7 +10,6 @@ import type {
   TicketSaveInput
 } from "@shared/schemas";
 import { errorMessage } from "../domain/errors";
-import { pathResolve } from "../io";
 import { isTicketNotFoundError, Storage } from "../storage";
 
 export const createManualTicket = (projectPath: string, input: TicketCreateInput) =>
@@ -30,13 +29,15 @@ export const listTicketReferences = (projectPath: string) =>
 
 export const readTicket = (projectPath: string, ticketId: string) =>
   Effect.gen(function*() {
-    const resolvedProjectPath = pathResolve(projectPath);
+    const path = yield* Path.Path;
+    const resolvedProjectPath = path.resolve(projectPath);
     const storage = yield* Storage;
     return yield* storage.getTicket(resolvedProjectPath, ticketId);
   }).pipe(
     Effect.catch((error: unknown) =>
       Effect.gen(function*() {
-        const resolvedProjectPath = pathResolve(projectPath);
+        const path = yield* Path.Path;
+        const resolvedProjectPath = path.resolve(projectPath);
         const meta = { projectPath: resolvedProjectPath, ticketId };
         if (isTicketNotFoundError(error)) {
           yield* Effect.logWarning("ticket file missing").pipe(

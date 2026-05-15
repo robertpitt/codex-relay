@@ -6,14 +6,14 @@ import {
   type IpcMainRouterEvent,
   type IpcMainRouterService,
   type IpcMainRouterWebContents
-} from "@platform/electron/IpcMainRouter";
+} from "@platform/IpcMainRouter";
 import { runBackendEffect } from "../runtime";
 import {
   isRelayIpcRpcClientPacket,
   relayRpcClientMessageChannel,
   relayRpcServerMessageChannel,
   type RelayIpcRpcServerPacket
-} from "@platform/electron/Protocol";
+} from "@platform/Protocol";
 
 export type RelayRpcEffectRunner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
 export type RelayIpcRouterService = Pick<IpcMainRouterService, "on">;

@@ -66,25 +66,29 @@ const atomicWriteTextEffect = (target: string, value: string): Effect.Effect<voi
     yield* fs.rename(tmp, target);
   }).pipe(Effect.mapError((cause) => kernelPersistenceError(target, "write kernel JSON", cause)));
 
-const appendEvent = (event: JobLedgerEvent): KernelEffect<void> => {
-  const target = kernelJobEventsPath(event.projectPath, safeExecutionId(event.executionId));
-  return Effect.gen(function*() {
+const appendEvent = (event: JobLedgerEvent): KernelEffect<void> =>
+  Effect.gen(function*() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const target = kernelJobEventsPath(path, event.projectPath, safeExecutionId(event.executionId));
     yield* fs.makeDirectory(path.dirname(target), { recursive: true });
     yield* fs.writeFileString(target, `${JSON.stringify(event)}\n`, { flag: "a" });
   }).pipe(
     Effect.mapError((cause) =>
-      cause instanceof KernelPersistenceError ? cause : kernelPersistenceError(target, "append kernel event", cause)
+      cause instanceof KernelPersistenceError
+        ? cause
+        : kernelPersistenceError(`${event.projectPath}:${event.executionId}`, "append kernel event", cause)
     )
   );
-};
 
 const writeSnapshot = (snapshot: JobExecutionSnapshot): KernelEffect<void> =>
-  atomicWriteTextEffect(
-    kernelJobSnapshotPath(snapshot.projectPath, safeExecutionId(snapshot.executionId)),
-    `${JSON.stringify(snapshot, null, 2)}\n`
-  );
+  Effect.gen(function*() {
+    const path = yield* Path.Path;
+    yield* atomicWriteTextEffect(
+      kernelJobSnapshotPath(path, snapshot.projectPath, safeExecutionId(snapshot.executionId)),
+      `${JSON.stringify(snapshot, null, 2)}\n`
+    );
+  });
 
 const makeEvent = (
   snapshot: JobExecutionSnapshot,
@@ -108,7 +112,10 @@ const makeEvent = (
 const newKernelEventId = (): string => `kevt_${ulid().toLowerCase()}`;
 
 const readSnapshot = (projectPath: string, executionId: string): KernelEffect<JobExecutionSnapshot | null> =>
-  readJsonOrNull<JobExecutionSnapshot>(kernelJobSnapshotPath(projectPath, safeExecutionId(executionId)));
+  Effect.gen(function*() {
+    const path = yield* Path.Path;
+    return yield* readJsonOrNull<JobExecutionSnapshot>(kernelJobSnapshotPath(path, projectPath, safeExecutionId(executionId)));
+  });
 
 const transition = (input: JobTransitionInput): KernelEffect<JobExecutionSnapshot> =>
   Effect.gen(function*() {
@@ -171,7 +178,8 @@ const recordSubmitted = (input: JobSubmitInput): KernelEffect<JobExecutionSnapsh
 
 const readEvents = (projectPath: string, executionId: string): KernelEffect<JobLedgerEvent[]> =>
   Effect.gen(function*() {
-    const target = kernelJobEventsPath(projectPath, safeExecutionId(executionId));
+    const path = yield* Path.Path;
+    const target = kernelJobEventsPath(path, projectPath, safeExecutionId(executionId));
     const raw = yield* FileSystem.FileSystem.use((fs) => fs.readFileString(target, "utf8")).pipe(
       Effect.catchIf(isFileNotFoundError, () => Effect.succeed("")),
       Effect.mapError((cause) => kernelPersistenceError(target, "read kernel events", cause))
@@ -202,7 +210,8 @@ const readEvents = (projectPath: string, executionId: string): KernelEffect<JobL
 
 const listProjectExecutions = (projectPath: string): KernelEffect<JobExecutionSnapshot[]> =>
   Effect.gen(function*() {
-    const target = kernelJobsPath(projectPath);
+    const path = yield* Path.Path;
+    const target = kernelJobsPath(path, projectPath);
     const names = yield* FileSystem.FileSystem.use((fs) => fs.readDirectory(target)).pipe(
       Effect.catchIf(isFileNotFoundError, () => Effect.succeed<string[]>([])),
       Effect.mapError((cause) => kernelPersistenceError(target, "list kernel jobs", cause))
