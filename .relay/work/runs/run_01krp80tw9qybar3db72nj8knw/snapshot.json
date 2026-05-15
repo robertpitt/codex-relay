@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "workId": "run_01krp80tw9qybar3db72nj8knw",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "ticketId": "tkt_01krp80txygkrz5k2tar9g2xpb",
+  "runId": "run_01krp80tw9qybar3db72nj8knw",
+  "subject": "ticket",
+  "action": "draft",
+  "kind": "ticket.draft",
+  "idempotencyKey": "ticket.draft:/Users/robertpitt/Projects/relay:tkt_01krp80txygkrz5k2tar9g2xpb:run_01krp80tw9qybar3db72nj8knw",
+  "status": "cancelled",
+  "attempts": 1,
+  "createdAt": "2026-05-15T16:37:54.242Z",
+  "updatedAt": "2026-05-15T16:42:51.618Z",
+  "lastAppliedEventSequence": 7,
+  "executor": "agent",
+  "providerId": "codex",
+  "requiredCapabilities": [
+    "agent.structured-output"
+  ],
+  "providerSessionRef": null,
+  "currentAttempt": null,
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Create a test ticket",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krp80tw9qybar3db72nj8knw",
+    "ticketId": "tkt_01krp80txygkrz5k2tar9g2xpb"
+  },
+  "metadata": {
+    "providerId": "codex",
+    "executor": "agent",
+    "clarificationQuestionCount": 2,
+    "recovered": true,
+    "reason": "missing_ticket",
+    "ticketId": "tkt_01krp80txygkrz5k2tar9g2xpb"
+  },
+  "message": "Recovered ticket work by cancelling it because the ticket is missing."
+}

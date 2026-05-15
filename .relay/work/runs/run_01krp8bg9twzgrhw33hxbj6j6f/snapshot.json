@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "workId": "run_01krp8bg9twzgrhw33hxbj6j6f",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "ticketId": "tkt_01krp8bgc21nq0pp3bz0w89gfm",
+  "runId": "run_01krp8bg9twzgrhw33hxbj6j6f",
+  "subject": "ticket",
+  "action": "draft",
+  "kind": "ticket.draft",
+  "idempotencyKey": "ticket.draft:/Users/robertpitt/Projects/relay:tkt_01krp8bgc21nq0pp3bz0w89gfm:run_01krp8bg9twzgrhw33hxbj6j6f",
+  "status": "completed",
+  "attempts": 1,
+  "createdAt": "2026-05-15T16:43:43.876Z",
+  "updatedAt": "2026-05-15T16:44:47.181Z",
+  "lastAppliedEventSequence": 5,
+  "executor": "agent",
+  "providerId": "codex",
+  "requiredCapabilities": [
+    "agent.structured-output"
+  ],
+  "providerSessionRef": null,
+  "currentAttempt": {
+    "attemptId": "attempt_01krp8bgc79ygexc1vjkjg055n",
+    "leaseToken": "lease_01krp8bgc7gf67q7c4aampj8kc",
+    "executor": "agent",
+    "providerId": "codex",
+    "claimedAt": "2026-05-15T16:43:43.879Z",
+    "heartbeatAt": "2026-05-15T16:43:43.881Z",
+    "startedAt": "2026-05-15T16:43:43.881Z",
+    "providerSessionRef": null
+  },
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "update readme to improve layout",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krp8bg9twzgrhw33hxbj6j6f",
+    "ticketId": "tkt_01krp8bgc21nq0pp3bz0w89gfm"
+  },
+  "metadata": {
+    "providerId": "codex",
+    "executor": "agent"
+  },
+  "message": "Ticket draft completed.",
+  "result": {
+    "ticketId": "tkt_01krp8bgc21nq0pp3bz0w89gfm",
+    "title": "Update README Layout for Scannability"
+  }
+}

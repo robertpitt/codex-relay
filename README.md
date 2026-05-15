@@ -1,19 +1,23 @@
 # Relay
 
-Relay is a local-first Electron desktop app for managing software work as kanban cards in local project folders. It is built with React, TypeScript, and `@openai/codex-sdk`, and stores each project's board data in a project-local `.relay/` directory.
+Relay is a local-first desktop kanban app for software work. Point it at a project folder, keep tickets in that project's `.relay/` directory, and manage the board without setting up a database, containers, hosted issue tracker, or `.env` file.
 
-Manual board and ticket management works without Codex. Agent-backed ticket drafting and execution require the Codex CLI on `PATH` plus Codex authentication or an API key.
+After cloning the repo, the local trial path is just install and run. Manual board and ticket management works immediately; Codex is only needed when you want agent-backed ticket drafting or execution.
 
 ## Quick Start
 
+From the cloned repo:
+
 ```sh
-git clone <repo-url>
-cd relay
 npm install
 npm run dev
 ```
 
-For Codex-backed drafting or execution, also verify Codex before starting those flows:
+Relay opens as an Electron app. Add a local project folder, let Relay initialize `.relay/`, and create your first manual ticket.
+
+### Optional Codex Setup
+
+For agent-backed drafting or execution, install the Codex CLI, make sure it is on `PATH`, and authenticate before starting those flows:
 
 ```sh
 codex --version
@@ -33,19 +37,19 @@ codex login
 - Node.js 18 or newer.
 - npm, using the committed `package-lock.json` workflow.
 - Git, strongly recommended. Relay can manage boards for non-Git folders, but Codex execution is disabled by default for non-Git projects.
-- Codex CLI and authentication only for agent-backed drafting or execution.
+- Optional: Codex CLI plus authentication, only for agent-backed drafting or execution.
 
 Local development does not require a database server, container stack, hosted issue tracker, or `.env` file.
 
 ## First Project
 
-After `npm run dev` opens the app:
+After `npm run dev` opens Relay:
 
 1. Click `Add Project`.
 2. Choose a local project folder.
 3. Confirm initialization when Relay asks to create `.relay/`.
-4. Create a manual ticket, or use Codex to draft one if Codex is configured.
-5. Open a ticket and start or resume a Codex run when needed.
+4. Create a manual ticket.
+5. If Codex is configured, draft a ticket or start a Codex run from an existing ticket when needed.
 
 Relay is designed for one developer working across local project folders. Removing a project from the sidebar removes it from Relay's app registry only; it does not delete the folder or its `.relay/` data.
 

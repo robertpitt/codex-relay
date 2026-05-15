@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "workId": "run_01krp9xkj7varagfz44e6qn82j",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "ticketId": "tkt_01krp9xkm7gxs1c90psr38er14",
+  "runId": "run_01krp9xkj7varagfz44e6qn82j",
+  "subject": "ticket",
+  "action": "draft",
+  "kind": "ticket.draft",
+  "idempotencyKey": "ticket.draft:/Users/robertpitt/Projects/relay:tkt_01krp9xkm7gxs1c90psr38er14:run_01krp9xkj7varagfz44e6qn82j",
+  "status": "blocked",
+  "attempts": 1,
+  "createdAt": "2026-05-15T17:11:05.611Z",
+  "updatedAt": "2026-05-15T18:42:57.727Z",
+  "lastAppliedEventSequence": 6,
+  "executor": "agent",
+  "providerId": "codex",
+  "requiredCapabilities": [
+    "agent.structured-output"
+  ],
+  "providerSessionRef": null,
+  "currentAttempt": {
+    "attemptId": "attempt_01krp9xkmfnvgc4sx4s9ykh807",
+    "leaseToken": "lease_01krp9xkmfj7g56bhp7y4h5mz2",
+    "executor": "agent",
+    "providerId": "codex",
+    "claimedAt": "2026-05-15T17:11:05.615Z",
+    "heartbeatAt": "2026-05-15T17:11:05.616Z",
+    "startedAt": "2026-05-15T17:11:05.616Z",
+    "providerSessionRef": null
+  },
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Draft me a ticket that improves the README.md file",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krp9xkj7varagfz44e6qn82j",
+    "ticketId": "tkt_01krp9xkm7gxs1c90psr38er14"
+  },
+  "metadata": {
+    "providerId": "codex",
+    "executor": "agent",
+    "clarificationQuestionCount": 1,
+    "recovered": true
+  },
+  "message": "Recovered incomplete work on boot."
+}

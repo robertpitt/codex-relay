@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -8,7 +8,6 @@ import {
   createDraftIntake,
   createTicketDraft,
   draftToCreateInput,
-  extractTicketDraftUrls,
   maybeResumeTicketDraftAfterClarification,
   startTicketDraftRun,
   startTicketRedraftRun,
@@ -30,6 +29,7 @@ import {
 } from "../src/storage";
 import { ticketDraftDialogSubtext } from "../src/renderer/src/lib/markdown";
 import type { CodexStatus, RendererRunEvent } from "../src/shared/schemas";
+import type { StructuredAgentRequest, StructuredAgentResult } from "../src/services/agents";
 
 const readyStatus: CodexStatus = {
   sdkAvailable: true,
@@ -131,7 +131,6 @@ test("ticket draft output schema requires every declared property for strict res
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_schema_required",
-    disableResearch: true,
     createCodexClient: () =>
       createDraftCodexClient(async (_prompt, options) => {
         outputSchema = options.outputSchema;
@@ -173,7 +172,6 @@ test("draft intake classifies scope, includes board context, and requires recomm
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => "din_scope",
-    disableResearch: true,
     createCodexClient: () =>
       createDraftCodexClient(async (nextPrompt, options) => {
         prompt = nextPrompt;
@@ -202,7 +200,6 @@ test("draft intake rejects blocker questions without recommended answers", async
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => "din_invalid_question",
-    disableResearch: true,
     createCodexClient: () =>
       createDraftCodexClient(async () => ({
         finalResponse: JSON.stringify({
@@ -322,10 +319,13 @@ test("ticket draft creation succeeds with a mocked Codex response", async () => 
 
   assert.equal(draft.title, "Recoverable timeout handling");
   assert.match(prompt, /Make timeouts recoverable/);
-  assert.match(prompt, /Research context:/);
+  assert.match(prompt, /read-only structured work unit/);
+  assert.match(prompt, /Research the codebase and external context directly through your harness/);
   assert.equal(signals[0].aborted, false);
-  assert.equal(capturedOptions.networkAccessEnabled, false);
-  assert.equal(capturedOptions.webSearchMode, "disabled");
+  assert.equal(capturedOptions.approvalPolicy, "never");
+  assert.equal(capturedOptions.sandboxMode, "read-only");
+  assert.equal(capturedOptions.networkAccessEnabled, true);
+  assert.equal(capturedOptions.webSearchMode, "live");
   assert.equal((await readBoard(projectPath)).tickets.length, 0);
   const draftWithSummary = { ...draft, summary: "**Generated** [summary](https://example.test)." };
   assert.equal(ticketDraftDialogSubtext(draftWithSummary), "Generated summary.");
@@ -342,7 +342,6 @@ test("ticket draft prompt includes intake answers and applies lean scope budgets
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_intake_context",
-    disableResearch: true,
     createCodexClient: () =>
       createDraftCodexClient(async (nextPrompt) => {
         prompt = nextPrompt;
@@ -412,7 +411,6 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
     getStatus: async () => readyStatus,
     createRunId: () => "run_async_draft",
     createRequestId: () => "tdr_async_draft",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient(
@@ -449,7 +447,6 @@ test("async ticket draft creates a Todo placeholder before Codex completes and a
     () => events.some((event) => event.type === "agent.message.completed" && /agent is writing the implementation-ready ticket draft/.test(event.text)),
     "draft progress events"
   );
-  assert.ok(events.some((event) => event.type === "agent.message.completed" && /Draft research completed/.test(event.text)));
   const completeDraft = resolveDraft as unknown as TicketDraftRunResolver;
   completeDraft({ finalResponse: validDraftJson("Asynchronous ticket drafting") });
 
@@ -475,7 +472,6 @@ test("async ticket draft can run intake in the background after creating the pen
     getStatus: async () => readyStatus,
     createRunId: () => "run_background_intake",
     createRequestId: () => "tdr_background_intake",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient((prompt) => {
@@ -522,7 +518,6 @@ test("async ticket draft keeps the pending ticket visible when Codex drafting fa
     getStatus: async () => readyStatus,
     createRunId: () => "run_async_failed_draft",
     createRequestId: () => "tdr_async_failed_draft",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient(async () => {
@@ -562,7 +557,6 @@ test("ticket redraft replaces generated content in place without moving the tick
     getStatus: async () => readyStatus,
     createRunId: () => "run_redraft_success",
     createRequestId: () => "tdr_redraft_success",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () => createDraftCodexClient(async () => ({ finalResponse: validDraftJson("Redrafted ticket") }))
   };
@@ -606,7 +600,6 @@ test("ticket redraft failure preserves prior generated content and remains retry
     getStatus: async () => readyStatus,
     createRunId: () => "run_redraft_failure",
     createRequestId: () => "tdr_redraft_failure",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () => createDraftCodexClient(async () => ({ finalResponse: "{ invalid json" }))
   };
@@ -644,7 +637,6 @@ test("async ticket draft can be cancelled through the shared run cancellation fl
     getStatus: async () => readyStatus,
     createRunId: () => "run_cancel_draft",
     createRequestId: () => "tdr_cancel_draft",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient((_prompt, options) =>
@@ -683,7 +675,6 @@ test("async ticket draft stores formal clarification questions when drafting is 
     getStatus: async () => readyStatus,
     createRunId: () => "run_draft_clarification",
     createRequestId: () => "tdr_draft_clarification",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient(async () => ({ finalResponse: clarificationDraftJson("Which database should this use?") }))
@@ -712,7 +703,6 @@ test("background intake blocks the pending draft with recommended clarification 
     getStatus: async () => readyStatus,
     createRunId: () => "run_intake_clarification",
     createRequestId: () => "tdr_intake_clarification",
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient(async () => {
@@ -758,7 +748,6 @@ test("answering all draft clarification questions auto-resumes drafting on the s
     getStatus: async () => readyStatus,
     createRunId: () => `run_auto_resume_${++runCounter}`,
     createRequestId: () => `tdr_auto_resume_${++requestCounter}`,
-    disableResearch: true,
     createCodexClient: () =>
       createDraftCodexClient(async (prompt) => {
         prompts.push(prompt);
@@ -799,7 +788,6 @@ test("async ticket drafts can run concurrently and update only their own placeho
     getStatus: async () => readyStatus,
     createRunId: () => `run_async_${++runCounter}`,
     createRequestId: () => `tdr_async_${++requestCounter}`,
-    disableResearch: true,
     runEventSink,
     createCodexClient: () =>
       createDraftCodexClient(
@@ -858,116 +846,39 @@ test("ticket draft prompt preserves markdown ticket references from the idea", a
   assert.match(prompt, /\[Referenceable todo\]\(\.\/tkt_001\.md\)/);
 });
 
-test("ticket draft URL research fetches detected URLs and renders source metadata", async () => {
+test("ticket draft delegates research to the structured provider harness", async () => {
   const projectPath = await createProject();
   const idea = "Use the behavior described at https://example.test/spec?draft=1.";
-  let prompt = "";
+  const capturedRequests: StructuredAgentRequest[] = [];
+  const agentProvider = {
+    providerId: "test-provider",
+    runStructured: async <T = unknown>(request: StructuredAgentRequest): Promise<StructuredAgentResult<T>> => {
+      capturedRequests.push(request);
+      return {
+        providerId: "test-provider",
+        rawResponse: validDraftJson("Provider-researched draft"),
+        output: JSON.parse(validDraftJson("Provider-researched draft")) as T
+      };
+    }
+  };
   const dependencies: TicketDraftDependencies = {
-    getStatus: async () => readyStatus,
     createRequestId: () => "tdr_url_research",
-    researchLimits: { maxUrlContentChars: 200, maxFilesToScan: 4 },
-    fetchUrl: async (url) => {
-      assert.equal(url, "https://example.test/spec?draft=1");
-      return new Response(
-        "<html><head><title>External Draft Spec</title></head><body><h1>Research-aware drafting</h1><p>Fetch URLs before producing the ticket.</p></body></html>",
-        { headers: { "content-type": "text/html" } }
-      );
-    },
-    createCodexClient: () =>
-      createDraftCodexClient(async (nextPrompt) => {
-        prompt = nextPrompt;
-        return {
-          finalResponse: JSON.stringify({
-            title: "Research-aware drafting",
-            priority: "medium",
-            labels: ["drafts"],
-            context: "Ground draft generation in researched sources.",
-            researchFindings: ["External Draft Spec says URLs should be fetched before ticket writing."],
-            requirements: ["Fetch URLs detected in the rough idea."],
-            implementationPlan: ["Extract URLs, fetch bounded content, and pass summarized findings to Codex."],
-            testPlan: ["Run ticket draft URL research tests."],
-            acceptanceCriteria: ["The generated markdown references fetched URLs."],
-            clarificationQuestions: [],
-            assumptions: [],
-            implementationNotes: []
-          })
-        };
-      })
+    agentProvider
   };
 
   const draft = await createTicketDraft({ projectPath, idea }, dependencies);
-  const markdown = draftToCreateInput(draft).markdown;
+  const capturedRequest = capturedRequests[0];
 
-  assert.deepEqual(extractTicketDraftUrls(idea), ["https://example.test/spec?draft=1"]);
-  assert.equal(draft.research.checkedUrls[0].status, "fetched");
-  assert.equal(draft.research.checkedUrls[0].title, "External Draft Spec");
-  assert.match(prompt, /External Draft Spec/);
-  assert.match(prompt, /Research-aware drafting/);
-  assert.match(markdown, /## Implementation Notes/);
-  assert.match(markdown, /External Draft Spec says URLs should be fetched/);
-  assert.match(markdown, /Fetched "External Draft Spec" \(https:\/\/example\.test\/spec\?draft=1\) for external context/);
-});
-
-test("ticket draft codebase research inspects matching project files before prompting Codex", async () => {
-  const projectPath = await createProject();
-  await mkdir(path.join(projectPath, "src", "services"), { recursive: true });
-  await mkdir(path.join(projectPath, "tests"), { recursive: true });
-  await writeFile(
-    path.join(projectPath, "src", "services", "codex.ts"),
-    "export const createTicketDraft = async () => 'draft';\nexport const draftToCreateInput = () => 'markdown';\n",
-    "utf8"
-  );
-  await writeFile(
-    path.join(projectPath, "tests", "ticket-draft.test.ts"),
-    "test('ticket draft research', () => assert.ok(true));\n",
-    "utf8"
-  );
-  let prompt = "";
-  const dependencies: TicketDraftDependencies = {
-    getStatus: async () => readyStatus,
-    createRequestId: () => "tdr_code_research",
-    researchLimits: { maxFilesToScan: 12, maxFilesToRead: 3 },
-    createCodexClient: () =>
-      createDraftCodexClient(async (nextPrompt) => {
-        prompt = nextPrompt;
-        return { finalResponse: validDraftJson("Inspect draft code") };
-      })
-  };
-
-  const draft = await createTicketDraft(
-    { projectPath, idea: "Make AI draft generation research aware in createTicketDraft and tests" },
-    dependencies
-  );
-
-  assert.ok(draft.research.inspectedFiles.some((file) => file.path === "src/services/codex.ts"));
-  assert.ok(draft.research.inspectedFiles.some((file) => file.path === "tests/ticket-draft.test.ts"));
-  assert.match(prompt, /src\/services\/codex\.ts/);
-  assert.match(prompt, /createTicketDraft/);
-  assert.match(prompt, /tests\/ticket-draft\.test\.ts/);
-});
-
-test("ticket draft research records URL and codebase limitations in generated markdown", async () => {
-  const projectPath = await createProject();
-  const dependencies: TicketDraftDependencies = {
-    getStatus: async () => readyStatus,
-    createRequestId: () => "tdr_research_failure",
-    researchLimits: { maxFilesToScan: 2, maxFilesToRead: 1 },
-    fetchUrl: async () => {
-      throw new Error("network blocked");
-    },
-    createCodexClient: () =>
-      createDraftCodexClient(async () => ({ finalResponse: validDraftJson("Research limitations are visible") }))
-  };
-
-  const draft = await createTicketDraft({ projectPath, idea: "Use https://example.test/missing for a frobnicate workflow" }, dependencies);
-  const markdown = draftToCreateInput(draft).markdown;
-
-  assert.equal(draft.research.checkedUrls[0].status, "failed");
-  assert.match(draft.research.checkedUrls[0].reason ?? "", /network blocked/);
-  assert.ok(draft.research.limitations.some((limitation) => /Code search found no searchable project files|Code search found no matches/.test(limitation)));
-  assert.match(markdown, /Could not fetch https:\/\/example\.test\/missing: network blocked/);
-  assert.doesNotMatch(markdown, /## Research Metadata/);
-  assert.match(markdown, /Research limitation:/);
+  assert.equal(draft.title, "Provider-researched draft");
+  assert.ok(capturedRequest);
+  assert.equal(capturedRequest.kind, "ticket.draft");
+  assert.equal(capturedRequest.mode, "read_only");
+  assert.equal(capturedRequest.networkAccessEnabled, true);
+  assert.equal(capturedRequest.webSearchMode, "live");
+  assert.match(capturedRequest.prompt, /https:\/\/example\.test\/spec\?draft=1/);
+  assert.match(capturedRequest.prompt, /Research the codebase and external context directly through your harness/);
+  assert.doesNotMatch(capturedRequest.prompt, /Checked URLs:/);
+  assert.doesNotMatch(capturedRequest.prompt, /Inspected files:/);
 });
 
 test("ticket draft waits for slow Codex responses without an internal timeout", async () => {
@@ -1064,7 +975,6 @@ test("ticket draft rejects ready plans that defer core research to implementatio
   const dependencies: TicketDraftDependencies = {
     getStatus: async () => readyStatus,
     createRequestId: () => "tdr_deferred_research",
-    disableResearch: true,
     createCodexClient: () =>
       createDraftCodexClient(async () => ({
         finalResponse: JSON.stringify({

@@ -5,16 +5,16 @@ export const projectRelayPath = (path: Path.Path, projectPath: string): string =
 export const projectConfigPath = (path: Path.Path, projectPath: string): string => path.join(projectRelayPath(path, projectPath), "project.json");
 export const ticketsPath = (path: Path.Path, projectPath: string): string => path.join(projectRelayPath(path, projectPath), "tickets");
 export const runsPath = (path: Path.Path, projectPath: string): string => path.join(projectRelayPath(path, projectPath), "runs");
-export const kernelPath = (path: Path.Path, projectPath: string): string => path.join(projectRelayPath(path, projectPath), "kernel");
-export const kernelJobsPath = (path: Path.Path, projectPath: string): string => path.join(kernelPath(path, projectPath), "jobs");
-export const kernelJobPath = (path: Path.Path, projectPath: string, executionId: string): string =>
-  path.join(kernelJobsPath(path, projectPath), executionId);
-export const kernelJobSnapshotPath = (path: Path.Path, projectPath: string, executionId: string): string =>
-  path.join(kernelJobPath(path, projectPath, executionId), "snapshot.json");
-export const kernelJobEventsPath = (path: Path.Path, projectPath: string, executionId: string): string =>
-  path.join(kernelJobPath(path, projectPath, executionId), "events.jsonl");
-export const kernelAuditLogPath = (path: Path.Path, projectPath: string): string =>
-  path.join(kernelPath(path, projectPath), "audit.jsonl");
+export const workPath = (path: Path.Path, projectPath: string): string => path.join(projectRelayPath(path, projectPath), "work");
+export const workRunsPath = (path: Path.Path, projectPath: string): string => path.join(workPath(path, projectPath), "runs");
+export const workRunPath = (path: Path.Path, projectPath: string, workId: string): string =>
+  path.join(workRunsPath(path, projectPath), workId);
+export const workRunSnapshotPath = (path: Path.Path, projectPath: string, workId: string): string =>
+  path.join(workRunPath(path, projectPath, workId), "snapshot.json");
+export const workRunEventsPath = (path: Path.Path, projectPath: string, workId: string): string =>
+  path.join(workRunPath(path, projectPath, workId), "events.jsonl");
+export const workAuditLogPath = (path: Path.Path, projectPath: string): string =>
+  path.join(workPath(path, projectPath), "audit.jsonl");
 export const auditLogPath = (path: Path.Path, projectPath: string): string => path.join(projectRelayPath(path, projectPath), "audit.jsonl");
 export const clarificationsPath = (path: Path.Path, projectPath: string): string =>
   path.join(projectRelayPath(path, projectPath), "clarifications");

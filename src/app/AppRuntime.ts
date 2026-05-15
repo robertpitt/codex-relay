@@ -2,7 +2,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRunEventSinkLive } from "../http";
 import { PlatformLive } from "../platform";
 import { AtomicFileLive, StorageLive } from "../storage";
-import { BackendKernelLive } from "../services/kernel";
+import { BackendWorkLive } from "../services/work";
 import { GitServiceLive } from "../services/git";
 import { RegistryStoreLive } from "../services/registry";
 import { BackendServicesBaseLive } from "../runtime";
@@ -20,7 +20,7 @@ export const CoreServicesLive = Layer.mergeAll(
   AtomicFileLive,
   GitServiceLive,
   RegistryStoreLive.pipe(Layer.provide(PlatformLive)),
-  BackendKernelLive.pipe(Layer.provide(BackendBaseLive)),
+  BackendWorkLive.pipe(Layer.provide(BackendBaseLive)),
   StorageLive.pipe(Layer.provide(BackendServicesBaseLive)),
   HttpRunEventSinkLive
 );

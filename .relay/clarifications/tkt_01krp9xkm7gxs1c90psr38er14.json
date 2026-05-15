@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "ticketId": "tkt_01krp9xkm7gxs1c90psr38er14",
+  "questions": [
+    {
+      "id": "clar_01krp9ymcmy71f8184mxdxvc8h",
+      "ticketId": "tkt_01krp9xkm7gxs1c90psr38er14",
+      "question": "Should this new README ticket be drafted as a distinct follow-up to the existing Todo README tickets, or should it replace/merge one of them?\n\nWhy it matters: There are already several open README improvement tickets with overlapping scope. Without this decision, the implementation ticket could duplicate active work or create conflicting README instructions.\nRecommended answer: Draft it as a distinct follow-up only if it targets a gap not covered by the existing Todo README tickets; otherwise merge it into the most relevant existing README Todo ticket instead of creating another duplicate.",
+      "answerType": "text",
+      "answer": "Yes",
+      "createdAt": "2026-05-15T17:11:39.156Z",
+      "updatedAt": "2026-05-15T17:12:08.765Z",
+      "answeredAt": "2026-05-15T17:12:08.765Z",
+      "createdBy": "codex",
+      "source": "draft_generation",
+      "runId": "run_01krp9xkj7varagfz44e6qn82j",
+      "codexThreadId": "draft_run_01krp9xkj7varagfz44e6qn82j"
+    }
+  ]
+}

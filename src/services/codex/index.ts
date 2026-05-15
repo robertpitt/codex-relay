@@ -33,7 +33,6 @@ import {
   type TicketDraft,
   type TicketEffort,
   type TicketDraftSubticket,
-  type TicketDraftResearchLimits,
   type TicketDraftErrorCode,
   type TicketDraftErrorPayload,
   type TicketRedraftInput,
@@ -64,18 +63,27 @@ import {
 import { logError, logInfo, logWarn } from "../../runtime/Logging";
 import { ElectronApp } from "../../platform";
 import {
-  markKernelRunStatus,
-  submitCodexImplementationJob,
-  submitTicketDraftJob,
-  submitTicketUpdateJob,
-  KernelRunRegistry,
-  runKernelRunRegistryEffect,
-  type JobExecutionStatus,
-  type KernelActiveRun,
-  type KernelQueuedRunIntent,
-  type KernelTicketUpdateBeginResult
-} from "../kernel";
-import { fallbackResearchFindings, renderResearchForPrompt, researchTicketDraft } from "./research";
+  markWorkRunStatus,
+  claimImplementationWork,
+  submitTicketImplementationWork,
+  submitTicketDraftWork,
+  submitTicketRedraftWork,
+  submitTicketUpdateWork,
+  WorkScheduler,
+  runWorkSchedulerEffect,
+  type WorkExecutionStatus,
+  type WorkActiveRun,
+  type WorkQueuedImplementationIntent,
+  type WorkRunSnapshot,
+  type WorkRecoveryReport,
+  type WorkTicketUpdateBeginResult
+} from "../work";
+import {
+  parseStructuredAgentJsonResponse,
+  type AgentWebSearchMode,
+  type StructuredAgentProvider,
+  type StructuredAgentRequest
+} from "../agents";
 import { resolveAvailableCodexCli, type CodexCliResolution } from "./cli";
 import { getCodexStatus } from "./status";
 import {
@@ -102,9 +110,8 @@ import {
 } from "../../storage";
 
 export { getCodexStatus } from "./status";
-export { DEFAULT_TICKET_DRAFT_RESEARCH_LIMITS, extractTicketDraftUrls, researchTicketDraft } from "./research";
 
-type QueuedRunIntent = Omit<KernelQueuedRunIntent, "dependencies"> & {
+type QueuedRunIntent = Omit<WorkQueuedImplementationIntent, "dependencies"> & {
   dependencies: CodexRunDependencies;
 };
 
@@ -114,21 +121,27 @@ const resolveBackendPath = async (...parts: string[]): Promise<string> => (await
 
 const nowIso = (): string => new Date().toISOString();
 
-const markKernelRunStatusSafely = async (
+const markWorkRunStatusSafely = async (
   projectPath: string,
   runId: string,
-  status: JobExecutionStatus,
-  options?: Parameters<typeof markKernelRunStatus>[3]
-): Promise<void> => {
+  status: WorkExecutionStatus,
+  options?: Parameters<typeof markWorkRunStatus>[3]
+): Promise<WorkRunSnapshot | null> => {
   try {
-    await markKernelRunStatus(projectPath, runId, status, options);
+    const attempt = options?.attemptId && options.leaseToken ? null : await workAttemptForRun(runId);
+    return await markWorkRunStatus(projectPath, runId, status, {
+      ...options,
+      attemptId: options?.attemptId ?? attempt?.attemptId,
+      leaseToken: options?.leaseToken ?? attempt?.leaseToken
+    });
   } catch (error) {
-    await logWarn("kernel", "failed to update kernel run status", {
+    await logWarn("work", "failed to update work run status", {
       projectPath,
       runId,
       status,
-      error: errorMessage(error, "Kernel status update failed.")
+      error: errorMessage(error, "Work status update failed.")
     });
+    return null;
   }
 };
 
@@ -137,7 +150,6 @@ type DraftScopeProfile = {
   maxQuestions: number;
   guidance: string;
   sectionBudget: number;
-  researchLimits: Partial<TicketDraftResearchLimits>;
 };
 
 const DRAFT_SCOPE_PROFILES: Record<DraftScope, DraftScopeProfile> = {
@@ -145,81 +157,31 @@ const DRAFT_SCOPE_PROFILES: Record<DraftScope, DraftScopeProfile> = {
     label: "Quick bug fix",
     maxQuestions: 2,
     guidance: "Optimize for speed. Produce a short bug-shaped ticket with the reproduction clue, expected behavior, fix target, and focused regression test.",
-    sectionBudget: 3,
-    researchLimits: {
-      maxResearchMs: 3_000,
-      maxUrls: 1,
-      maxUrlFetchMs: 1_500,
-      maxUrlContentChars: 3_000,
-      maxFilesToScan: 60,
-      maxFilesToRead: 2,
-      maxFileReadChars: 5_000,
-      maxMatchesPerFile: 2
-    }
+    sectionBudget: 3
   },
   task: {
     label: "Task",
     maxQuestions: 3,
     guidance: "Produce a normal implementation ticket with concise requirements, concrete affected areas, and focused validation.",
-    sectionBudget: 5,
-    researchLimits: {
-      maxResearchMs: 5_000,
-      maxUrls: 1,
-      maxUrlFetchMs: 2_000,
-      maxUrlContentChars: 4_000,
-      maxFilesToScan: 90,
-      maxFilesToRead: 3,
-      maxFileReadChars: 7_000,
-      maxMatchesPerFile: 2
-    }
+    sectionBudget: 5
   },
   product_feature: {
     label: "Product feature",
     maxQuestions: 5,
     guidance: "Produce a lean PRD-like feature ticket with user-visible behavior, product decisions, acceptance criteria, and implementation notes.",
-    sectionBudget: 6,
-    researchLimits: {
-      maxResearchMs: 7_000,
-      maxUrls: 2,
-      maxUrlFetchMs: 3_000,
-      maxUrlContentChars: 6_000,
-      maxFilesToScan: 120,
-      maxFilesToRead: 4,
-      maxFileReadChars: 9_000,
-      maxMatchesPerFile: 3
-    }
+    sectionBudget: 6
   },
   rewrite: {
     label: "Rewrite/refactor",
     maxQuestions: 6,
     guidance: "Produce a rewrite/refactor ticket that calls out migration strategy, compatibility risks, and validation boundaries without becoming exhaustive.",
-    sectionBudget: 7,
-    researchLimits: {
-      maxResearchMs: 8_000,
-      maxUrls: 2,
-      maxUrlFetchMs: 3_000,
-      maxUrlContentChars: 6_000,
-      maxFilesToScan: 140,
-      maxFilesToRead: 5,
-      maxFileReadChars: 10_000,
-      maxMatchesPerFile: 3
-    }
+    sectionBudget: 7
   },
   epic: {
     label: "Epic",
     maxQuestions: 8,
     guidance: "Produce a parent planning ticket plus independently implementable vertical-slice child tasks. Keep detail in the child tickets.",
-    sectionBudget: 6,
-    researchLimits: {
-      maxResearchMs: 9_000,
-      maxUrls: 2,
-      maxUrlFetchMs: 3_000,
-      maxUrlContentChars: 6_000,
-      maxFilesToScan: 160,
-      maxFilesToRead: 6,
-      maxFileReadChars: 12_000,
-      maxMatchesPerFile: 3
-    }
+    sectionBudget: 6
   }
 };
 
@@ -227,75 +189,96 @@ const defaultDraftScopeForInput = (input: Pick<CreateDraftInput, "draftScope" | 
   input.draftScope ?? (input.preferredTicketType === "epic" ? "epic" : "task");
 
 const registry = <A>(
-  effect: Effect.Effect<A, unknown, Context.Service.Identifier<typeof KernelRunRegistry>>
-): Promise<A> => runKernelRunRegistryEffect(effect);
+  effect: Effect.Effect<A, unknown, Context.Service.Identifier<typeof WorkScheduler>>
+): Promise<A> => runWorkSchedulerEffect(effect);
 
 const activeRunIdForTicket = (projectPath: string, ticketId: string): Promise<string | null> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.activeRunIdForTicket(projectPath, ticketId)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.activeRunIdForTicket(projectPath, ticketId)));
 
 const activeImplementationRunCountForProject = (projectPath: string): Promise<number> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.activeImplementationRunCount(projectPath)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.activeImplementationRunCount(projectPath)));
 
 const enqueueImplementationRun = (runId: string, intent: QueuedRunIntent): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.enqueueImplementation(runId, intent)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.enqueueImplementation(runId, intent)));
 
 const getQueuedImplementationRun = async (runId: string): Promise<QueuedRunIntent | null> => {
-  const intent = await registry(KernelRunRegistry.use((runRegistry) => runRegistry.getQueuedImplementation(runId)));
+  const intent = await registry(WorkScheduler.use((runRegistry) => runRegistry.getQueuedImplementation(runId)));
   return intent ? ({ ...intent, dependencies: intent.dependencies as CodexRunDependencies } satisfies QueuedRunIntent) : null;
 };
 
 const removeQueuedImplementationRun = async (runId: string): Promise<QueuedRunIntent | null> => {
-  const intent = await registry(KernelRunRegistry.use((runRegistry) => runRegistry.removeQueuedImplementation(runId)));
+  const intent = await registry(WorkScheduler.use((runRegistry) => runRegistry.removeQueuedImplementation(runId)));
   return intent ? ({ ...intent, dependencies: intent.dependencies as CodexRunDependencies } satisfies QueuedRunIntent) : null;
 };
 
-const markImplementationStarting = (runId: string, runRef: { projectPath: string; ticketId: string }): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.markImplementationStarting(runId, runRef)));
+const getStartingImplementationRun = (runId: string): Promise<{ attemptId?: string; leaseToken?: string } | null> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.getStartingImplementation(runId)));
 
 const implementationActiveOrStarting = (runId: string): Promise<boolean> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.isImplementationActiveOrStarting(runId)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.isImplementationActiveOrStarting(runId)));
 
-const registerImplementationActive = (runId: string, activeRun: KernelActiveRun): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.registerImplementationActive(runId, activeRun)));
+const registerImplementationActive = (runId: string, activeRun: WorkActiveRun): Promise<void> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.registerImplementationActive(runId, activeRun)));
 
-const getActiveImplementationRun = (runId: string): Promise<KernelActiveRun | null> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.getActiveImplementation(runId)));
+const getActiveImplementationRun = (runId: string): Promise<WorkActiveRun | null> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.getActiveImplementation(runId)));
 
 const completeImplementationRun = (runId: string): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.completeImplementation(runId)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.completeImplementation(runId)));
 
-const registerDraftRun = (runId: string, activeRun: KernelActiveRun): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.registerDraft(runId, activeRun)));
+const registerDraftRun = (runId: string, activeRun: WorkActiveRun): Promise<void> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.registerDraft(runId, activeRun)));
 
-const getDraftRun = (runId: string): Promise<KernelActiveRun | null> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.getDraft(runId)));
+const getDraftRun = (runId: string): Promise<WorkActiveRun | null> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.getDraft(runId)));
 
 const completeDraftRun = (runId: string): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.completeDraft(runId)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.completeDraft(runId)));
 
 const beginTicketUpdateRun = (
   runId: string,
   ticketKey: string,
-  activeRun: KernelActiveRun
-): Promise<KernelTicketUpdateBeginResult> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.beginTicketUpdate(runId, ticketKey, activeRun)));
+  activeRun: WorkActiveRun
+): Promise<WorkTicketUpdateBeginResult> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.beginTicketUpdate(runId, ticketKey, activeRun)));
 
-const getTicketUpdateRun = (runId: string): Promise<KernelActiveRun | null> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.getTicketUpdate(runId)));
+const updateTicketUpdateRunAttempt = (
+  runId: string,
+  attempt: Pick<WorkActiveRun, "attemptId" | "leaseToken">
+): Promise<void> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.updateTicketUpdateAttempt(runId, attempt)));
+
+const getTicketUpdateRun = (runId: string): Promise<WorkActiveRun | null> =>
+  registry(WorkScheduler.use((runRegistry) => runRegistry.getTicketUpdate(runId)));
 
 const completeTicketUpdateRun = (runId: string): Promise<void> =>
-  registry(KernelRunRegistry.use((runRegistry) => runRegistry.completeTicketUpdate(runId)));
+  registry(WorkScheduler.use((runRegistry) => runRegistry.completeTicketUpdate(runId)));
+
+const workAttemptForRun = async (runId: string): Promise<{ attemptId: string; leaseToken: string } | null> => {
+  const candidates = [
+    await getActiveImplementationRun(runId),
+    await getDraftRun(runId),
+    await getTicketUpdateRun(runId),
+    await getStartingImplementationRun(runId)
+  ];
+  for (const candidate of candidates) {
+    if (candidate?.attemptId && candidate.leaseToken) {
+      return { attemptId: candidate.attemptId, leaseToken: candidate.leaseToken };
+    }
+  }
+  return null;
+};
 
 const schedulerRetryPolicy = Schedule.addDelay(Schedule.recurs(2), () => Effect.succeed("25 millis"));
 
 const ensureProjectSchedulerLoop = async (projectPath: string): Promise<void> => {
   const resolvedProjectPath = await resolveBackendPath(projectPath);
-  const claimed = await registry(KernelRunRegistry.use((runRegistry) => runRegistry.claimProjectSchedulerLoop(resolvedProjectPath)));
+  const claimed = await registry(WorkScheduler.use((runRegistry) => runRegistry.claimProjectSchedulerLoop(resolvedProjectPath)));
   if (!claimed) return;
 
   void (async () => {
     for (;;) {
-      await registry(KernelRunRegistry.use((runRegistry) => runRegistry.takeProjectSchedulerWake(resolvedProjectPath)));
+      await registry(WorkScheduler.use((runRegistry) => runRegistry.takeProjectSchedulerWake(resolvedProjectPath)));
       try {
         await runBackendEffect(Effect.retry(fromPromise(() => drainProjectScheduler(resolvedProjectPath)), schedulerRetryPolicy));
       } catch (error) {
@@ -303,7 +286,7 @@ const ensureProjectSchedulerLoop = async (projectPath: string): Promise<void> =>
       }
     }
   })().catch((error) => {
-    void registry(KernelRunRegistry.use((runRegistry) => runRegistry.releaseProjectSchedulerLoop(resolvedProjectPath)));
+    void registry(WorkScheduler.use((runRegistry) => runRegistry.releaseProjectSchedulerLoop(resolvedProjectPath)));
     void logError("codex:scheduler", "scheduler loop stopped", error, { projectPath: resolvedProjectPath });
   });
 };
@@ -311,13 +294,25 @@ const ensureProjectSchedulerLoop = async (projectPath: string): Promise<void> =>
 const wakeProjectScheduler = async (projectPath: string): Promise<void> => {
   const resolvedProjectPath = await resolveBackendPath(projectPath);
   await ensureProjectSchedulerLoop(resolvedProjectPath);
-  await registry(KernelRunRegistry.use((runRegistry) => runRegistry.wakeProjectScheduler(resolvedProjectPath)));
+  await registry(WorkScheduler.use((runRegistry) => runRegistry.wakeProjectScheduler(resolvedProjectPath)));
 };
 
 const wakeProjectSchedulerSoon = (projectPath: string): void => {
   void wakeProjectScheduler(projectPath).catch((error) =>
     logError("codex:scheduler", "failed to wake queue", error, { projectPath })
   );
+};
+
+export const wakeRecoveredCodexWork = async (reports: readonly WorkRecoveryReport[]): Promise<void> => {
+  const projectPaths = new Set<string>();
+  for (const report of reports) {
+    for (const projectPath of report.wakeProjectPaths ?? []) {
+      projectPaths.add(projectPath);
+    }
+  }
+  for (const projectPath of projectPaths) {
+    await wakeProjectScheduler(projectPath);
+  }
 };
 
 const drainProjectScheduler = async (projectPath: string): Promise<void> => {
@@ -341,7 +336,8 @@ const drainProjectScheduler = async (projectPath: string): Promise<void> => {
         dependencies: {}
       } satisfies QueuedRunIntent);
     await enqueueImplementationRun(runId, intent);
-    await markImplementationStarting(runId, { projectPath, ticketId: next.id });
+    const claim = await claimImplementationWork(projectPath, runId);
+    if (!claim) return;
     void startQueuedRunNow(intent.input, intent.resume, runId, intent.dependencies).catch((error) =>
       logError("codex:run", "queued run failed outside stream", error, { projectPath, ticketId: next.id, runId })
     );
@@ -609,6 +605,8 @@ type TicketDraftProgressReporter = (message: string) => void | Promise<void>;
 type RepositoryChatTimeoutHandle = ReturnType<typeof setTimeout>;
 
 const DEFAULT_REPOSITORY_CHAT_TIMEOUT_MS = 120_000;
+const DRAFT_AGENT_NETWORK_ACCESS_ENABLED = true;
+const DRAFT_AGENT_WEB_SEARCH_MODE: AgentWebSearchMode = "live";
 
 export type TicketDraftThread = Pick<Thread, "run"> & Partial<Pick<Thread, "id">>;
 
@@ -618,16 +616,64 @@ export type TicketDraftCodexClient = {
 
 export type TicketDraftDependencies = {
   getStatus?: () => Promise<CodexStatus>;
+  agentProvider?: StructuredAgentProvider;
   createCodexClient?: () => TicketDraftCodexClient;
-  researchLimits?: Partial<TicketDraftResearchLimits>;
-  fetchUrl?: typeof fetch;
-  disableResearch?: boolean;
   createRequestId?: () => string;
   nowMs?: () => number;
   abortController?: AbortController;
   onProgress?: TicketDraftProgressReporter;
   draftProgressIntervalMs?: number;
 };
+
+const structuredAgentThreadOptionsForProject = async (request: StructuredAgentRequest): Promise<ThreadOptions> => {
+  const context = await projectThreadOptionsContext(request.projectPath);
+  const base = sharedThreadOptionsForProjectContext(request.projectPath, context, request.effort);
+  const webSearchMode = request.webSearchMode ?? context.config.settings.codexWebSearchMode;
+  const networkAccessEnabled = request.networkAccessEnabled ?? context.config.settings.codexNetworkAccessEnabled;
+
+  if (request.mode === "read_only") {
+    return {
+      ...base,
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      networkAccessEnabled,
+      webSearchMode
+    };
+  }
+
+  return {
+    ...base,
+    networkAccessEnabled,
+    webSearchMode
+  };
+};
+
+const createCodexStructuredAgentProvider = (
+  dependencies: Pick<TicketDraftDependencies, "createCodexClient"> = {}
+): StructuredAgentProvider => ({
+  providerId: "codex",
+  runStructured: async <T = unknown>(request: StructuredAgentRequest) => {
+    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
+    const thread = codex.startThread(await structuredAgentThreadOptionsForProject(request));
+    const turn = await thread.run(request.prompt, { outputSchema: request.outputSchema, signal: request.signal });
+    const providerSessionRef = thread.id
+      ? {
+        providerId: "codex",
+        externalId: thread.id,
+        parts: { threadId: thread.id }
+      }
+      : null;
+    return {
+      providerId: "codex",
+      output: parseStructuredAgentJsonResponse(turn.finalResponse) as T,
+      rawResponse: turn.finalResponse,
+      providerSessionRef
+    };
+  }
+});
+
+const structuredAgentProviderForDraft = (dependencies: TicketDraftDependencies): StructuredAgentProvider =>
+  dependencies.agentProvider ?? createCodexStructuredAgentProvider({ createCodexClient: dependencies.createCodexClient });
 
 export type TicketSuggestionDependencies = {
   getStatus?: () => Promise<CodexStatus>;
@@ -745,6 +791,26 @@ const ticketDraftError = (
     timeoutMs: options?.timeoutMs,
     cause: options?.cause
   });
+
+const ensureTicketDraftAgentAvailable = async (
+  dependencies: TicketDraftDependencies,
+  requestId: string,
+  durationMs: () => number,
+  messages: {
+    readonly unavailable: string;
+    readonly unauthenticated: string;
+  }
+): Promise<void> => {
+  if (dependencies.agentProvider && !dependencies.getStatus) return;
+
+  const status = await (dependencies.getStatus ?? getCodexStatus)();
+  if (!status.cliAvailable) {
+    throw ticketDraftError("codex_unavailable", requestId, durationMs(), messages.unavailable, "codex_cli_unavailable");
+  }
+  if (status.authenticated === false) {
+    throw ticketDraftError("codex_unauthenticated", requestId, durationMs(), messages.unauthenticated, "codex_auth_unavailable");
+  }
+};
 
 const normalizeTicketDraftError = (
   error: unknown,
@@ -877,12 +943,10 @@ const applyDraftSectionBudget = (draft: TicketDraftSubticket, scope: DraftScope)
 
 const normalizeTicketDraftOutcome = (
   parsedDraft: TicketDraft,
-  research: Awaited<ReturnType<typeof researchTicketDraft>>,
   scope: DraftScope
 ): TicketDraftOutcome => {
   const normalizedBase = normalizeSubticketDraft(parsedDraft);
-  const metadataFindings = fallbackResearchFindings(research.metadata);
-  const researchFindings = cleanStringList([...normalizedBase.researchFindings, ...metadataFindings]);
+  const researchFindings = cleanStringList(normalizedBase.researchFindings);
   const implementationPlan =
     normalizedBase.implementationPlan.length > 0 ? normalizedBase.implementationPlan : normalizedBase.implementationNotes;
   const testPlan = normalizedBase.testPlan && normalizedBase.testPlan.length > 0 ? normalizedBase.testPlan : fallbackTestPlan();
@@ -894,10 +958,7 @@ const normalizeTicketDraftOutcome = (
   const budgetedBase = applyDraftSectionBudget(
     {
       ...normalizedBase,
-      researchFindings:
-        researchFindings.length > 0
-          ? researchFindings
-          : ["No matching source files or URLs were identified during bounded draft research."],
+      researchFindings,
       implementationPlan,
       testPlan,
       clarificationQuestions: parsedDraft.draftState === "needs_clarification" ? [] : readyQuestions
@@ -917,8 +978,7 @@ const normalizeTicketDraftOutcome = (
         ...normalizedSubticket,
         testPlan: normalizedSubticket.testPlan && normalizedSubticket.testPlan.length > 0 ? normalizedSubticket.testPlan : fallbackTestPlan()
       }, scope);
-    }),
-    research: research.metadata
+    })
   };
 
   const needsClarification = draft.draftState === "needs_clarification" || blockingQuestions.length > 0 || readyQuestions.length > 0;
@@ -1099,8 +1159,7 @@ const normalizeDraftIntakeResult = (
 
 const buildDraftIntakePrompt = (
   input: DraftIntakeInput,
-  board: Awaited<ReturnType<typeof readBoard>>,
-  research: Awaited<ReturnType<typeof researchTicketDraft>>
+  board: Awaited<ReturnType<typeof readBoard>>
 ): string => {
   const scopeOverride = input.scopeOverride;
   const scopeRules = Object.entries(DRAFT_SCOPE_PROFILES)
@@ -1121,7 +1180,8 @@ ${scopeRules}
 
 Question rules:
 - Ask only questions that block an implementation-ready ticket.
-- Do not ask questions answerable from local codebase files, current board tickets, linked ticket references, or the research context.
+- This is a read-only work unit: you may inspect local files, current board tickets, linked ticket references, and external context, but do not modify files or tickets.
+- Do not ask questions answerable from local codebase files, current board tickets, linked ticket references, or public documentation.
 - Do not ask questions where a conservative default is acceptable; choose the default and put it in knownFacts.
 - Every question must include whyItMatters and a recommendedAnswer the user can accept or edit.
 - Prefer zero questions for quick bugs and small tasks when the codebase and idea give enough direction.
@@ -1132,9 +1192,6 @@ Return only data matching the requested schema.
 Project path: ${input.projectPath}
 Current board tickets:
 ${formatBoardTicketsForSuggestionPrompt(board)}
-
-Research context:
-${renderResearchForPrompt(research)}
 
 User idea:
 ${input.idea}`;
@@ -1152,56 +1209,34 @@ export const createDraftIntake = async (
   const startedAt = dependencies.nowMs?.() ?? Date.now();
   const nowMs = dependencies.nowMs ?? Date.now;
   const durationMs = (): number => Math.max(0, nowMs() - startedAt);
-  const scopeForResearch = input.scopeOverride ?? "task";
-  const profile = DRAFT_SCOPE_PROFILES[scopeForResearch];
   const abortController = dependencies.abortController ?? new AbortController();
   const logBase = { requestId, projectPath, ideaLength: idea.length, scopeOverride: input.scopeOverride ?? null };
 
   await logInfo("codex:draft-intake", "starting draft intake", logBase);
   try {
-    const status = await (dependencies.getStatus ?? getCodexStatus)();
-    if (!status.cliAvailable) {
-      throw ticketDraftError(
-        "codex_unavailable",
-        requestId,
-        durationMs(),
-        "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before drafting tickets.",
-        "codex_cli_unavailable"
-      );
-    }
-    if (status.authenticated === false) {
-      throw ticketDraftError(
-        "codex_unauthenticated",
-        requestId,
-        durationMs(),
-        "Codex is not authenticated. Run `codex login` in your terminal, then try drafting again.",
-        "codex_auth_unavailable"
-      );
-    }
+    await ensureTicketDraftAgentAvailable(dependencies, requestId, durationMs, {
+      unavailable: "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before drafting tickets.",
+      unauthenticated: "Codex is not authenticated. Run `codex login` in your terminal, then try drafting again."
+    });
 
-    const [config, board, research] = await Promise.all([
+    const [config, board] = await Promise.all([
       readProjectConfig(projectPath),
-      readBoard(projectPath),
-      researchTicketDraft(
-        {
-          projectPath,
-          idea,
-          preferredTicketType: input.scopeOverride === "epic" ? "epic" : "task"
-        },
-        {
-          ...dependencies,
-          researchLimits: {
-            ...profile.researchLimits,
-            ...(dependencies.researchLimits ?? {})
-          }
-        }
-      )
+      readBoard(projectPath)
     ]);
-    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
-    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath, input.effort ?? config.settings.defaultTicketEffort));
-    const prompt = buildDraftIntakePrompt({ ...input, projectPath, idea }, board, research);
-    const turn = await thread.run(prompt, { outputSchema: draftIntakeResultSchemaJson, signal: abortController.signal });
-    const parsed = parseSchema(draftIntakeResultSchema, parseJsonResponse(turn.finalResponse));
+    const provider = structuredAgentProviderForDraft(dependencies);
+    const prompt = buildDraftIntakePrompt({ ...input, projectPath, idea }, board);
+    const result = await provider.runStructured({
+      kind: "ticket.draft_intake",
+      projectPath,
+      prompt,
+      outputSchema: draftIntakeResultSchemaJson,
+      mode: "read_only",
+      effort: input.effort ?? config.settings.defaultTicketEffort,
+      networkAccessEnabled: DRAFT_AGENT_NETWORK_ACCESS_ENABLED,
+      webSearchMode: DRAFT_AGENT_WEB_SEARCH_MODE,
+      signal: abortController.signal
+    });
+    const parsed = parseSchema(draftIntakeResultSchema, result.output);
     const intake = normalizeDraftIntakeResult(parsed, board, input.scopeOverride);
     await logInfo("codex:draft-intake", "draft intake completed", {
       ...logBase,
@@ -1464,61 +1499,16 @@ const createTicketDraftPromise = async (
 
   try {
     await reportTicketDraftProgress(dependencies, "Checking Codex availability for ticket drafting.");
-    const status = await (dependencies.getStatus ?? getCodexStatus)();
-    if (!status.cliAvailable) {
-      await logWarn("codex:draft", "codex cli unavailable", { ...logBase, durationMs: durationMs(), status });
-      throw ticketDraftError(
-        "codex_unavailable",
-        requestId,
-        durationMs(),
-        "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before drafting tickets.",
-        "codex_cli_unavailable"
-      );
-    }
-    if (status.authenticated === false) {
-      await logWarn("codex:draft", "codex auth unavailable", { ...logBase, durationMs: durationMs(), status });
-      throw ticketDraftError(
-        "codex_unauthenticated",
-        requestId,
-        durationMs(),
-        "Codex is not authenticated. Run `codex login` in your terminal, then try drafting again.",
-        "codex_auth_unavailable"
-      );
-    }
+    await ensureTicketDraftAgentAvailable(dependencies, requestId, durationMs, {
+      unavailable: "Codex CLI was not found in the SDK bundle or on PATH. Install or expose Codex before drafting tickets.",
+      unauthenticated: "Codex is not authenticated. Run `codex login` in your terminal, then try drafting again."
+    });
 
     const [config, board] = await Promise.all([readProjectConfig(projectPath), readBoard(projectPath)]);
     const existingDraftTicket = ticketId ? await readTicket(projectPath, ticketId) : null;
     const effectiveEffort = existingDraftTicket?.frontMatter.effort ?? effort ?? config.settings.defaultTicketEffort;
     const draftClarifications = ticketId ? await readClarificationQuestions(projectPath, ticketId) : [];
-    await reportTicketDraftProgress(dependencies, "Running bounded draft research across the project.");
-    const research = await researchTicketDraft(
-      { projectPath, idea, preferredTicketType, ticketId, draftScope: scope, intakeAnswers, intakeKnownFacts, relatedTicketIds },
-      {
-        ...dependencies,
-        researchLimits: {
-          ...scopeProfile.researchLimits,
-          ...(dependencies.researchLimits ?? {})
-        }
-      }
-    );
-    await reportTicketDraftProgress(
-      dependencies,
-      `Draft research completed: checked ${research.metadata.checkedUrls.length} URL${research.metadata.checkedUrls.length === 1 ? "" : "s"}, inspected ${
-        research.metadata.inspectedFiles.length
-      } file${research.metadata.inspectedFiles.length === 1 ? "" : "s"}, recorded ${research.metadata.limitations.length} limitation${
-        research.metadata.limitations.length === 1 ? "" : "s"
-      }.`
-    );
-    await logInfo("codex:draft", "ticket draft research completed", {
-      ...logBase,
-      durationMs: durationMs(),
-      checkedUrlCount: research.metadata.checkedUrls.length,
-      inspectedFileCount: research.metadata.inspectedFiles.length,
-      limitationCount: research.metadata.limitations.length,
-      limits: research.metadata.limits
-    });
-    const codex = dependencies.createCodexClient?.() ?? (await createCodex());
-    const thread = codex.startThread(await boundedThreadOptionsForProject(projectPath, effectiveEffort));
+    const provider = structuredAgentProviderForDraft(dependencies);
     const ticketTypeGuidance =
       preferredTicketType === "epic"
         ? "The user selected Epic mode. Return ticketType \"epic\" and decompose the work into normal task subtickets."
@@ -1544,9 +1534,11 @@ ${formatDraftIntakeAnswersForPrompt(intakeAnswers)}`;
 
 The user will provide a rough idea. Convert it into an implementation-ready ticket for a coding agent and human developer.
 
+This is a read-only structured work unit. You may inspect the local project, current board context, linked ticket references, and external sources as needed, but do not create, edit, move, rename, or delete files or Relay tickets.
+
 The drafting phase must do the research and decision work up front. The implementation agent should not need to discover the basic affected files, entry points, existing patterns, product decisions, or test locations before it can start editing.
 
-Use the bounded research context below to ground the ticket. Include concrete source references in researchFindings, such as file paths, function/component names, matched line numbers, existing behavior, or URL titles. If research failed or was incomplete, record the limitation in implementationNotes, assumptions, or blockingClarificationQuestions depending on whether it blocks a usable plan.
+Research the codebase and external context directly through your harness. Include concrete source references in researchFindings, such as file paths, function/component names, relevant behavior, test locations, or URL titles. If research failed or was incomplete, record the limitation in implementationNotes, assumptions, or blockingClarificationQuestions depending on whether it blocks a usable plan.
 
 Return draftState "ready" only when the ticket is implementation-ready. A ready ticket must include:
 - resolved product and technical decisions, with conservative assumptions recorded in assumptions;
@@ -1580,9 +1572,6 @@ ${intakeContext}
 Draft clarification context:
 ${clarificationContext}
 
-Research context:
-${renderResearchForPrompt(research)}
-
 User idea:
 ${idea}`;
 
@@ -1597,7 +1586,17 @@ ${idea}`;
       }, progressIntervalMs);
       unrefTimerHandle(progressInterval);
     }
-    const turn = await thread.run(prompt, { outputSchema: ticketDraftSchemaJson, signal: abortController.signal });
+    const result = await provider.runStructured({
+      kind: "ticket.draft",
+      projectPath,
+      prompt,
+      outputSchema: ticketDraftSchemaJson,
+      mode: "read_only",
+      effort: effectiveEffort,
+      networkAccessEnabled: DRAFT_AGENT_NETWORK_ACCESS_ENABLED,
+      webSearchMode: DRAFT_AGENT_WEB_SEARCH_MODE,
+      signal: abortController.signal
+    });
     if (progressInterval) {
       clearInterval(progressInterval);
       progressInterval = null;
@@ -1605,8 +1604,8 @@ ${idea}`;
     await reportTicketDraftProgress(dependencies, "The agent returned a draft; validating the structured ticket.");
     let parsed: TicketDraftOutcome;
     try {
-      const parsedDraft = parseSchema(ticketDraftSchema, parseJsonResponse(turn.finalResponse));
-      parsed = normalizeTicketDraftOutcome(parsedDraft, research, scope);
+      const parsedDraft = parseSchema(ticketDraftSchema, result.output);
+      parsed = normalizeTicketDraftOutcome(parsedDraft, scope);
     } catch (error) {
       throw ticketDraftError(
         "invalid_response",
@@ -1701,8 +1700,8 @@ export const startTicketDraftRun = async (
   const abortController = new AbortController();
 
   const ticket = await createPendingTicketDraft(projectPath, { ...input, projectPath, idea }, runId);
-  await submitTicketDraftJob({ ...input, projectPath, idea }, { runId, ticketId: ticket.frontMatter.id });
-  await markKernelRunStatusSafely(projectPath, runId, "running", { message: "Ticket draft generation started." });
+  await submitTicketDraftWork({ ...input, projectPath, idea }, { runId, ticketId: ticket.frontMatter.id });
+  const startedWork = await markWorkRunStatusSafely(projectPath, runId, "running", { message: "Ticket draft generation started." });
   const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
     try {
       await emitRunEventForDependencies(dependencies.runEventSink, projectPath, ticket.frontMatter.id, runId, threadId, event);
@@ -1727,7 +1726,9 @@ export const startTicketDraftRun = async (
   await registerDraftRun(runId, {
     abortController,
     ticketId: ticket.frontMatter.id,
-    projectPath
+    projectPath,
+    attemptId: startedWork?.currentAttempt?.attemptId,
+    leaseToken: startedWork?.currentAttempt?.leaseToken
   });
 
   const draftDependencies: TicketDraftStartDependencies = {
@@ -1801,7 +1802,7 @@ export const startTicketDraftRun = async (
             scope: intake.scope,
             clarificationQuestionCount: questions.length
           });
-          await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+          await markWorkRunStatusSafely(projectPath, runId, "blocked", {
             message: "Ticket draft is blocked on clarification.",
             metadata: { clarificationQuestionCount: questions.length }
           });
@@ -1843,7 +1844,7 @@ export const startTicketDraftRun = async (
           runId,
           clarificationQuestionCount: questions.length
         });
-        await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+        await markWorkRunStatusSafely(projectPath, runId, "blocked", {
           message: "Ticket draft is blocked on clarification.",
           metadata: { clarificationQuestionCount: questions.length }
         });
@@ -1864,7 +1865,7 @@ export const startTicketDraftRun = async (
         runId,
         title: draft.title
       });
-      await markKernelRunStatusSafely(projectPath, runId, "completed", {
+      await markWorkRunStatusSafely(projectPath, runId, "completed", {
         result: { ticketId: ticket.frontMatter.id, title: draft.title },
         message: "Ticket draft completed."
       });
@@ -1914,7 +1915,7 @@ export const startTicketDraftRun = async (
           ...payload
         });
       }
-      await markKernelRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
+      await markWorkRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
         error: payload,
         message: payload.message
       });
@@ -2037,21 +2038,18 @@ export const startTicketRedraftRun = async (
   const threadId = draftRunThreadId(runId);
   const abortController = new AbortController();
   const draftingTicket = await setExistingTicketRedraftInProgress(projectPath, existingTicket, runId);
-  await submitTicketDraftJob(
+  await submitTicketRedraftWork(
     {
+      ...input,
       projectPath,
-      ticketId: existingTicket.frontMatter.id,
       idea,
       effort: input.effort ?? existingTicket.frontMatter.effort,
       preferredTicketType: input.preferredTicketType ?? existingTicket.frontMatter.ticketType,
-      draftScope: input.draftScope,
-      intakeAnswers: input.intakeAnswers,
-      intakeKnownFacts: input.intakeKnownFacts,
       relatedTicketIds: input.relatedTicketIds ?? existingTicket.frontMatter.relatedTicketIds
     },
-    { runId, ticketId: existingTicket.frontMatter.id }
+    { runId }
   );
-  await markKernelRunStatusSafely(projectPath, runId, "running", { message: "Ticket redraft generation started." });
+  const startedWork = await markWorkRunStatusSafely(projectPath, runId, "running", { message: "Ticket redraft generation started." });
   const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
     try {
       await emitRunEventForDependencies(dependencies.runEventSink, projectPath, existingTicket.frontMatter.id, runId, threadId, event);
@@ -2076,7 +2074,9 @@ export const startTicketRedraftRun = async (
   await registerDraftRun(runId, {
     abortController,
     ticketId: existingTicket.frontMatter.id,
-    projectPath
+    projectPath,
+    attemptId: startedWork?.currentAttempt?.attemptId,
+    leaseToken: startedWork?.currentAttempt?.leaseToken
   });
 
   const draftDependencies: TicketDraftStartDependencies = {
@@ -2143,7 +2143,7 @@ export const startTicketRedraftRun = async (
             questions,
             timestamp: nowIso()
           });
-          await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+          await markWorkRunStatusSafely(projectPath, runId, "blocked", {
             message: "Ticket redraft is blocked on clarification.",
             metadata: { clarificationQuestionCount: questions.length }
           });
@@ -2179,7 +2179,7 @@ export const startTicketRedraftRun = async (
           questions,
           timestamp: nowIso()
         });
-        await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+        await markWorkRunStatusSafely(projectPath, runId, "blocked", {
           message: "Ticket redraft is blocked on clarification.",
           metadata: { clarificationQuestionCount: questions.length }
         });
@@ -2200,7 +2200,7 @@ export const startTicketRedraftRun = async (
         runId,
         title: draft.title
       });
-      await markKernelRunStatusSafely(projectPath, runId, "completed", {
+      await markWorkRunStatusSafely(projectPath, runId, "completed", {
         result: { ticketId: existingTicket.frontMatter.id, title: draft.title },
         message: "Ticket redraft completed."
       });
@@ -2228,7 +2228,7 @@ export const startTicketRedraftRun = async (
       } else {
         await logError("codex:draft", "ticket redraft failed", error, { projectPath, ticketId: existingTicket.frontMatter.id, runId, ...payload });
       }
-      await markKernelRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
+      await markWorkRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
         error: payload,
         message: payload.message
       });
@@ -2264,8 +2264,8 @@ export const maybeResumeTicketDraftAfterClarification = async (
   const threadId = draftRunThreadId(runId);
   const abortController = new AbortController();
   const draftingTicket = await setExistingDraftInProgress(projectPath, ticketId, runId);
-  await submitTicketDraftJob({ projectPath, ticketId, idea, effort: draftingTicket.frontMatter.effort }, { runId, ticketId });
-  await markKernelRunStatusSafely(projectPath, runId, "running", { message: "Ticket draft resumed after clarification." });
+  await submitTicketDraftWork({ projectPath, ticketId, idea, effort: draftingTicket.frontMatter.effort }, { runId, ticketId });
+  const startedWork = await markWorkRunStatusSafely(projectPath, runId, "running", { message: "Ticket draft resumed after clarification." });
   const emitDraftEvent = async (event: RelayCodexEvent): Promise<void> => {
     try {
       await emitRunEventForDependencies(dependencies.runEventSink, projectPath, ticketId, runId, threadId, event);
@@ -2290,7 +2290,9 @@ export const maybeResumeTicketDraftAfterClarification = async (
   await registerDraftRun(runId, {
     abortController,
     ticketId,
-    projectPath
+    projectPath,
+    attemptId: startedWork?.currentAttempt?.attemptId,
+    leaseToken: startedWork?.currentAttempt?.leaseToken
   });
 
   const draftDependencies: TicketDraftStartDependencies = {
@@ -2342,7 +2344,7 @@ export const maybeResumeTicketDraftAfterClarification = async (
           runId,
           clarificationQuestionCount: questions.length
         });
-        await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+        await markWorkRunStatusSafely(projectPath, runId, "blocked", {
           message: "Ticket draft is blocked on clarification.",
           metadata: { clarificationQuestionCount: questions.length }
         });
@@ -2358,7 +2360,7 @@ export const maybeResumeTicketDraftAfterClarification = async (
         timestamp: nowIso()
       });
       await logInfo("codex:draft", "resumed ticket draft applied", { projectPath, ticketId, runId, title: draft.title });
-      await markKernelRunStatusSafely(projectPath, runId, "completed", {
+      await markWorkRunStatusSafely(projectPath, runId, "completed", {
         result: { ticketId, title: draft.title },
         message: "Ticket draft completed."
       });
@@ -2398,7 +2400,7 @@ export const maybeResumeTicketDraftAfterClarification = async (
       } else {
         await logError("codex:draft", "resumed ticket draft failed", error, { projectPath, ticketId, runId, ...payload });
       }
-      await markKernelRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
+      await markWorkRunStatusSafely(projectPath, runId, payload.code === "cancelled" ? "cancelled" : "failed", {
         error: payload,
         message: payload.message
       });
@@ -2629,16 +2631,20 @@ const startTicketUpdateRunPromise = async (
     const config = await readProjectConfig(projectPath);
     const ticket = await readTicket(projectPath, ticketId);
     const clarifications = await readClarificationQuestions(projectPath, ticketId);
-    await submitTicketUpdateJob({ ...input, projectPath, request }, { runId });
+    await submitTicketUpdateWork({ ...input, projectPath, request }, { runId });
     const codex = dependencies.createCodexClient?.() ?? (await createCodex());
     const thread = codex.startThread(await ticketUpdateThreadOptionsForProject(projectPath));
     currentThreadId = thread.id ?? currentThreadId;
     const prompt = buildTicketUpdatePrompt(ticket, clarifications, request, config.name);
     streamed = await thread.runStreamed(prompt, { outputSchema: agentTicketUpdateSchemaJson, signal: abortController.signal });
-    await markKernelRunStatusSafely(projectPath, runId, "running", { message: "Ticket update agent started." });
+    const startedWork = await markWorkRunStatusSafely(projectPath, runId, "running", { message: "Ticket update agent started." });
+    await updateTicketUpdateRunAttempt(runId, {
+      attemptId: startedWork?.currentAttempt?.attemptId,
+      leaseToken: startedWork?.currentAttempt?.leaseToken
+    });
   } catch (error) {
     await completeTicketUpdateRun(runId);
-    await markKernelRunStatusSafely(projectPath, runId, abortController.signal.aborted ? "cancelled" : "failed", {
+    await markWorkRunStatusSafely(projectPath, runId, abortController.signal.aborted ? "cancelled" : "failed", {
       error,
       message: errorMessage(error, "Ticket update failed before streaming started.")
     });
@@ -2673,7 +2679,7 @@ const startTicketUpdateRunPromise = async (
         finalStatus,
         timestamp: nowIso()
       });
-      await markKernelRunStatusSafely(projectPath, runId, finalStatus === "cancelled" ? "cancelled" : "failed", {
+      await markWorkRunStatusSafely(projectPath, runId, finalStatus === "cancelled" ? "cancelled" : "failed", {
         message,
         error: { message, finalStatus }
       });
@@ -2772,10 +2778,10 @@ const startTicketUpdateRunPromise = async (
                 threadId: currentThreadId,
                 clarificationQuestionCount: update.clarificationQuestions.length
               });
-              await markKernelRunStatusSafely(
+              await markWorkRunStatusSafely(
                 projectPath,
                 runId,
-                update.clarificationQuestions.length > 0 ? "suspended" : "completed",
+                update.clarificationQuestions.length > 0 ? "blocked" : "completed",
                 {
                   result: { ticketId, clarificationQuestionCount: update.clarificationQuestions.length },
                   message:
@@ -2829,7 +2835,7 @@ export const cancelTicketUpdateRun = async (runId: string): Promise<void> => {
   const run = await getTicketUpdateRun(runId);
   if (!run) return;
   run.abortController.abort();
-  await markKernelRunStatusSafely(run.projectPath, runId, "cancelled", { message: "Ticket update cancellation requested." });
+  await markWorkRunStatusSafely(run.projectPath, runId, "cancelled", { message: "Ticket update cancellation requested." });
 };
 
 const subagentExecutionGuidance = `Subagent guidance:
@@ -3105,7 +3111,6 @@ const startQueuedRunNow = async (
   }
   const preflight = await preflightCodexRunInternal(input, { allowQueuedRunId: runId });
   if (!preflight.ok) {
-    await completeImplementationRun(runId);
     await removeQueuedImplementationRun(runId);
     const message = preflight.errors.join(" ");
     await updateTicketRunState(projectPath, ticketId, { runStatus: "failed" });
@@ -3115,7 +3120,8 @@ const startQueuedRunNow = async (
       finalStatus: "failed",
       timestamp: nowIso()
     });
-    await markKernelRunStatusSafely(projectPath, runId, "failed", { message, error: { message } });
+    await markWorkRunStatusSafely(projectPath, runId, "failed", { message, error: { message } });
+    await completeImplementationRun(runId);
     wakeProjectSchedulerSoon(projectPath);
     throw new Error(message);
   }
@@ -3147,22 +3153,23 @@ const startQueuedRunNow = async (
     thread = existingThreadId ? codex.resumeThread(existingThreadId, options) : codex.startThread(options);
     currentThreadId = existingThreadId ?? thread.id ?? currentThreadId;
   } catch (error) {
-    await completeImplementationRun(runId);
     await removeQueuedImplementationRun(runId);
     await logError("codex:run", "queued run failed before active registration", error, { projectPath, ticketId, runId });
     try {
       await updateTicketRunState(projectPath, ticketId, { runStatus: "failed" });
+      await markWorkRunStatusSafely(projectPath, runId, "failed", {
+        error,
+        message: errorMessage(error, "Agent run failed before streaming started.")
+      });
+      await completeImplementationRun(runId);
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
         message: errorMessage(error, "Agent run failed before streaming started."),
         finalStatus: "failed",
         timestamp: nowIso()
       });
-      await markKernelRunStatusSafely(projectPath, runId, "failed", {
-        error,
-        message: errorMessage(error, "Agent run failed before streaming started.")
-      });
     } catch (cleanupError) {
+      await completeImplementationRun(runId);
       await logWarn("codex:run", "failed to persist queued startup failure", {
         projectPath,
         ticketId,
@@ -3188,7 +3195,16 @@ const startQueuedRunNow = async (
     if (abortController.signal.aborted) {
       throw new Error("Agent run was cancelled before streaming started.");
     }
-    await markKernelRunStatusSafely(projectPath, runId, "running", { message: "Codex implementation run started." });
+    await markWorkRunStatusSafely(projectPath, runId, "running", {
+      message: "Codex implementation run started.",
+      metadata: {
+        providerSessionRef: {
+          providerId: "codex",
+          externalId: currentThreadId,
+          parts: { threadId: currentThreadId }
+        }
+      }
+    });
     await updateTicketRunState(projectPath, ticketId, {
       authoringState: "ready",
       runStatus: "running",
@@ -3213,7 +3229,6 @@ const startQueuedRunNow = async (
     }
     streamed = await thread.runStreamed(executionInput, { signal: abortController.signal });
   } catch (error) {
-    await completeImplementationRun(runId);
     await logError("codex:run", "run failed before streaming started", error, { projectPath, ticketId, runId, threadId: currentThreadId });
     try {
       await updateTicketRunState(projectPath, ticketId, { runStatus: abortController.signal.aborted ? "cancelled" : "failed" });
@@ -3226,17 +3241,19 @@ const startQueuedRunNow = async (
       });
     }
     try {
+      await markWorkRunStatusSafely(projectPath, runId, abortController.signal.aborted ? "cancelled" : "failed", {
+        error,
+        message: errorMessage(error, "Agent run failed before streaming started.")
+      });
+      await completeImplementationRun(runId);
       await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
         type: "run.failed",
         message: errorMessage(error, "Agent run failed before streaming started."),
         finalStatus: abortController.signal.aborted ? "cancelled" : "failed",
         timestamp: nowIso()
       });
-      await markKernelRunStatusSafely(projectPath, runId, abortController.signal.aborted ? "cancelled" : "failed", {
-        error,
-        message: errorMessage(error, "Agent run failed before streaming started.")
-      });
     } catch (emitError) {
+      await completeImplementationRun(runId);
       await logWarn("codex:run", "failed to emit startup failure event", {
         projectPath,
         ticketId,
@@ -3279,6 +3296,15 @@ const startQueuedRunNow = async (
               lastRunId: runId,
               lastRunStartedAt: runStartedAt
             });
+            await markWorkRunStatusSafely(projectPath, runId, "running", {
+              metadata: {
+                providerSessionRef: {
+                  providerId: "codex",
+                  externalId: currentThreadId,
+                  parts: { threadId: currentThreadId }
+                }
+              }
+            });
             await emitRunEventForDependencies(runEventSink, projectPath, ticketId, runId, currentThreadId, {
               type: "run.started",
               runId,
@@ -3308,7 +3334,7 @@ const startQueuedRunNow = async (
               finalStatus: "failed",
               timestamp: nowIso()
             });
-            await markKernelRunStatusSafely(projectPath, runId, "failed", { message, error: { message } });
+            await markWorkRunStatusSafely(projectPath, runId, "failed", { message, error: { message } });
             resolveOnce(currentThreadId);
             return;
           }
@@ -3353,7 +3379,7 @@ const startQueuedRunNow = async (
                 questions,
                 timestamp: nowIso()
               });
-              await markKernelRunStatusSafely(projectPath, runId, "suspended", {
+              await markWorkRunStatusSafely(projectPath, runId, "blocked", {
                 result: { ticketId, clarificationQuestionCount: questions.length },
                 message: "Codex implementation is blocked on clarification."
               });
@@ -3392,7 +3418,7 @@ const startQueuedRunNow = async (
               finalStatus: "completed",
               timestamp: nowIso()
             });
-            await markKernelRunStatusSafely(projectPath, runId, "completed", {
+            await markWorkRunStatusSafely(projectPath, runId, "completed", {
               result: { ticketId, threadId: currentThreadId },
               message: "Codex implementation completed."
             });
@@ -3410,7 +3436,7 @@ const startQueuedRunNow = async (
           finalStatus: aborted ? "cancelled" : "failed",
           timestamp: nowIso()
         });
-        await markKernelRunStatusSafely(projectPath, runId, aborted ? "cancelled" : "failed", {
+        await markWorkRunStatusSafely(projectPath, runId, aborted ? "cancelled" : "failed", {
           error,
           message: error instanceof Error ? error.message : "Agent run failed."
         });
@@ -3440,7 +3466,7 @@ const enqueueCodexRunPromise = async (
   }
 
   const runId = dependencies.createRunId?.() ?? newId("run");
-  await submitCodexImplementationJob(normalizedInput, { runId, resume });
+  await submitTicketImplementationWork(normalizedInput, { runId, resume });
   await enqueueImplementationRun(runId, {
     input: normalizedInput,
     resume,
@@ -3450,7 +3476,7 @@ const enqueueCodexRunPromise = async (
     await setTicketQueued(projectPath, ticketId, runId);
   } catch (error) {
     await removeQueuedImplementationRun(runId);
-    await markKernelRunStatusSafely(projectPath, runId, "failed", {
+    await markWorkRunStatusSafely(projectPath, runId, "failed", {
       error,
       message: errorMessage(error, "Could not persist queued ticket state.")
     });
@@ -3492,7 +3518,7 @@ export const reconcileTicketQueueState = async (
   if (ticket.frontMatter.status === RELAY_READY_STATUS) {
     if (ticket.frontMatter.runStatus === "queued" && ticket.frontMatter.lastRunId) {
       if (!(await getQueuedImplementationRun(ticket.frontMatter.lastRunId))) {
-        await submitCodexImplementationJob(
+        await submitTicketImplementationWork(
           { projectPath: resolvedProjectPath, ticketId },
           { runId: ticket.frontMatter.lastRunId, resume: Boolean(ticket.frontMatter.codexThreadId) }
         );
@@ -3512,7 +3538,7 @@ export const reconcileTicketQueueState = async (
       throw new Error(preflight.errors.join(" "));
     }
     const runId = dependencies.createRunId?.() ?? newId("run");
-    await submitCodexImplementationJob(
+    await submitTicketImplementationWork(
       { projectPath: resolvedProjectPath, ticketId },
       { runId, resume: Boolean(ticket.frontMatter.codexThreadId) }
     );
@@ -3527,7 +3553,7 @@ export const reconcileTicketQueueState = async (
       return queued;
     } catch (error) {
       await removeQueuedImplementationRun(runId);
-      await markKernelRunStatusSafely(resolvedProjectPath, runId, "failed", {
+      await markWorkRunStatusSafely(resolvedProjectPath, runId, "failed", {
         error,
         message: errorMessage(error, "Could not persist queued ticket state.")
       });
@@ -3537,7 +3563,7 @@ export const reconcileTicketQueueState = async (
 
   if (ticket.frontMatter.runStatus === "queued" && ticket.frontMatter.lastRunId) {
     await removeQueuedImplementationRun(ticket.frontMatter.lastRunId);
-    await markKernelRunStatusSafely(resolvedProjectPath, ticket.frontMatter.lastRunId, "cancelled", {
+    await markWorkRunStatusSafely(resolvedProjectPath, ticket.frontMatter.lastRunId, "cancelled", {
       message: "Queued run cancelled by reconciliation."
     });
     return clearQueuedTicket(resolvedProjectPath, ticketId, null, ticket.frontMatter.lastRunId);
@@ -3580,7 +3606,7 @@ const cancelPersistedTicketRun = async ({ projectPath, ticketId, runId }: Cancel
       ? RELAY_TODO_STATUS
       : null;
     await clearQueuedTicket(projectPath, ticketId, targetStatus, runId);
-    await markKernelRunStatusSafely(projectPath, runId, "cancelled", { message: "Queued Codex run cancelled." });
+    await markWorkRunStatusSafely(projectPath, runId, "cancelled", { message: "Queued Codex run cancelled." });
     return true;
   }
 
@@ -3602,7 +3628,7 @@ const cancelPersistedTicketRun = async ({ projectPath, ticketId, runId }: Cancel
     finalStatus: "cancelled",
     timestamp: nowIso()
   });
-  await markKernelRunStatusSafely(projectPath, runId, "cancelled", { message });
+  await markWorkRunStatusSafely(projectPath, runId, "cancelled", { message });
   return true;
 };
 
@@ -3617,7 +3643,7 @@ export const cancelCodexRun = async (input: string | CancelRunInput): Promise<vo
     if (active) {
       active.abortController.abort();
       await updateTicketRunState(active.projectPath, active.ticketId, { runStatus: "cancelled" });
-      await markKernelRunStatusSafely(active.projectPath, runId, "cancelled", { message: "Codex implementation cancellation requested." });
+      await markWorkRunStatusSafely(active.projectPath, runId, "cancelled", { message: "Codex implementation cancellation requested." });
       return;
     }
     const projectPath = await resolveBackendPath(queued.input.projectPath);
@@ -3625,7 +3651,7 @@ export const cancelCodexRun = async (input: string | CancelRunInput): Promise<vo
       ? RELAY_TODO_STATUS
       : null;
     await clearQueuedTicket(projectPath, queued.input.ticketId, targetStatus, runId);
-    await markKernelRunStatusSafely(projectPath, runId, "cancelled", { message: "Queued Codex implementation run cancelled." });
+    await markWorkRunStatusSafely(projectPath, runId, "cancelled", { message: "Queued Codex implementation run cancelled." });
     wakeProjectSchedulerSoon(projectPath);
     return;
   }
@@ -3634,7 +3660,7 @@ export const cancelCodexRun = async (input: string | CancelRunInput): Promise<vo
   if (implementationRun) {
     implementationRun.abortController.abort();
     await updateTicketRunState(implementationRun.projectPath, implementationRun.ticketId, { runStatus: "cancelled" });
-    await markKernelRunStatusSafely(implementationRun.projectPath, runId, "cancelled", {
+    await markWorkRunStatusSafely(implementationRun.projectPath, runId, "cancelled", {
       message: "Codex implementation cancellation requested."
     });
     return;
@@ -3647,7 +3673,7 @@ export const cancelCodexRun = async (input: string | CancelRunInput): Promise<vo
   }
   draftRun.abortController.abort();
   await updateTicketRunState(draftRun.projectPath, draftRun.ticketId, { runStatus: "cancelled" });
-  await markKernelRunStatusSafely(draftRun.projectPath, runId, "cancelled", { message: "Ticket draft cancellation requested." });
+  await markWorkRunStatusSafely(draftRun.projectPath, runId, "cancelled", { message: "Ticket draft cancellation requested." });
 };
 
 export const approveCodexAction = async (_approvalId?: string, _decision?: string): Promise<void> => {

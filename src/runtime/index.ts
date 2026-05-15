@@ -3,6 +3,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { BackendPlatformLive, ElectronApp, ElectronAppServiceLive } from "../platform";
 import { BackendClock, BackendClockLive } from "../platform/Clock";
 import { BackendConfig, BackendConfigLive } from "../config/AppConfig";
+import { relayLogger } from "./RelayLogger";
 
 export type BackendServicesBase =
   | Context.Service.Identifier<typeof BackendClock>
@@ -18,7 +19,7 @@ export const BackendServicesBaseLive = Layer.mergeAll(BackendClockLive, BackendC
 
 export const BackendRuntimeLive = Layer.mergeAll(
   BackendServicesBaseLive,
-  Logger.layer([]),
+  Logger.layer([Logger.withLeveledConsole(relayLogger)]),
   BackendPlatformLive,
   ElectronAppServiceLive
 );

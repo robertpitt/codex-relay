@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "workId": "run_01krp7q8ynqkg7rg4e14mdcv13",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "ticketId": "tkt_01krp7q90j7610hnpnekdraxbr",
+  "runId": "run_01krp7q8ynqkg7rg4e14mdcv13",
+  "subject": "ticket",
+  "action": "draft",
+  "kind": "ticket.draft",
+  "idempotencyKey": "ticket.draft:/Users/robertpitt/Projects/relay:tkt_01krp7q90j7610hnpnekdraxbr:run_01krp7q8ynqkg7rg4e14mdcv13",
+  "status": "completed",
+  "attempts": 1,
+  "createdAt": "2026-05-15T16:32:40.982Z",
+  "updatedAt": "2026-05-15T16:33:58.602Z",
+  "lastAppliedEventSequence": 5,
+  "executor": "agent",
+  "providerId": "codex",
+  "requiredCapabilities": [
+    "agent.structured-output"
+  ],
+  "providerSessionRef": null,
+  "currentAttempt": {
+    "attemptId": "attempt_01krp7q90s9n9srv54xg5ky5vg",
+    "leaseToken": "lease_01krp7q90s0jymbh5h1xnd1grp",
+    "executor": "agent",
+    "providerId": "codex",
+    "claimedAt": "2026-05-15T16:32:40.985Z",
+    "heartbeatAt": "2026-05-15T16:32:40.986Z",
+    "startedAt": "2026-05-15T16:32:40.986Z",
+    "providerSessionRef": null
+  },
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "idea": "Update the readme to be cleaner",
+    "priority": "medium",
+    "effort": "medium",
+    "preferredTicketType": "task",
+    "draftScope": "task",
+    "runIntake": true,
+    "runId": "run_01krp7q8ynqkg7rg4e14mdcv13",
+    "ticketId": "tkt_01krp7q90j7610hnpnekdraxbr"
+  },
+  "metadata": {
+    "providerId": "codex",
+    "executor": "agent"
+  },
+  "message": "Ticket draft completed.",
+  "result": {
+    "ticketId": "tkt_01krp7q90j7610hnpnekdraxbr",
+    "title": "Clean Up README for Scannability"
+  }
+}

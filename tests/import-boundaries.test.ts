@@ -64,7 +64,8 @@ test("backend Node, Electron, and unstable Workflow imports stay behind approved
       relativePath === "src/main.app.ts" ||
       relativePath === "src/preload.app.ts";
     const rawFetchBoundary = relativePath === "src/platform/fetch.ts";
-    const kernelBoundary = relativePath.startsWith("src/services/kernel/");
+    const workRuntimeBoundary = relativePath.startsWith("src/services/work/runtime/");
+    const workBoundary = relativePath.startsWith("src/services/work/");
     const electronBoundary =
       [
         "src/platform/BrowserWindows.ts",
@@ -91,18 +92,21 @@ test("backend Node, Electron, and unstable Workflow imports stay behind approved
     if (!electronBoundary && /^import\s+(?!type\b)[\s\S]*?from\s+["']electron["']/m.test(content)) {
       violations.push(`${relativePath}: direct Electron import`);
     }
-    if (!kernelBoundary && unstableWorkflowImportPattern.test(content)) {
+    if (!workRuntimeBoundary && unstableWorkflowImportPattern.test(content)) {
       violations.push(
-        `${relativePath}: production import from effect/unstable/workflow must stay behind src/services/kernel`
+        `${relativePath}: production import from effect/unstable/workflow must stay behind src/services/work/runtime`
       );
     }
-    if (kernelBoundary && /\bWorkflowEngine\.layerMemory\b/.test(content)) {
-      violations.push(`${relativePath}: kernel production code must not use WorkflowEngine.layerMemory`);
+    if (workBoundary && /\bWorkflowEngine\.layerMemory\b/.test(content)) {
+      violations.push(`${relativePath}: work production code must not use WorkflowEngine.layerMemory`);
+    }
+    if (workBoundary && /from\s+["'](?:\.\.\/)*codex(?:\/[^"']*)?["']/.test(content)) {
+      violations.push(`${relativePath}: WorkEngine code must not import Codex services`);
     }
     if (relativePath === "src/services/codex/index.ts") {
       for (const name of codexLifecycleMapNames) {
         if (new RegExp(`\\bconst\\s+${name}\\s*=\\s*new\\s+Map\\b`).test(content)) {
-          violations.push(`${relativePath}: Codex lifecycle map ${name} must live in KernelRunRegistry`);
+          violations.push(`${relativePath}: Codex lifecycle map ${name} must live in WorkScheduler`);
         }
       }
     }

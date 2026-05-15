@@ -24,15 +24,16 @@ import {
 } from "../src/services/codex";
 import { resolveAvailableCodexCli, runCodexVersionEffect, type CodexCliCandidate } from "../src/services/codex/cli";
 import {
-  BackendKernelLive,
-  JobLedger,
-  JobLedgerLive,
-  JobSupervisor,
-  KernelJobNotFoundError,
-  KernelRunRegistry,
-  KernelRunRegistryLive,
-  RELAY_EXTERNAL_JOB_WORKFLOW_NAME
-} from "../src/services/kernel";
+  BackendWorkLive,
+  markWorkRunStatus,
+  TicketWorkService,
+  WorkLedger,
+  WorkLedgerLive,
+  WorkNotFoundError,
+  WorkEngine,
+  WorkScheduler,
+  WorkSchedulerLive
+} from "../src/services/work";
 import { BackendClock } from "../src/platform";
 import { BackendConfig, BackendConfigDefaults, loadBackendConfig } from "../src/config/AppConfig";
 import { runBackendEffect } from "../src/runtime";
@@ -150,155 +151,178 @@ const validDraftJson = (title: string): string =>
     implementationNotes: ["Keep the change focused."]
   });
 
-test("job ledger persists snapshots, event logs, and ignores corrupt event lines", async () => {
+test("work ledger persists snapshots, event logs, and ignores corrupt trailing event lines", async () => {
   const projectPath = await createProject();
-  const executionId = "exec_kernel_ledger";
+  const workId = "work_ledger";
   const submitInput = {
-    executionId,
-    workflowName: RELAY_EXTERNAL_JOB_WORKFLOW_NAME,
-    commandType: "worker.dispatch" as const,
+    workId,
+    subject: "worker" as const,
+    action: "dispatch" as const,
+    kind: "worker.dispatch" as const,
     projectPath,
     idempotencyKey: "worker:test",
-    runId: "run_kernel_ledger",
-    ticketId: "tkt_kernel",
-    payload: { workerType: "local", runId: "run_kernel_ledger" },
+    executor: "worker" as const,
+    runId: "run_work_ledger",
+    ticketId: "tkt_work",
+    payload: { workerType: "local", runId: "run_work_ledger" },
     metadata: { test: true }
   };
 
   const submitted = await runBackendEffect(
-    Effect.provide(JobLedger.use((ledger) => ledger.recordSubmitted(submitInput)), JobLedgerLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.submit(submitInput)), WorkLedgerLive)
   );
-  assert.equal(submitted.status, "submitted");
+  assert.equal(submitted.status, "created");
 
   const duplicate = await runBackendEffect(
-    Effect.provide(JobLedger.use((ledger) => ledger.recordSubmitted(submitInput)), JobLedgerLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.submit(submitInput)), WorkLedgerLive)
   );
   assert.equal(duplicate.createdAt, submitted.createdAt);
 
+  await runBackendEffect(
+    Effect.provide(
+      WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "queued", message: "Queued." })),
+      WorkLedgerLive
+    )
+  );
   const running = await runBackendEffect(
     Effect.provide(
-      JobLedger.use((ledger) => ledger.transition({ projectPath, executionId, status: "running", message: "Started." })),
-      JobLedgerLive
+      WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "running", message: "Started." })),
+      WorkLedgerLive
     )
   );
   assert.equal(running.status, "running");
-  assert.equal(running.attempts, 1);
 
-  const snapshotPath = path.join(projectPath, ".relay", "kernel", "jobs", executionId, "snapshot.json");
+  const snapshotPath = path.join(projectPath, ".relay", "work", "runs", workId, "snapshot.json");
   const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { status: string; runId: string };
   assert.equal(snapshot.status, "running");
-  assert.equal(snapshot.runId, "run_kernel_ledger");
+  assert.equal(snapshot.runId, "run_work_ledger");
 
-  await appendFile(path.join(projectPath, ".relay", "kernel", "jobs", executionId, "events.jsonl"), "{not json}\n");
+  await appendFile(path.join(projectPath, ".relay", "work", "runs", workId, "events.jsonl"), "{not json}\n");
   const events = await runBackendEffect(
-    Effect.provide(JobLedger.use((ledger) => ledger.readEvents(projectPath, executionId)), JobLedgerLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, workId)), WorkLedgerLive)
   );
   assert.deepEqual(
     events.map((event) => event.type),
-    ["job.submitted", "job.running", "job.corrupt_event_ignored"]
+    ["work.submitted", "work.queued", "work.running", "work.corrupt_event_ignored"]
   );
 });
 
-test("job ledger keeps terminal snapshots immutable and reports typed missing-job errors", async () => {
+test("work ledger keeps terminal snapshots immutable and reports typed missing-work errors", async () => {
   const projectPath = await createProject();
-  const executionId = "exec_kernel_terminal";
+  const workId = "work_terminal";
   const submitInput = {
-    executionId,
-    workflowName: RELAY_EXTERNAL_JOB_WORKFLOW_NAME,
-    commandType: "worker.dispatch" as const,
+    workId,
+    subject: "worker" as const,
+    action: "dispatch" as const,
+    kind: "worker.dispatch" as const,
     projectPath,
     idempotencyKey: "worker:terminal",
-    runId: "run_kernel_terminal",
-    ticketId: "tkt_kernel_terminal",
-    payload: { workerType: "local", runId: "run_kernel_terminal" }
+    executor: "worker" as const,
+    runId: "run_work_terminal",
+    ticketId: "tkt_work_terminal",
+    payload: { workerType: "local", runId: "run_work_terminal" }
   };
 
   await runBackendEffect(
-    Effect.provide(JobLedger.use((ledger) => ledger.recordSubmitted(submitInput)), JobLedgerLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.submit(submitInput)), WorkLedgerLive)
   );
   await runBackendEffect(
-    Effect.provide(JobLedger.use((ledger) => ledger.transition({ projectPath, executionId, status: "running" })), JobLedgerLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "queued" })), WorkLedgerLive)
+  );
+  await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "running" })), WorkLedgerLive)
   );
   const completed = await runBackendEffect(
     Effect.provide(
-      JobLedger.use((ledger) =>
-        ledger.transition({ projectPath, executionId, status: "completed", result: { ok: true }, message: "Done." })
+      WorkLedger.use((ledger) =>
+        ledger.transition({ projectPath, workId, status: "completed", result: { ok: true }, message: "Done." })
       ),
-      JobLedgerLive
+      WorkLedgerLive
     )
   );
   assert.equal(completed.status, "completed");
 
-  const blocked = await runBackendEffect(
-    Effect.provide(
-      JobLedger.use((ledger) =>
-        ledger.transition({ projectPath, executionId, status: "failed", error: "late failure", message: "Too late." })
-      ),
-      JobLedgerLive
+  await assert.rejects(
+    runBackendEffect(
+      Effect.provide(
+        WorkLedger.use((ledger) =>
+          ledger.transition({ projectPath, workId, status: "failed", error: "late failure", message: "Too late." })
+        ),
+        WorkLedgerLive
+      )
     )
   );
-  assert.equal(blocked.status, "completed");
-  assert.deepEqual(blocked.result, { ok: true });
-  assert.equal(blocked.message, "Done.");
+  const blocked = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readSnapshot(projectPath, workId)), WorkLedgerLive)
+  );
+  assert.equal(blocked?.status, "completed");
+  assert.deepEqual(blocked?.result, { ok: true });
+  assert.equal(blocked?.message, "Done.");
 
   const events = await runBackendEffect(
-    Effect.provide(JobLedger.use((ledger) => ledger.readEvents(projectPath, executionId)), JobLedgerLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, workId)), WorkLedgerLive)
   );
   assert.deepEqual(
     events.map((event) => event.type),
-    ["job.submitted", "job.running", "job.completed"]
+    ["work.submitted", "work.queued", "work.running", "work.completed"]
   );
 
   await assert.rejects(
     runBackendEffect(
       Effect.provide(
-        JobLedger.use((ledger) => ledger.transition({ projectPath, executionId: "exec_missing", status: "running" })),
-        JobLedgerLive
+        WorkLedger.use((ledger) => ledger.transition({ projectPath, workId: "work_missing", status: "running" })),
+        WorkLedgerLive
       )
     ),
-    (error) => error instanceof KernelJobNotFoundError && error.executionId === "exec_missing"
+    (error) => error instanceof WorkNotFoundError && error.workId === "work_missing"
   );
 });
 
-test("job supervisor submits typed workflow jobs and exposes durable status transitions", async () => {
+test("ticket work service submits implementation work and exposes durable status transitions", async () => {
   const projectPath = await createProject();
   const handle = await runBackendEffect(
     Effect.provide(
-      JobSupervisor.use((supervisor) =>
-        supervisor.submitCodexImplementation(
-          { projectPath, ticketId: "tkt_kernel_supervisor" },
-          { runId: "run_kernel_supervisor", resume: false }
+      TicketWorkService.use((service) =>
+        service.submitImplementation(
+          { projectPath, ticketId: "tkt_work_supervisor" },
+          { runId: "run_work_supervisor", resume: false }
         )
       ),
-      BackendKernelLive
+      BackendWorkLive
     )
   );
 
-  assert.equal(handle.workflowName, RELAY_EXTERNAL_JOB_WORKFLOW_NAME);
-  assert.equal(handle.commandType, "codex.implementation");
+  assert.equal(handle.kind, "ticket.implementation");
+  assert.equal(handle.providerId, "codex");
   assert.equal(handle.status, "queued");
 
-  const completed = await runBackendEffect(
-    Effect.provide(
-      JobSupervisor.use((supervisor) =>
-        supervisor.markRunStatus(projectPath, "run_kernel_supervisor", "completed", {
-          result: { ok: true },
-          message: "Done."
-        })
-      ),
-      BackendKernelLive
-    )
+  const running = await markWorkRunStatus(projectPath, "run_work_supervisor", "running", {
+    message: "Started."
+  });
+  assert.ok(running?.currentAttempt?.attemptId);
+  assert.ok(running.currentAttempt.leaseToken);
+  await assert.rejects(
+    markWorkRunStatus(projectPath, "run_work_supervisor", "completed", {
+      result: { ok: true },
+      message: "Done."
+    })
   );
+  const completed = await markWorkRunStatus(projectPath, "run_work_supervisor", "completed", {
+    result: { ok: true },
+    message: "Done.",
+    attemptId: running.currentAttempt.attemptId,
+    leaseToken: running.currentAttempt.leaseToken
+  });
   assert.equal(completed?.status, "completed");
 
   const polled = await runBackendEffect(
-    Effect.provide(JobSupervisor.use((supervisor) => supervisor.poll(projectPath, handle.executionId)), BackendKernelLive)
+    Effect.provide(WorkLedger.use((ledger) => ledger.readSnapshot(projectPath, handle.workId)), BackendWorkLive)
   );
   assert.equal(polled?.status, "completed");
   assert.deepEqual(polled?.result, { ok: true });
 });
 
-test("kernel run registry owns live Codex lifecycle state", async () => {
+test("work scheduler owns live Codex lifecycle state", async () => {
   const projectPath = path.resolve(await createProject());
   const implementationAbort = new AbortController();
   const draftAbort = new AbortController();
@@ -306,7 +330,7 @@ test("kernel run registry owns live Codex lifecycle state", async () => {
 
   await runBackendEffect(
     Effect.provide(
-      KernelRunRegistry.use((registry) =>
+      WorkScheduler.use((registry) =>
         Effect.gen(function*() {
           yield* registry.enqueueImplementation("run_registry_impl", {
             input: { projectPath, ticketId: "tkt_registry_impl" },
@@ -367,9 +391,316 @@ test("kernel run registry owns live Codex lifecycle state", async () => {
           assert.equal(yield* registry.getTicketUpdate("run_registry_update"), null);
         })
       ),
-      KernelRunRegistryLive
+      WorkSchedulerLive
     )
   );
+});
+
+test("work scheduler state is shared across work runtimes", async () => {
+  const projectPath = path.resolve(await createProject());
+  const ticketId = "tkt_shared_scheduler";
+  const handle = await runBackendEffect(
+    Effect.provide(
+      TicketWorkService.use((service) =>
+        service.submitImplementation({ projectPath, ticketId }, { runId: "run_shared_scheduler", resume: false })
+      ),
+      BackendWorkLive
+    )
+  );
+
+  await runBackendEffect(
+    Effect.provide(
+      WorkScheduler.use((scheduler) =>
+        scheduler.enqueueImplementation(handle.workId, {
+          input: { projectPath, ticketId },
+          resume: false,
+          dependencies: { source: "compatibility-helper" }
+        })
+      ),
+      WorkSchedulerLive
+    )
+  );
+
+  const claim = await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) => engine.claimNext({ projectPath, executor: "agent", providerId: "codex" })),
+      BackendWorkLive
+    )
+  );
+  assert.equal(claim?.workId, handle.workId);
+  assert.ok(claim?.attemptId);
+  assert.ok(claim?.leaseToken);
+
+  const starting = await runBackendEffect(
+    Effect.provide(WorkScheduler.use((scheduler) => scheduler.getStartingImplementation(handle.workId)), WorkSchedulerLive)
+  );
+  assert.equal(starting?.attemptId, claim?.attemptId);
+  assert.equal(starting?.leaseToken, claim?.leaseToken);
+});
+
+test("work ledger serializes idempotent submit and terminal races", async () => {
+  const projectPath = await createProject();
+  const workId = "work_concurrent";
+  const submitInput = {
+    workId,
+    subject: "worker" as const,
+    action: "dispatch" as const,
+    kind: "worker.dispatch" as const,
+    projectPath,
+    idempotencyKey: "worker:concurrent",
+    executor: "worker" as const,
+    runId: "run_work_concurrent",
+    payload: { workerType: "local", runId: "run_work_concurrent" }
+  };
+
+  const submitted = await Promise.all(
+    Array.from({ length: 5 }, () =>
+      runBackendEffect(Effect.provide(WorkLedger.use((ledger) => ledger.submit(submitInput)), WorkLedgerLive))
+    )
+  );
+  assert.equal(new Set(submitted.map((snapshot) => snapshot.createdAt)).size, 1);
+  let events = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, workId)), WorkLedgerLive)
+  );
+  assert.deepEqual(events.map((event) => event.type), ["work.submitted"]);
+
+  await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "queued" })), WorkLedgerLive)
+  );
+  await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "running" })), WorkLedgerLive)
+  );
+
+  const terminalResults = await Promise.allSettled([
+    runBackendEffect(
+      Effect.provide(
+        WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "completed", result: { winner: "completed" } })),
+        WorkLedgerLive
+      )
+    ),
+    runBackendEffect(
+      Effect.provide(
+        WorkLedger.use((ledger) => ledger.transition({ projectPath, workId, status: "failed", error: { winner: "failed" } })),
+        WorkLedgerLive
+      )
+    )
+  ]);
+  assert.equal(terminalResults.filter((result) => result.status === "fulfilled").length, 1);
+  const snapshot = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readSnapshot(projectPath, workId)), WorkLedgerLive)
+  );
+  assert.ok(snapshot?.status === "completed" || snapshot?.status === "failed");
+  events = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, workId)), WorkLedgerLive)
+  );
+  assert.equal(new Set(events.map((event) => event.sequence)).size, events.length);
+  assert.deepEqual(events.map((event) => event.sequence), events.map((_, index) => index + 1));
+});
+
+test("work engine claims require leases and record claim heartbeat progress events", async () => {
+  const projectPath = await createProject();
+  const handle = await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) =>
+        engine.submit({
+          workId: "work_claim_events",
+          subject: "worker",
+          action: "dispatch",
+          kind: "worker.dispatch",
+          projectPath,
+          idempotencyKey: "worker:claim-events",
+          executor: "worker",
+          runId: "run_claim_events",
+          payload: { runId: "run_claim_events" }
+        })
+      ),
+      BackendWorkLive
+    )
+  );
+
+  const claim = await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) => engine.claimWork({ projectPath, workId: handle.workId, executor: "worker", providerId: "test" })),
+      BackendWorkLive
+    )
+  );
+  assert.ok(claim?.attemptId);
+  assert.ok(claim?.leaseToken);
+
+  await assert.rejects(
+    runBackendEffect(
+      Effect.provide(
+        WorkEngine.use((engine) =>
+          engine.reportCompleted({
+            projectPath,
+            workId: handle.workId,
+            attemptId: claim.attemptId,
+            leaseToken: "wrong",
+            result: { ok: false }
+          })
+        ),
+        BackendWorkLive
+      )
+    )
+  );
+
+  await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) => engine.heartbeat({ projectPath, workId: handle.workId, attemptId: claim.attemptId, leaseToken: claim.leaseToken })),
+      BackendWorkLive
+    )
+  );
+  await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) =>
+        engine.reportProgress({
+          projectPath,
+          workId: handle.workId,
+          attemptId: claim.attemptId,
+          leaseToken: claim.leaseToken,
+          payload: { step: "halfway" }
+        })
+      ),
+      BackendWorkLive
+    )
+  );
+  const completed = await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) =>
+        engine.reportCompleted({
+          projectPath,
+          workId: handle.workId,
+          attemptId: claim.attemptId,
+          leaseToken: claim.leaseToken,
+          result: { ok: true }
+        })
+      ),
+      BackendWorkLive
+    )
+  );
+  assert.equal(completed.status, "completed");
+  const duplicate = await runBackendEffect(
+    Effect.provide(
+      WorkEngine.use((engine) =>
+        engine.reportCompleted({
+          projectPath,
+          workId: handle.workId,
+          attemptId: claim.attemptId,
+          leaseToken: claim.leaseToken,
+          result: { ok: true }
+        })
+      ),
+      BackendWorkLive
+    )
+  );
+  assert.equal(duplicate.status, "completed");
+
+  const events = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, handle.workId)), BackendWorkLive)
+  );
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["work.submitted", "work.queued", "work.claimed", "work.heartbeat", "work.progress", "work.completed"]
+  );
+});
+
+test("work recovery restores queued implementation work into the scheduler", async () => {
+  const projectPath = path.resolve(await createProject());
+  const ticket = await createTicket(projectPath, {
+    title: "Recover queued implementation",
+    priority: "medium",
+    labels: ["work"],
+    markdown: "# Recover queued implementation\n\nRun the agent after restart.",
+    status: "ready"
+  });
+  const handle = await runBackendEffect(
+    Effect.provide(
+      TicketWorkService.use((service) =>
+        service.submitImplementation({ projectPath, ticketId: ticket.frontMatter.id }, { runId: "run_recover_queue", resume: false })
+      ),
+      BackendWorkLive
+    )
+  );
+
+  assert.equal(
+    await runBackendEffect(
+      Effect.provide(WorkScheduler.use((scheduler) => scheduler.getQueuedImplementation(handle.workId)), WorkSchedulerLive)
+    ),
+    null
+  );
+
+  const report = await runBackendEffect(
+    Effect.provide(WorkEngine.use((engine) => engine.recoverProject(projectPath)), BackendWorkLive)
+  );
+  assert.deepEqual(report.wakeProjectPaths, [projectPath]);
+  const queued = await runBackendEffect(
+    Effect.provide(WorkScheduler.use((scheduler) => scheduler.getQueuedImplementation(handle.workId)), WorkSchedulerLive)
+  );
+  assert.equal(queued?.input.ticketId, ticket.frontMatter.id);
+  assert.deepEqual(queued?.dependencies, {});
+  const events = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, handle.workId)), BackendWorkLive)
+  );
+  assert.ok(events.some((event) => event.type === "work.recovered"));
+});
+
+test("work recovery cancels orphaned ticket work and restores blocked ticket markers", async () => {
+  const projectPath = path.resolve(await createProject());
+  const orphan = await runBackendEffect(
+    Effect.provide(
+      TicketWorkService.use((service) =>
+        service.submitDraft({ projectPath, idea: "Draft against a missing ticket" }, { runId: "run_orphan_work", ticketId: "missing_ticket" })
+      ),
+      BackendWorkLive
+    )
+  );
+
+  await runBackendEffect(Effect.provide(WorkEngine.use((engine) => engine.recoverProject(projectPath)), BackendWorkLive));
+  const orphanSnapshot = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readSnapshot(projectPath, orphan.workId)), BackendWorkLive)
+  );
+  assert.equal(orphanSnapshot?.status, "cancelled");
+  const orphanEvents = await runBackendEffect(
+    Effect.provide(WorkLedger.use((ledger) => ledger.readEvents(projectPath, orphan.workId)), BackendWorkLive)
+  );
+  assert.ok(orphanEvents.some((event) => event.type === "work.recovery_conflict"));
+
+  const ticket = await createTicket(projectPath, {
+    title: "Restore blocked marker",
+    priority: "medium",
+    labels: ["work"],
+    markdown: "# Restore blocked marker\n\nRecover needs-input state.",
+    status: "todo"
+  });
+  const handle = await runBackendEffect(
+    Effect.provide(
+      TicketWorkService.use((service) =>
+        service.submitUpdate({ projectPath, ticketId: ticket.frontMatter.id, request: "Ask for missing detail" }, { runId: "run_blocked_recover" })
+      ),
+      BackendWorkLive
+    )
+  );
+  const running = await markWorkRunStatus(projectPath, handle.workId, "running", { message: "Started." });
+  assert.ok(running?.currentAttempt?.attemptId);
+  await markWorkRunStatus(projectPath, handle.workId, "blocked", {
+    message: "Needs input.",
+    attemptId: running.currentAttempt.attemptId,
+    leaseToken: running.currentAttempt.leaseToken
+  });
+  await writeTicket(projectPath, {
+    ...ticket,
+    frontMatter: {
+      ...ticket.frontMatter,
+      runStatus: "idle",
+      lastRunId: handle.runId ?? handle.workId
+    }
+  });
+
+  await runBackendEffect(Effect.provide(WorkEngine.use((engine) => engine.recoverProject(projectPath)), BackendWorkLive));
+  const recoveredTicket = await readTicket(projectPath, ticket.frontMatter.id);
+  assert.equal(recoveredTicket.frontMatter.runStatus, "blocked");
+  assert.equal(recoveredTicket.frontMatter.authoringState, "needs_input");
+  assert.equal(recoveredTicket.frontMatter.lastRunId, handle.runId ?? handle.workId);
 });
 
 type RepositoryChatRunResult = Awaited<ReturnType<RepositoryChatThread["run"]>>;
@@ -1814,7 +2145,6 @@ test("active ticket drafts do not occupy the Ready implementation worker lane", 
     }),
     createRunId: () => "run_scheduler_draft",
     createRequestId: () => "tdr_scheduler_draft",
-    disableResearch: true,
     runEventSink: draftRunEventSink,
     createCodexClient: () => ({
       startThread: () => ({

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "workId": "run_01krp55rxgs9a980032vft9v05",
+  "projectPath": "/Users/robertpitt/Projects/relay",
+  "ticketId": "tkt_01krp4z2fr3jagyj5xv5dkz93q",
+  "runId": "run_01krp55rxgs9a980032vft9v05",
+  "subject": "ticket",
+  "action": "implement",
+  "kind": "ticket.implementation",
+  "idempotencyKey": "ticket.implementation:/Users/robertpitt/Projects/relay:tkt_01krp4z2fr3jagyj5xv5dkz93q:run_01krp55rxgs9a980032vft9v05",
+  "status": "completed",
+  "attempts": 0,
+  "createdAt": "2026-05-15T15:48:10.293Z",
+  "updatedAt": "2026-05-15T15:49:14.883Z",
+  "lastAppliedEventSequence": 6,
+  "executor": "agent",
+  "providerId": "codex",
+  "requiredCapabilities": [
+    "agent.code-edit",
+    "agent.resume"
+  ],
+  "providerSessionRef": {
+    "providerId": "codex",
+    "externalId": "019e2c52-e78b-7533-94a8-a096eda15b83",
+    "parts": {
+      "threadId": "019e2c52-e78b-7533-94a8-a096eda15b83"
+    }
+  },
+  "currentAttempt": null,
+  "payload": {
+    "projectPath": "/Users/robertpitt/Projects/relay",
+    "ticketId": "tkt_01krp4z2fr3jagyj5xv5dkz93q",
+    "freshThread": false,
+    "runId": "run_01krp55rxgs9a980032vft9v05",
+    "resume": false
+  },
+  "metadata": {
+    "providerId": "codex",
+    "resume": false,
+    "executor": "agent",
+    "providerSessionRef": {
+      "providerId": "codex",
+      "externalId": "019e2c52-e78b-7533-94a8-a096eda15b83",
+      "parts": {
+        "threadId": "019e2c52-e78b-7533-94a8-a096eda15b83"
+      }
+    }
+  },
+  "message": "Codex implementation completed.",
+  "result": {
+    "ticketId": "tkt_01krp4z2fr3jagyj5xv5dkz93q",
+    "threadId": "019e2c52-e78b-7533-94a8-a096eda15b83"
+  }
+}

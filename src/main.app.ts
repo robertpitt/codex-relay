@@ -4,12 +4,13 @@ import { appRuntime, runAppEffect } from "./app/AppRuntime";
 import { HttpRestApi } from "./http";
 import { ElectronApp } from "./platform";
 import { getLogPath } from "./runtime/Logging";
-import { JobSupervisor } from "./services/kernel";
+import { wakeRecoveredCodexWork } from "./services/codex";
+import { WorkEngine } from "./services/work";
 
 const relayApp = Effect.scoped(Effect.gen(function* () {
   const electronApp = yield* ElectronApp;
   const relayWindow = yield* RelayWindow;
-  const supervisor = yield* JobSupervisor;
+  const workEngine = yield* WorkEngine;
   yield* electronApp.startLifecycleSupervision({
     onActivate: () => relayWindow.activate()
   });
@@ -35,10 +36,12 @@ const relayApp = Effect.scoped(Effect.gen(function* () {
   });
 
   // Recover from registry
-  const recovered = yield* supervisor.recoverFromRegistry();
-  if (recovered.length > 0) {
-    yield* Effect.logInfo("Recovered backend kernel executions").pipe(Effect.annotateLogs({ scope: "app", count: recovered.length }));
+  const recovered = yield* workEngine.recoverAll();
+  const recoveredCount = recovered.reduce((count, report) => count + report.recovered.length, 0);
+  if (recoveredCount > 0) {
+    yield* Effect.logInfo("Recovered backend work").pipe(Effect.annotateLogs({ scope: "app", count: recoveredCount }));
   }
+  yield* Effect.promise(() => wakeRecoveredCodexWork(recovered));
 
   yield* electronApp.awaitShutdown();
 }));
