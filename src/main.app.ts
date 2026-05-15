@@ -1,50 +1,10 @@
-import { Cause, Effect, Layer, ManagedRuntime } from "effect";
-import { ElectronApp, PlatformLive } from "./platform";
-import { installRelayIpcTransport } from "./ipc";
-import { RelayWindow, RelayWindowLive } from "./services/window/RelayWindow";
-import { BackendServicesBaseLive } from "./runtime";
-import { getLogPath, LoggerLive } from "./services/logger";
-import { BackendKernelLive, JobSupervisor } from "./services/kernel";
-import { GitServiceLive } from "./services/git";
-import { RegistryStoreLive } from "./services/registry";
-import { RunEventSinkLive } from "./services/run-events";
-import { RelayRpcHandlersLive } from "./services/rpc/handlers";
-import { AtomicFileLive, StorageLive } from "./storage";
-
-/**
- * Backend Base Layer
- */
-const BackendBaseLive = Layer.mergeAll(BackendServicesBaseLive, PlatformLive);
-
-/**
- * Core App Services
- */
-const RelayWindowServiceLive = RelayWindowLive.pipe(Layer.provide(PlatformLive));
-
-/**
- * Core Services Layer
- */
-const CoreServicesLive = Layer.mergeAll(
-  BackendBaseLive,
-  RelayWindowServiceLive,
-  LoggerLive.pipe(Layer.provide(PlatformLive)),
-  AtomicFileLive,
-  GitServiceLive,
-  RegistryStoreLive.pipe(Layer.provide(PlatformLive)),
-  BackendKernelLive.pipe(Layer.provide(BackendBaseLive)),
-  StorageLive.pipe(Layer.provide(BackendServicesBaseLive)),
-  RunEventSinkLive
-);
-
-/**
- * App Layer
- */
-const AppLayerLive = RelayRpcHandlersLive.pipe(Layer.provideMerge(CoreServicesLive));
-
-/**
- * App Runtime
- */
-const appRuntime = ManagedRuntime.make(AppLayerLive);
+import { Cause, Effect } from "effect";
+import { RelayWindow } from "./app/RelayWindow";
+import { appRuntime, runAppEffect } from "./app/AppRuntime";
+import { HttpRestApi } from "./http";
+import { ElectronApp } from "./platform";
+import { getLogPath } from "./runtime/Logging";
+import { JobSupervisor } from "./services/kernel";
 
 const relayApp = Effect.scoped(Effect.gen(function* () {
   const electronApp = yield* ElectronApp;
@@ -59,11 +19,20 @@ const relayApp = Effect.scoped(Effect.gen(function* () {
   const logPath = yield* getLogPath;
   yield* Effect.logInfo("Relay starting").pipe(Effect.annotateLogs({ scope: "app", logPath }));
 
-  // Install IPC transport
-  yield* installRelayIpcTransport();
+  const httpApi = yield* Effect.acquireRelease(
+    Effect.promise(() =>
+      HttpRestApi.start({
+        runEffect: runAppEffect
+      })
+    ),
+    (api) => Effect.promise(() => api.close())
+  );
 
   // Create main window
-  yield* relayWindow.createMain();
+  yield* relayWindow.createMain({
+    apiBaseUrl: httpApi.baseUrl,
+    apiToken: httpApi.token
+  });
 
   // Recover from registry
   const recovered = yield* supervisor.recoverFromRegistry();

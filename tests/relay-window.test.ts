@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Effect } from "effect";
-import type { RendererRunEvent } from "../src/shared/schemas";
-import { makeRelayWindowService } from "../src/services/window/RelayWindow";
+import { makeRelayWindowService } from "../src/app/RelayWindow";
 import type { ElectronMainWindowOptions, ElectronWindowService } from "../src/platform";
 
 test("RelayWindow revealOrCreateMain creates when absent and focuses when present", async () => {
@@ -22,7 +21,6 @@ test("RelayWindow revealOrCreateMain creates when absent and focuses when presen
       Effect.sync(() => {
         focused += 1;
       }),
-    sendRunEvent: () => Effect.void,
     destroyAll: () =>
       Effect.sync(() => {
         open = false;
@@ -35,34 +33,10 @@ test("RelayWindow revealOrCreateMain creates when absent and focuses when presen
   assert.equal(created, 1);
   assert.equal(focused, 0);
   assert.equal(typeof lastOptions?.onRendererError, "function");
+  assert.equal(lastOptions?.apiBaseUrl, "http://127.0.0.1:17654");
+  assert.equal(lastOptions?.apiToken, "relay-dev");
 
   await Effect.runPromise(relayWindow.revealOrCreateMain());
   assert.equal(created, 1);
   assert.equal(focused, 1);
-});
-
-test("RelayWindow sends run events through the desktop window target", async () => {
-  const events: RendererRunEvent[] = [];
-  const electronWindow: ElectronWindowService = {
-    createMainWindow: () => Effect.void,
-    hasOpenWindows: () => Effect.succeed(true),
-    focusMainWindow: () => Effect.void,
-    sendRunEvent: (event) =>
-      Effect.sync(() => {
-        events.push(event);
-      }),
-    destroyAll: () => Effect.void
-  };
-
-  const relayWindow = makeRelayWindowService(electronWindow);
-  const event = {
-    projectPath: "/tmp/project",
-    ticketId: "T-1",
-    runId: "run-1",
-    type: "run.started",
-    timestamp: "2026-05-11T00:00:00.000Z"
-  } as RendererRunEvent;
-
-  await Effect.runPromise(relayWindow.sendRunEvent(event));
-  assert.deepEqual(events, [event]);
 });

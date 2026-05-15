@@ -20,13 +20,13 @@ import type {
   TicketSummary
 } from "@shared/schemas";
 import {
-  BackendConfig,
   BackendServicesBaseLive,
   runBackendEffect,
   type BackendIoServices,
   type BackendServices,
   type BackendServicesBase
 } from "../runtime";
+import { BackendConfig } from "../config/AppConfig";
 import * as FileSystemStorage from "./filesystem";
 import type { ClarificationQuestionCreateOptions, StatusTransitionOptions } from "./filesystem";
 import { ArtifactStore, FileSystemArtifactStoreLive, type ArtifactStoreService } from "./stores/ArtifactStore";

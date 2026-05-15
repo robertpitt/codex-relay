@@ -46,7 +46,7 @@ Relay v1 is single-user, local-first, project-folder based, and desktop-only.
 - Stream Codex progress into the ticket detail view.
 - Surface approval prompts for command execution, file changes, network access, and other Codex-controlled actions when the SDK or app-server path exposes them.
 - Warn clearly when a project is not a Git repository, Codex is unavailable, or Codex authentication is missing.
-- Keep the architecture compatible with future direct Codex app-server JSON-RPC integration.
+- Keep the architecture compatible with future direct Codex app-server integration.
 
 ### 2.2 Non-Goals
 
@@ -129,7 +129,7 @@ Relay v1 MUST use:
 - React for the renderer UI.
 - TypeScript across main, preload, renderer, and shared modules.
 - `@openai/codex-sdk` for Codex integration in v1.
-- A typed IPC layer between renderer and main process.
+- A typed loopback HTTP REST API between renderer and main process.
 - Project-local `.relay/` files as the source of truth for board state.
 
 Recommended implementation packages:
@@ -152,7 +152,7 @@ The Electron main process MUST own:
 - Codex SDK lifecycle.
 - Codex environment construction.
 - Run log writes.
-- Typed IPC handlers.
+- Typed HTTP resource handlers.
 - Security checks that cannot be trusted to renderer code.
 
 The React renderer MUST own:
@@ -166,13 +166,13 @@ The React renderer MUST own:
 - User-facing error states.
 - Drag and drop interactions.
 
-The preload script MUST expose a minimal typed API. It MUST NOT expose unrestricted Node.js or filesystem primitives to the renderer.
+The preload script MUST NOT expose unrestricted Node.js or filesystem primitives to the renderer.
 
 ### 4.3 Codex Integration Boundary
 
 Relay MUST define a `CodexClient` abstraction. v1 MUST implement it with `@openai/codex-sdk`.
 
-The abstraction exists so Relay can later replace or augment the SDK path with direct Codex app-server JSON-RPC for richer approval and event handling.
+The abstraction exists so Relay can later replace or augment the SDK path with a direct Codex app-server adapter for richer approval and event handling.
 
 Minimal interface:
 
@@ -240,7 +240,7 @@ Relay MUST treat these Codex SDK facts as implementation constraints:
 
 ### 4.5 Future App-Server Compatibility
 
-The Codex app-server protocol uses JSON-RPC-style messages for actions such as `thread/start`, `thread/resume`, and `turn/start`. It also supports notifications for thread, turn, item, command, file-change, and approval activity.
+The Codex app-server protocol supports actions such as `thread/start`, `thread/resume`, and `turn/start`. It also supports notifications for thread, turn, item, command, file-change, and approval activity.
 
 Relay v1 MAY use only `@openai/codex-sdk`, but the spec requires these compatibility rules:
 
@@ -821,11 +821,11 @@ If the run fails:
 - Relay MUST show a retry/resume option.
 - Relay MUST keep the run log.
 
-## 9. IPC API
+## 9. HTTP API
 
-Relay MUST define typed IPC contracts shared between main, preload, and renderer.
+Relay MUST define typed HTTP contracts shared between main and renderer.
 
-### 9.1 Project IPC
+### 9.1 Project API
 
 ```ts
 type ProjectSummary = {
@@ -847,17 +847,17 @@ type AddProjectResult = {
 };
 ```
 
-Required channels:
+Required endpoints:
 
-| Channel | Direction | Description |
-| --- | --- | --- |
-| `projects:list` | renderer -> main | Return registered projects. |
-| `projects:addFolder` | renderer -> main | Open folder picker, initialize or load project, add to registry. |
-| `projects:removeFromSidebar` | renderer -> main | Remove path from app registry only. |
-| `projects:read` | renderer -> main | Read one project summary and health. |
-| `projects:revealInFinder` | renderer -> main | Reveal project folder in OS file manager. |
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/projects` | Return registered projects. |
+| `POST /api/projects/select-folder` | Open folder picker, initialize or load project, add to registry. |
+| `DELETE /api/projects` | Remove path from app registry only. |
+| `GET /api/projects/summary` | Read one project summary and health. |
+| `POST /api/projects/reveal` | Reveal project folder in OS file manager. |
 
-### 9.2 Board IPC
+### 9.2 Board API
 
 ```ts
 type BoardSnapshot = {
@@ -868,43 +868,41 @@ type BoardSnapshot = {
 };
 ```
 
-Required channels:
+Required endpoints:
 
-| Channel | Direction | Description |
-| --- | --- | --- |
-| `board:read` | renderer -> main | Read project columns and ticket summaries. |
-| `board:updateColumns` | renderer -> main | Rename, reorder, add, or remove columns. |
-| `board:repair` | renderer -> main | Attempt safe repair for known `.relay` issues. |
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/board` | Read project columns and ticket summaries. |
 
-### 9.3 Ticket IPC
+### 9.3 Ticket API
 
-Required channels:
+Required endpoints:
 
-| Channel | Direction | Description |
-| --- | --- | --- |
-| `ticket:createDraft` | renderer -> main | Use Codex structured output to draft a ticket. |
-| `ticket:createManual` | renderer -> main | Create an empty or user-authored ticket. |
-| `ticket:read` | renderer -> main | Read one ticket markdown file. |
-| `ticket:save` | renderer -> main | Save metadata and markdown content. |
-| `ticket:move` | renderer -> main | Move ticket between or within columns. |
-| `ticket:delete` | renderer -> main | Move ticket to trash with confirmation. |
-| `ticket:duplicate` | renderer -> main | Duplicate ticket content into a new ticket. |
-| `ticket:revealFile` | renderer -> main | Reveal ticket markdown file in OS file manager. |
+| Endpoint | Description |
+| --- | --- |
+| `POST /api/tickets/draft` | Use Codex structured output to draft a ticket. |
+| `POST /api/tickets/manual` | Create an empty or user-authored ticket. |
+| `GET /api/tickets/item` | Read one ticket markdown file. |
+| `PUT /api/tickets/item` | Save metadata and markdown content. |
+| `POST /api/tickets/move` | Move ticket between or within columns. |
+| `DELETE /api/tickets/item` | Move ticket to trash with confirmation. |
+| `POST /api/tickets/duplicate` | Duplicate ticket content into a new ticket. |
+| `POST /api/tickets/reveal` | Reveal ticket markdown file in OS file manager. |
 
-### 9.4 Codex IPC
+### 9.4 Codex API
 
-Required channels:
+Required endpoints:
 
-| Channel | Direction | Description |
-| --- | --- | --- |
-| `codex:status` | renderer -> main | Check SDK, CLI, auth, and model availability. |
-| `codex:startRun` | renderer -> main | Start execution for a ticket. |
-| `codex:resumeRun` | renderer -> main | Resume execution for a ticket thread. |
-| `codex:cancelRun` | renderer -> main | Cancel active run. |
-| `codex:approveAction` | renderer -> main | Resolve pending approval request. |
-| `codex:runEvent` | main -> renderer | Push normalized Codex run event. |
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/codex/status` | Check SDK, CLI, auth, and model availability. |
+| `POST /api/codex/runs` | Start execution for a ticket. |
+| `POST /api/codex/runs/resume` | Resume execution for a ticket thread. |
+| `POST /api/codex/runs/cancel` | Cancel active run. |
+| `POST /api/codex/approvals` | Resolve pending approval request. |
+| `GET /api/events` | Subscribe to normalized Codex run events over server-sent events. |
 
-The renderer MUST subscribe to `codex:runEvent` by project path, ticket ID, and run ID.
+The renderer MUST subscribe to `/api/events` and filter events by project path, ticket ID, and run ID.
 
 ## 10. UI Requirements
 
@@ -1020,8 +1018,8 @@ Electron security requirements:
 
 - `contextIsolation` MUST be enabled.
 - `nodeIntegration` MUST be disabled in renderer windows.
-- Preload MUST expose only typed Relay APIs.
-- IPC handlers MUST validate all renderer inputs.
+- Main MUST expose only the loopback REST API to the renderer.
+- HTTP handlers MUST validate all renderer inputs.
 - Project paths MUST be normalized and checked before filesystem operations.
 - File operations MUST be limited to registered project paths and app registry paths.
 

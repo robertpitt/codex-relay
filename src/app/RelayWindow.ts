@@ -1,28 +1,38 @@
 import { Context, Effect, Layer } from "effect";
-import type { RendererRunEvent } from "@shared/schemas";
-import { ElectronWindow, type ElectronMainWindowOptions, type ElectronWindowService } from "../../platform";
-import { logError } from "../logger";
+import { ElectronWindow, type ElectronMainWindowOptions, type ElectronWindowService } from "../platform";
+import { logError } from "../runtime/Logging";
+
+export type RelayWindowCreateOptions = {
+  readonly apiBaseUrl: string;
+  readonly apiToken: string;
+};
 
 export type RelayWindowService = {
-  readonly createMain: () => Effect.Effect<void, unknown>;
+  readonly createMain: (options?: RelayWindowCreateOptions) => Effect.Effect<void, unknown>;
   readonly ensureMain: () => Effect.Effect<void, unknown>;
   readonly revealOrCreateMain: () => Effect.Effect<void, unknown>;
   readonly activate: () => Effect.Effect<void, unknown>;
-  readonly sendRunEvent: (event: RendererRunEvent) => Effect.Effect<void>;
   readonly destroyAll: () => Effect.Effect<void>;
 };
 
 export const RelayWindow = Context.Service<RelayWindowService>("relay/RelayWindow");
 
 export const makeRelayWindowService = (electronWindow: ElectronWindowService): RelayWindowService => {
+  let lastCreateOptions: RelayWindowCreateOptions | null = null;
+
   const mainWindowOptions = (): ElectronMainWindowOptions => ({
     onRendererError: (scope, error) => {
       void logError(scope, "renderer failure", error);
-    }
+    },
+    apiBaseUrl: lastCreateOptions?.apiBaseUrl ?? "http://127.0.0.1:17654",
+    apiToken: lastCreateOptions?.apiToken ?? "relay-dev"
   });
 
   const service: RelayWindowService = {
-    createMain: () => electronWindow.createMainWindow(mainWindowOptions()),
+    createMain: (options) => {
+      if (options) lastCreateOptions = options;
+      return electronWindow.createMainWindow(mainWindowOptions());
+    },
     ensureMain: () =>
       Effect.gen(function*() {
         if (yield* electronWindow.hasOpenWindows()) return;
@@ -37,7 +47,6 @@ export const makeRelayWindowService = (electronWindow: ElectronWindowService): R
         yield* service.createMain();
       }),
     activate: () => service.revealOrCreateMain(),
-    sendRunEvent: (event) => electronWindow.sendRunEvent(event),
     destroyAll: () => electronWindow.destroyAll()
   };
 

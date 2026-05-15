@@ -9,8 +9,6 @@ const aliases = {
   "@http/": resolve(__dirname, "src/http") + "/",
   "@io": resolve(__dirname, "src/io"),
   "@io/": resolve(__dirname, "src/io") + "/",
-  "@ipc": resolve(__dirname, "src/ipc"),
-  "@ipc/": resolve(__dirname, "src/ipc") + "/",
   "@platform": resolve(__dirname, "src/platform"),
   "@platform/": resolve(__dirname, "src/platform") + "/",
   "@runtime": resolve(__dirname, "src/runtime"),

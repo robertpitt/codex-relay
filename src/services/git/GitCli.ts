@@ -5,7 +5,7 @@
  */
 import { Context, Effect, Layer, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { BackendConfig } from "../../runtime";
+import { BackendConfig } from "../../config/AppConfig";
 import { gitCommandError, type GitCommandError, type GitUnavailable } from "./GitError";
 
 export type GitCommandResult = {

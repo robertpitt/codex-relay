@@ -14,8 +14,9 @@
     "baseUrl": ".",
     "paths": {
       "@domain/*": ["src/domain/*"],
+      "@app/*": ["src/app/*"],
+      "@config/*": ["src/config/*"],
       "@http/*": ["src/http/*"],
-      "@ipc/*": ["src/ipc/*"],
       "@platform/*": ["src/platform/*"],
       "@shared/*": ["src/shared/*"],
       "@runtime/*": ["src/runtime/*"],

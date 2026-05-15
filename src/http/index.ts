@@ -1,1 +1,2 @@
-export { startRelayHttpServer, type RelayHttpServerHandle, type RelayHttpServerOptions } from "./RelayHttpServer";
+export { HttpRestApi, startHttpRestApi, type HttpRestApiHandle, type HttpRestApiOptions } from "./HttpRestApi";
+export { HttpRunEventSinkLive, publishRelayHttpRunEvent } from "./RelayHttpEvents";

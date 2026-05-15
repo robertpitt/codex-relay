@@ -53,8 +53,8 @@ Relay is designed for one developer working across local project folders. Removi
 
 Relay has three runtime pieces:
 
-- `src/main/`: Electron main process for IPC handlers, filesystem access, project initialization, app registry storage, logging, run events, and Codex SDK lifecycle.
-- `src/preload/`: typed `window.relay` bridge exposed to the renderer through Electron IPC.
+- `src/http/`: loopback REST API mounted by the Electron main process for renderer/main communication, including Effect middleware under `src/http/middleware/`.
+- `src/main.app.ts` and backend services: Electron lifecycle, filesystem access, project initialization, app registry storage, logging, run events, and Codex SDK lifecycle.
 - `src/renderer/`: React UI for the project sidebar, board, ticket editor, draft flow, run console, and user-facing errors.
 
 ## Keyboard Shortcuts
@@ -143,23 +143,21 @@ Do not commit or store API keys, Codex auth tokens, bearer tokens, or other secr
   SPEC.md                    Product and architecture specification.
   electron.vite.config.ts    Electron Vite build configuration.
   package.json               npm scripts and dependencies.
-  tests/                     Node test suite for backend, IPC, renderer helpers, and UI flows.
+  tests/                     Node test suite for backend, HTTP contracts, renderer helpers, and UI flows.
   src/
-    main/                    Electron main process, IPC, window lifecycle, and services.
-      ipc/                   Typed IPC definitions, schemas, registration, and method handlers.
-      services/
-        storage/             .relay project config, ticket Markdown, clarification, audit, and trash helpers.
-        registry/            App-level project registry persisted under Electron userData.
-        codex/               Codex drafting, ticket update, execution, status, and bounded research flows.
-        run-events/          JSONL run log writing and renderer event fan-out.
-        git/                 Cached project Git metadata.
-        io/                  File, path, process, HTTP, and socket boundaries for backend code.
-        logger/              App log helpers.
-        runtime/             Effect runtime and app layer composition.
-      window/                Main window orchestration and run event delivery.
-    preload/                 Typed window.relay bridge exposed to the renderer.
+    http/                    Main-process REST API, resources, auth, CORS, and run-event SSE.
+    services/
+      storage/               .relay project config, ticket Markdown, clarification, audit, and trash helpers.
+      registry/              App-level project registry persisted under Electron userData.
+      codex/                 Codex drafting, ticket update, execution, status, and bounded research flows.
+      run-events/            JSONL run log writing and renderer event fan-out.
+      git/                   Cached project Git metadata.
+      logger/                App log helpers.
+    runtime/                 Effect runtime and app layer composition.
+    platform/                Electron, filesystem, path, shell, process, and fetch adapters.
+    preload.app.ts           Minimal Electron preload entrypoint.
     renderer/                React app, styles, components, and renderer helper libraries.
-    shared/                  Shared runtime types and IPC contract.
+    shared/                  Shared schemas and HTTP contract.
 ```
 
 Treat generated or local-only directories such as `node_modules/`, `out/`, and project `.relay/runs/` logs as output, not source.
@@ -171,14 +169,14 @@ Before changing behavior, read `SPEC.md` and the relevant service or renderer co
 Keep process boundaries intact:
 
 - Filesystem access, dialogs, logging, `.relay` initialization, and Codex work belong in the Electron main process.
-- Renderer code should call the typed API exposed by `src/preload/index.ts`.
-- Shared request and response shapes should live in `src/shared/types.ts`; shared IPC channel signatures should live in `src/shared/ipc.ts`.
+- Renderer code should call the typed REST client in `src/renderer/src/lib/relayApi.ts`.
+- Shared request and response shapes should live under `src/shared/schemas/`; shared route contracts should live under `src/shared/http/`.
 
 Change checklist:
 
-- Ticket files or run state: verify storage in `src/main/services/storage/` and validation schemas in `src/main/services/schemas.ts`.
-- IPC behavior: update `src/shared/ipc.ts`, the matching method module under `src/main/ipc/methods/`, and `src/preload/index.ts`.
-- Codex flows: start in `src/main/services/codex/index.ts`. Drafting uses `CreateDraftInput`, `TicketDraft`, `TicketCreateInput`, and `draftToCreateInput`; ticket update uses `AgentTicketUpdateInput` and `AgentTicketUpdate`; execution uses `StartRunInput`, ticket run state, clarification records, and run events.
+- Ticket files or run state: verify storage in `src/storage/` and validation schemas in `src/shared/schemas/`.
+- HTTP behavior: update the shared contract under `src/shared/http/`, the matching resource under `src/http/resources/`, any request/response middleware under `src/http/middleware/`, and the renderer client in `src/renderer/src/lib/relayApi.ts`.
+- Codex flows: start in `src/services/codex/index.ts`. Drafting uses `CreateDraftInput`, `TicketDraft`, `TicketCreateInput`, and `draftToCreateInput`; ticket update uses `AgentTicketUpdateInput` and `AgentTicketUpdate`; execution uses `StartRunInput`, ticket run state, clarification records, and run events.
 
 For coding agents working from Relay tickets:
 

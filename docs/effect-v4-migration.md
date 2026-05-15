@@ -1,24 +1,17 @@
-# Backend Effect v4 Migration Notes
+# Effect v4 Migration Notes
 
-Relay now targets `effect@4.0.0-beta.65`, the Effect v4 package published from the effect-smol repository.
+Relay uses Effect v4 for backend services, workflow composition, logging, and durable kernel state. The renderer-facing boundary is the local REST API, so Effect types must not appear in browser contracts.
 
-The first migration pass keeps existing IPC-facing Promise APIs intact and moves backend internals onto a small Effect runtime adapter in `src/main/services/effectRuntime.ts`. The adapter provides:
+## Current Pattern
 
-- `runBackendEffect` for running backend Effect programs at existing Promise boundaries.
-- `BackendClock` and `BackendRuntimeLive` as the initial dependency-injection layer.
-- `fromPromise` for preserving existing rejected error values while routing async work through Effect v4.
+- Shared data schemas live in `src/shared/schemas`.
+- Shared route contracts live in `src/shared/http`.
+- Backend route handlers decode requests, run Effect workflows through the app runtime, and encode responses.
+- Renderer code uses `fetch` and `EventSource` through the typed `relayApi` client.
 
-Codex backend entry points keep their public Promise signatures, but test and production dependencies are adapted into Effect layers at the boundary:
+## Migration Guidance
 
-- `CodexRunDependencies` is provided through `relay/CodexRunDependencies` before run orchestration starts.
-- `TicketUpdateDependencies` is provided through `relay/TicketUpdateDependencies`.
-- `TicketDraftDependencies` is provided through `relay/TicketDraftDependencies`.
-
-This keeps existing test doubles source-compatible while making the backend dependency boundary explicit.
-
-Compatibility notes:
-
-- Shared renderer contracts, run statuses, audit event shapes, run log JSONL shape, and `backend_failure` draft error semantics are unchanged.
-- Renderer React `useEffect` code is intentionally untouched.
-- Public backend function signatures remain source-compatible while their implementation uses Effect at the runtime boundary.
-- Codex run cancellation still uses the SDK `AbortSignal`; active run cleanup is verified after abort and stream-start failure paths.
+- Prefer `Context.Service` and `Layer` for backend dependencies.
+- Keep Promise conversion at HTTP, SDK, CLI/test, and browser boundaries.
+- Avoid moving platform APIs into workflows directly; add platform services when needed.
+- Add route tests when changing renderer/main behavior.

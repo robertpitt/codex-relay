@@ -33,13 +33,9 @@ import {
   KernelRunRegistryLive,
   RELAY_EXTERNAL_JOB_WORKFLOW_NAME
 } from "../src/services/kernel";
-import {
-  BackendClock,
-  BackendConfig,
-  BackendConfigDefaults,
-  loadBackendConfig,
-  runBackendEffect
-} from "../src/runtime";
+import { BackendClock } from "../src/platform";
+import { BackendConfig, BackendConfigDefaults, loadBackendConfig } from "../src/config/AppConfig";
+import { runBackendEffect } from "../src/runtime";
 import {
   answerClarificationQuestion,
   createClarificationQuestions,

@@ -2,7 +2,7 @@ import { Effect, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ProjectEditorId, ProjectOpenInEditorInput, ProjectOpenInEditorResult } from "@shared/schemas";
 import { ElectronDialog, ElectronShell } from "../platform";
-import { BackendClock } from "../runtime";
+import { BackendClock } from "../platform";
 import { Git } from "../services/git";
 import { RegistryStore } from "../services/registry";
 import { Storage } from "../storage";
@@ -95,6 +95,27 @@ export const addProjectFolder = () =>
         detail: projectPath
       });
       if (confirm.response !== 0) return null;
+      yield* storage.initializeProject(projectPath);
+      initialized = true;
+    }
+
+    yield* RegistryStore.use((store) => store.upsertProjectPath(projectPath));
+    return {
+      project: yield* storage.getProjectSummary(projectPath, clock.nowIso()),
+      initialized
+    };
+  });
+
+export const addProjectPath = (input: { readonly projectPath: string; readonly initializeIfMissing?: boolean }) =>
+  Effect.gen(function*() {
+    const storage = yield* Storage;
+    const clock = yield* BackendClock;
+    const path = yield* Path.Path;
+    const projectPath = path.resolve(input.projectPath);
+    const summary = yield* storage.getProjectSummary(projectPath);
+    let initialized = false;
+
+    if (!summary.relayInitialized && input.initializeIfMissing === true) {
       yield* storage.initializeProject(projectPath);
       initialized = true;
     }

@@ -8,7 +8,7 @@ import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { GitMetadata } from "@shared/schemas";
 import { ProjectPathNotDirectory, ProjectPathUnavailable, errorMessage } from "../../domain/errors";
-import { BackendConfig } from "../../runtime";
+import { BackendConfig } from "../../config/AppConfig";
 import { GitCli } from "./GitCli";
 import { GitMetadataCache } from "./GitMetadataCache";
 import { makeGitRepository, verifyGitRepository, type GitRepository } from "./GitRepository";

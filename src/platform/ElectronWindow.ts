@@ -1,11 +1,12 @@
 import { Context, Effect, Layer, Path, Scope } from "effect";
-import type { RendererRunEvent } from "@shared/schemas";
 import { electronError, type ElectronError } from "./Errors";
 import { ElectronApp } from "./ElectronApp";
 import { BrowserWindows, secureWebPreferences, type ElectronBrowserWindow } from "./BrowserWindows";
 
 export type ElectronMainWindowOptions = {
   readonly onRendererError?: ((scope: string, error: Error) => void | Promise<void>) | undefined;
+  readonly apiBaseUrl: string;
+  readonly apiToken: string;
 };
 
 type ElectronMainWindowPaths = {
@@ -18,7 +19,6 @@ export type ElectronWindowService = {
   readonly createMainWindow: (options: ElectronMainWindowOptions) => Effect.Effect<void, ElectronError>;
   readonly hasOpenWindows: () => Effect.Effect<boolean>;
   readonly focusMainWindow: () => Effect.Effect<void>;
-  readonly sendRunEvent: (event: RendererRunEvent) => Effect.Effect<void>;
   readonly destroyAll: () => Effect.Effect<void>;
 };
 
@@ -50,7 +50,7 @@ const createWindow = (
   browserWindows: BrowserWindows["Service"],
   scope: Scope.Scope,
   { preloadPath, rendererHtmlPath, rendererUrl }: ElectronMainWindowPaths,
-  { onRendererError }: ElectronMainWindowOptions
+  { onRendererError, apiBaseUrl, apiToken }: ElectronMainWindowOptions
 ): Effect.Effect<void, ElectronError> =>
   Effect.gen(function*() {
     const window = yield* browserWindows.make({
@@ -83,7 +83,20 @@ const createWindow = (
     });
 
     yield* Effect.tryPromise({
-      try: () => rendererUrl ? window.loadURL(rendererUrl) : window.loadFile(rendererHtmlPath),
+      try: () => {
+        if (rendererUrl) {
+          const url = new URL(rendererUrl);
+          url.searchParams.set("relayApiBaseUrl", apiBaseUrl);
+          url.searchParams.set("relayApiToken", apiToken);
+          return window.loadURL(url.toString());
+        }
+        return window.loadFile(rendererHtmlPath, {
+          query: {
+            relayApiBaseUrl: apiBaseUrl,
+            relayApiToken: apiToken
+          }
+        });
+      },
       catch: (cause) => electronError("BrowserWindow.load", cause)
     }).pipe(Effect.catch((error: ElectronError) => Effect.andThen(destroyWindow(window), Effect.fail(error))));
 
@@ -107,10 +120,6 @@ export const ElectronWindowLive = Layer.effect(
           if (!mainWindow) return;
           if (mainWindow.isMinimized()) mainWindow.restore();
           mainWindow.focus();
-        }),
-      sendRunEvent: (event: RendererRunEvent) =>
-        Effect.sync(() => {
-          mainWindow?.webContents.send("codex:runEvent", event);
         }),
       destroyAll: () =>
         Effect.andThen(browserWindows.destroyAll, Effect.sync(() => {

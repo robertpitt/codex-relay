@@ -5,18 +5,19 @@ import path from "node:path";
 
 const projectRoot = process.cwd();
 const sourceEntries = [
+  path.join(projectRoot, "src", "app"),
+  path.join(projectRoot, "src", "config"),
   path.join(projectRoot, "src", "domain"),
   path.join(projectRoot, "src", "platform"),
   path.join(projectRoot, "src", "runtime"),
   path.join(projectRoot, "src", "services"),
   path.join(projectRoot, "src", "workflows"),
-  path.join(projectRoot, "src", "ipc"),
   path.join(projectRoot, "src", "http"),
   path.join(projectRoot, "src", "storage"),
   path.join(projectRoot, "src", "main.app.ts"),
   path.join(projectRoot, "src", "preload.app.ts")
 ];
-const preloadAllowedImports = new Set(["electron", "@platform/Protocol", "@shared/schemas"]);
+const preloadAllowedImports = new Set(["electron"]);
 const unstableWorkflowImportPattern =
   /(?:from\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s+["']effect\/unstable\/workflow(?:\/[^"']*)?["']|import\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\)|require\s*\(\s*["']effect\/unstable\/workflow(?:\/[^"']*)?["']\s*\))/;
 const codexLifecycleMapNames = [
@@ -69,8 +70,7 @@ test("backend Node, Electron, and unstable Workflow imports stay behind approved
         "src/platform/BrowserWindows.ts",
         "src/platform/ElectronApp.ts",
         "src/platform/ElectronDialog.ts",
-        "src/platform/ElectronShell.ts",
-        "src/platform/IpcMainRouter.ts"
+        "src/platform/ElectronShell.ts"
       ].includes(relativePath) || relativePath === "src/preload.app.ts";
 
     if (!rawNodeIoBoundary && /from\s+["'](?:node:fs|node:fs\/promises|fs\/promises|node:path|node:child_process|node:net|node:tls|net|tls)["']/.test(content)) {
@@ -105,6 +105,32 @@ test("backend Node, Electron, and unstable Workflow imports stay behind approved
           violations.push(`${relativePath}: Codex lifecycle map ${name} must live in KernelRunRegistry`);
         }
       }
+    }
+  }
+
+  assert.deepEqual(violations, []);
+});
+
+test("production source does not reintroduce removed renderer/main transports", async () => {
+  const files = (await Promise.all(sourceEntries.map(sourceFiles))).flat();
+  const violations: string[] = [];
+  const removedTransport = "r" + "pc";
+  const removedElectronBridge = "i" + "pc";
+  const forbiddenPatterns = [
+    new RegExp(`effect\\/unstable\\/${removedTransport}`),
+    new RegExp(`@shared\\/${removedTransport}`),
+    new RegExp(`\\brelayR${removedTransport.slice(1)}\\b`),
+    new RegExp(`\\bRelayR${removedTransport.slice(1)}\\b`),
+    new RegExp(`\\bI${removedElectronBridge.slice(1)}MainRouter\\b`),
+    new RegExp(`\\bRelayI${removedElectronBridge.slice(1)}\\b`),
+    new RegExp(`relay:${removedTransport}`)
+  ];
+
+  for (const file of files) {
+    const relativePath = relativeSourcePath(file);
+    const content = await readFile(file, "utf8");
+    if (forbiddenPatterns.some((pattern) => pattern.test(content))) {
+      violations.push(`${relativePath}: removed renderer/main transport reference`);
     }
   }
 

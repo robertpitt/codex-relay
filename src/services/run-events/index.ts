@@ -9,7 +9,6 @@ import {
   type RunUsageSummary
 } from "@shared/schemas";
 import { relayCodexEventSchema, runLogLineSchema } from "@shared/schemas";
-import { RelayWindow } from "../window/RelayWindow";
 import { type BackendServices, fromPromise, runBackendEffect } from "../../runtime";
 import { parseSchema } from "../schemas";
 import { makeFileSystemRunLog } from "../../storage";
@@ -25,7 +24,7 @@ export type RunEventSinkService = {
     runId: string,
     threadId: string,
     event: RelayCodexEvent
-  ) => Effect.Effect<void, unknown, BackendServices | Context.Service.Identifier<typeof RelayWindow>>;
+  ) => Effect.Effect<void, unknown, BackendServices>;
 };
 
 export const RunEventSink = Context.Service<RunEventSinkService>("relay/RunEventSink");
@@ -219,12 +218,8 @@ export const emitRunEventEffect = (
   runId: string,
   threadId: string,
   event: RelayCodexEvent
-): Effect.Effect<void, unknown, BackendServices | Context.Service.Identifier<typeof RelayWindow>> =>
-  Effect.gen(function*() {
-    yield* writeRunLogEffect(projectPath, ticketId, runId, threadId, event);
-    const relayWindow = yield* RelayWindow;
-    yield* relayWindow.sendRunEvent(rendererRunEventFromRelayEvent(projectPath, ticketId, runId, event));
-  });
+): Effect.Effect<void, unknown, BackendServices> =>
+  writeRunLogEffect(projectPath, ticketId, runId, threadId, event);
 
 export const RunEventSinkLive = Layer.succeed(RunEventSink)({
   emit: emitRunEventEffect

@@ -5,7 +5,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runBackendEffect } from "../src/runtime";
-import { formatRelayLogLine, logWithRelayAnnotations, relayLogger } from "../src/services/logger";
+import { formatRelayLogLine, logWithRelayAnnotations, relayLogger } from "../src/runtime/Logging";
 
 test("Relay log formatter preserves the existing line shape", () => {
   assert.equal(

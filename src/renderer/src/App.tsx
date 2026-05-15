@@ -89,7 +89,6 @@ import {
   useShortcutOverlay,
   type ShortcutDirection
 } from "./lib/keyboardShortcuts";
-import { hasRelayRpcTransport } from "./lib/relayRpc";
 import {
   invalidateRelayProjectData,
   invalidateRelayTicketData,
@@ -3431,15 +3430,6 @@ function TicketDetail({
 }
 
 export function App(): ReactElement {
-  if (!hasRelayRpcTransport()) {
-    return (
-      <main className="preload-error">
-        <h1>Relay preload did not load</h1>
-        <p>Restart the Electron app so the secure desktop RPC bridge can attach.</p>
-      </main>
-    );
-  }
-
   return (
     <KeyboardShortcutProvider>
       <RelayApp />

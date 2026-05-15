@@ -1,8 +1,8 @@
 import { Context, Effect, FileSystem, Layer, Logger, ManagedRuntime, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { BackendPlatformLive, ElectronApp, ElectronAppServiceLive } from "../platform";
-import { BackendClock, BackendClockLive } from "./BackendClock";
-import { BackendConfig, BackendConfigLive } from "./BackendConfig";
+import { BackendClock, BackendClockLive } from "../platform/Clock";
+import { BackendConfig, BackendConfigLive } from "../config/AppConfig";
 
 export type BackendServicesBase =
   | Context.Service.Identifier<typeof BackendClock>
@@ -44,4 +44,4 @@ export {
   BackendConfigSpec,
   loadBackendConfig,
   type BackendConfigService
-} from "./BackendConfig";
+} from "../config/AppConfig";

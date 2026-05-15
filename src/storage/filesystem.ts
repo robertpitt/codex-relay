@@ -42,7 +42,8 @@ import { imageAttachmentExtension, isSupportedImageAttachment } from "@shared/at
 import { uniqueTicketIds } from "@shared/blockers";
 import { clarificationStoreSchema, projectConfigSchema, ticketFrontMatterSchema } from "@shared/schemas";
 import { extractTicketChecklist } from "@shared/ticketMetadata";
-import { BackendClock, type BackendEffect, runBackendEffect } from "../runtime";
+import { BackendClock } from "../platform";
+import { type BackendEffect, runBackendEffect } from "../runtime";
 import { showElectronItemInFolder } from "../platform";
 import { isFileNotFoundError } from "../platform/PlatformError";
 import { parseSchema } from "../services/schemas";

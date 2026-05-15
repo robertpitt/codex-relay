@@ -1,5 +1,7 @@
 import type { ServerResponse } from "node:http";
+import { Effect, Layer } from "effect";
 import type { RendererRunEvent } from "@shared/schemas";
+import { RunEventSink, rendererRunEventFromRelayEvent, writeRunLogEffect } from "../services/run-events";
 
 const clients = new Set<ServerResponse>();
 
@@ -40,3 +42,11 @@ export const publishRelayHttpRunEvent = (event: RendererRunEvent): void => {
     writeSseEvent(client, "run-event", event);
   }
 };
+
+export const HttpRunEventSinkLive = Layer.succeed(RunEventSink)({
+  emit: (projectPath, ticketId, runId, threadId, event) =>
+    Effect.gen(function*() {
+      yield* writeRunLogEffect(projectPath, ticketId, runId, threadId, event);
+      publishRelayHttpRunEvent(rendererRunEventFromRelayEvent(projectPath, ticketId, runId, event));
+    })
+});

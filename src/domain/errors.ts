@@ -2,7 +2,7 @@
  * Relay-owned domain errors used by Effect-first backend services.
  *
  * These errors are intentionally internal to the main process. Renderer and
- * IPC contracts continue to receive the existing shared payloads.
+ * HTTP contracts continue to receive the existing shared payloads.
  */
 import { Data } from "effect";
 

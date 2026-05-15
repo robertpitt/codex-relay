@@ -7,5 +7,4 @@ export * from "./git";
 export * from "./primitives";
 export * from "./project";
 export * from "./registry";
-export * from "./rpc";
 export * from "./ticket";

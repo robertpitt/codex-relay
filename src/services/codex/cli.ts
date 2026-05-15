@@ -1,7 +1,8 @@
 import { Effect, Path, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ElectronApp } from "../../platform";
-import { BackendConfig, runBackendEffect } from "../../runtime";
+import { BackendConfig } from "../../config/AppConfig";
+import { runBackendEffect } from "../../runtime";
 
 export type CodexCliCandidateSource = "bundled" | "path";
 

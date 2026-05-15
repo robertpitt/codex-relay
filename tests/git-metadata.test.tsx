@@ -11,7 +11,8 @@ import {
   readGitMetadata,
   type GitCommandRunner
 } from "../src/services/git";
-import { BackendConfig, BackendConfigDefaults, runBackendEffect } from "../src/runtime";
+import { BackendConfig, BackendConfigDefaults } from "../src/config/AppConfig";
+import { runBackendEffect } from "../src/runtime";
 import { GitMetadataPill } from "../src/renderer/src/components/GitMetadata";
 import type { GitMetadata } from "../src/shared/schemas";
 

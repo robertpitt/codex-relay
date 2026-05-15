@@ -61,7 +61,7 @@ import {
   isRelaySchemaError,
   parseSchema
 } from "../schemas";
-import { logError, logInfo, logWarn } from "../logger";
+import { logError, logInfo, logWarn } from "../../runtime/Logging";
 import { ElectronApp } from "../../platform";
 import {
   markKernelRunStatus,

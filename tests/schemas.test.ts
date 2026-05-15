@@ -396,7 +396,7 @@ test("event schemas decode timestamps, preserve record payloads, and reject inva
   );
 });
 
-test("renderer run event schema preserves variant fields across RPC encoding", () => {
+test("renderer run event schema preserves variant fields across HTTP encoding", () => {
   const event = {
     type: "clarification.requested" as const,
     questions: [],

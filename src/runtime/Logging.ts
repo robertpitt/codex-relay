@@ -1,7 +1,7 @@
 import { Effect, Logger, Path } from "effect";
 import { CurrentLogAnnotations } from "effect/References";
-import { ElectronApp } from "../../platform";
-import { runBackendEffect } from "../../runtime";
+import { ElectronApp } from "../platform";
+import { runBackendEffect } from ".";
 
 export type RelayLogLevel = "info" | "warn" | "error";
 

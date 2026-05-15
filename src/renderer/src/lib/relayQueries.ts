@@ -23,7 +23,7 @@ import type {
   TicketRecord,
   TicketSaveInput
 } from "@shared/schemas";
-import { runRelayRpc, subscribeRelayRunEvents } from "./relayRpc";
+import { relayApi } from "./relayApi";
 
 type ProjectPath = string | null | undefined;
 type TicketId = string | null | undefined;
@@ -71,41 +71,41 @@ export const invalidateRelayTicketData = invalidateTicketData;
 export const useProjectsQuery = () =>
   useQuery({
     queryKey: relayQueryKeys.projects,
-    queryFn: () => runRelayRpc("projects:list", undefined)
+    queryFn: () => relayApi.projects.list()
   });
 
 export const useBoardQuery = (projectPath: ProjectPath) =>
   useQuery({
     queryKey: relayQueryKeys.board(projectPath),
-    queryFn: () => runRelayRpc("board:read", { projectPath: projectPath as string }),
+    queryFn: () => relayApi.board.read({ projectPath: projectPath as string }),
     enabled: Boolean(projectPath)
   });
 
 export const useTicketQuery = (projectPath: ProjectPath, ticketId: TicketId) =>
   useQuery({
     queryKey: relayQueryKeys.ticket(projectPath, ticketId),
-    queryFn: () => runRelayRpc("ticket:read", { projectPath: projectPath as string, ticketId: ticketId as string }),
+    queryFn: () => relayApi.tickets.read({ projectPath: projectPath as string, ticketId: ticketId as string }),
     enabled: Boolean(projectPath && ticketId)
   });
 
 export const useTicketClarificationsQuery = (projectPath: ProjectPath, ticketId: TicketId) =>
   useQuery({
     queryKey: relayQueryKeys.ticketClarifications(projectPath, ticketId),
-    queryFn: () => runRelayRpc("ticket:clarifications", { projectPath: projectPath as string, ticketId: ticketId as string }),
+    queryFn: () => relayApi.tickets.clarifications({ projectPath: projectPath as string, ticketId: ticketId as string }),
     enabled: Boolean(projectPath && ticketId)
   });
 
 export const useTicketReferencesQuery = (projectPath: ProjectPath) =>
   useQuery({
     queryKey: relayQueryKeys.ticketReferences(projectPath),
-    queryFn: () => runRelayRpc("ticket:references", { projectPath: projectPath as string }),
+    queryFn: () => relayApi.tickets.references({ projectPath: projectPath as string }),
     enabled: Boolean(projectPath)
   });
 
 export const useTicketSuggestionsQuery = (projectPath: ProjectPath, enabled: boolean) =>
   useQuery({
     queryKey: relayQueryKeys.ticketSuggestions(projectPath),
-    queryFn: () => runRelayRpc("ticket:generateSuggestions", { projectPath: projectPath as string }),
+    queryFn: () => relayApi.tickets.generateSuggestions({ projectPath: projectPath as string }),
     enabled: Boolean(projectPath) && enabled,
     staleTime: 0
   });
@@ -113,7 +113,7 @@ export const useTicketSuggestionsQuery = (projectPath: ProjectPath, enabled: boo
 export const useCodexStatusQuery = () =>
   useQuery({
     queryKey: relayQueryKeys.codexStatus,
-    queryFn: () => runRelayRpc("codex:status", undefined),
+    queryFn: () => relayApi.codex.status(),
     initialData: {
       sdkAvailable: false,
       cliAvailable: false,
@@ -126,7 +126,7 @@ export const useCodexStatusQuery = () =>
 export const useProjectGitMetadataQuery = (projectPath: ProjectPath, options?: GitMetadataOptions) =>
   useQuery({
     queryKey: relayQueryKeys.gitMetadata(projectPath),
-    queryFn: () => runRelayRpc("projects:gitMetadata", { projectPath: projectPath as string, options }),
+    queryFn: () => relayApi.projects.gitMetadata({ projectPath: projectPath as string, options }),
     enabled: Boolean(projectPath),
     retry: false
   });
@@ -135,7 +135,7 @@ export const useRunEventsQuery = (projectPath: ProjectPath, ticketId: TicketId, 
   useQuery({
     queryKey: relayQueryKeys.runEvents(projectPath, ticketId, runId),
     queryFn: () =>
-      runRelayRpc("codex:readRunEvents", {
+      relayApi.codex.readRunEvents({
         projectPath: projectPath as string,
         ticketId: ticketId as string,
         runId: runId as string
@@ -146,14 +146,14 @@ export const useRunEventsQuery = (projectPath: ProjectPath, ticketId: TicketId, 
 export const useRunSummaryQuery = (projectPath: ProjectPath, ticketId: TicketId) =>
   useQuery({
     queryKey: relayQueryKeys.runSummary(projectPath, ticketId),
-    queryFn: () => runRelayRpc("codex:readLatestRunSummary", { projectPath: projectPath as string, ticketId: ticketId as string }),
+    queryFn: () => relayApi.codex.readLatestRunSummary({ projectPath: projectPath as string, ticketId: ticketId as string }),
     enabled: Boolean(projectPath && ticketId)
   });
 
 export const useAddProjectMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => runRelayRpc("projects:addFolder", undefined),
+    mutationFn: () => relayApi.projects.addFolder(),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: relayQueryKeys.projects });
     }
@@ -163,16 +163,16 @@ export const useAddProjectMutation = () => {
 export const useRemoveProjectMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (projectPath: string) => runRelayRpc("projects:removeFromSidebar", { projectPath }),
+    mutationFn: (projectPath: string) => relayApi.projects.removeFromSidebar({ projectPath }),
     onSuccess: async (_projects, projectPath) => {
       await invalidateProjectData(queryClient, projectPath);
     }
   });
 };
 
-export const useRevealProjectMutation = () => useMutation({ mutationFn: (projectPath: string) => runRelayRpc("projects:revealInFinder", { projectPath }) });
+export const useRevealProjectMutation = () => useMutation({ mutationFn: (projectPath: string) => relayApi.projects.revealInFinder({ projectPath }) });
 
-export const relayOpenProjectInEditor = (input: ProjectOpenInEditorInput) => runRelayRpc("projects:openInEditor", input);
+export const relayOpenProjectInEditor = (input: ProjectOpenInEditorInput) => relayApi.projects.openInEditor(input);
 
 export const useOpenProjectInEditorMutation = () =>
   useMutation({ mutationFn: relayOpenProjectInEditor });
@@ -180,7 +180,7 @@ export const useOpenProjectInEditorMutation = () =>
 export const useRefreshCodexStatusMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => runRelayRpc("codex:status", undefined),
+    mutationFn: () => relayApi.codex.status(),
     onSuccess: (status) => queryClient.setQueryData(relayQueryKeys.codexStatus, status)
   });
 };
@@ -188,7 +188,7 @@ export const useRefreshCodexStatusMutation = () => {
 export const useMoveTicketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: TicketMoveInput) => runRelayRpc("ticket:move", input),
+    mutationFn: (input: TicketMoveInput) => relayApi.tickets.move(input),
     onSuccess: async (board, input) => {
       queryClient.setQueryData(relayQueryKeys.board(input.projectPath), board);
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
@@ -199,7 +199,7 @@ export const useMoveTicketMutation = () => {
 export const useCreateDraftMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: CreateDraftInput) => runRelayRpc("ticket:createDraft", input),
+    mutationFn: (input: CreateDraftInput) => relayApi.tickets.createDraft(input),
     onSuccess: async (_result, input) => {
       await invalidateProjectData(queryClient, input.projectPath);
     }
@@ -209,7 +209,7 @@ export const useCreateDraftMutation = () => {
 export const useRedraftTicketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: TicketRedraftInput) => runRelayRpc("ticket:redraft", input),
+    mutationFn: (input: TicketRedraftInput) => relayApi.tickets.redraft(input),
     onSuccess: async (_result, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
@@ -219,7 +219,7 @@ export const useRedraftTicketMutation = () => {
 export const useSaveTicketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: TicketSaveInput) => runRelayRpc("ticket:save", input),
+    mutationFn: (input: TicketSaveInput) => relayApi.tickets.save(input),
     onSuccess: async (ticket, input) => {
       queryClient.setQueryData(relayQueryKeys.ticket(input.projectPath, ticket.frontMatter.id), ticket);
       await invalidateTicketData(queryClient, input.projectPath, ticket.frontMatter.id);
@@ -228,21 +228,21 @@ export const useSaveTicketMutation = () => {
 };
 
 export const useSaveTicketAttachmentMutation = () =>
-  useMutation({ mutationFn: (input: TicketAttachmentSaveInput) => runRelayRpc("ticket:saveAttachment", input) });
+  useMutation({ mutationFn: (input: TicketAttachmentSaveInput) => relayApi.tickets.saveAttachment(input) });
 
 export const useStartTicketUpdateMutation = () =>
-  useMutation({ mutationFn: (input: AgentTicketUpdateInput) => runRelayRpc("ticket:startAgentUpdate", input) });
+  useMutation({ mutationFn: (input: AgentTicketUpdateInput) => relayApi.tickets.startAgentUpdate(input) });
 
 export const useCancelTicketUpdateMutation = () =>
-  useMutation({ mutationFn: (runId: string) => runRelayRpc("ticket:cancelAgentUpdate", { runId }) });
+  useMutation({ mutationFn: (runId: string) => relayApi.tickets.cancelAgentUpdate({ runId }) });
 
-export const usePreflightRunMutation = () => useMutation({ mutationFn: (input: StartRunInput) => runRelayRpc("codex:preflightRun", input) });
+export const usePreflightRunMutation = () => useMutation({ mutationFn: (input: StartRunInput) => relayApi.codex.preflightRun(input) });
 
 export const useStartRunMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ resume, input }: { resume: boolean; input: StartRunInput }) =>
-      resume ? runRelayRpc("codex:resumeRun", input) : runRelayRpc("codex:startRun", input),
+      resume ? relayApi.codex.resumeRun(input) : relayApi.codex.startRun(input),
     onSuccess: async (_result, { input }) => {
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
@@ -252,7 +252,7 @@ export const useStartRunMutation = () => {
 export const useCancelRunMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: CancelRunInput) => runRelayRpc("codex:cancelRun", input),
+    mutationFn: (input: CancelRunInput) => relayApi.codex.cancelRun(input),
     onSuccess: async (_result, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
@@ -262,7 +262,7 @@ export const useCancelRunMutation = () => {
 export const useAnswerClarificationMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: ClarificationAnswerInput) => runRelayRpc("ticket:answerClarification", input),
+    mutationFn: (input: ClarificationAnswerInput) => relayApi.tickets.answerClarification(input),
     onSuccess: async (_question, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
@@ -272,7 +272,7 @@ export const useAnswerClarificationMutation = () => {
 export const useDeleteTicketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectPath, ticketId }: { projectPath: string; ticketId: string }) => runRelayRpc("ticket:delete", { projectPath, ticketId }),
+    mutationFn: ({ projectPath, ticketId }: { projectPath: string; ticketId: string }) => relayApi.tickets.delete({ projectPath, ticketId }),
     onSuccess: async (_board, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
@@ -282,7 +282,7 @@ export const useDeleteTicketMutation = () => {
 export const useDuplicateTicketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectPath, ticketId }: { projectPath: string; ticketId: string }) => runRelayRpc("ticket:duplicate", { projectPath, ticketId }),
+    mutationFn: ({ projectPath, ticketId }: { projectPath: string; ticketId: string }) => relayApi.tickets.duplicate({ projectPath, ticketId }),
     onSuccess: async (_ticket, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.ticketId);
     }
@@ -292,7 +292,7 @@ export const useDuplicateTicketMutation = () => {
 export const useCreateSubticketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: EpicSubticketCreateInput) => runRelayRpc("ticket:createSubticket", input),
+    mutationFn: (input: EpicSubticketCreateInput) => relayApi.tickets.createSubticket(input),
     onSuccess: async (_ticket, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.epicId);
     }
@@ -302,7 +302,7 @@ export const useCreateSubticketMutation = () => {
 export const useLinkSubticketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: EpicSubticketLinkInput) => runRelayRpc("ticket:linkSubticket", input),
+    mutationFn: (input: EpicSubticketLinkInput) => relayApi.tickets.linkSubticket(input),
     onSuccess: async (_board, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.epicId);
     }
@@ -312,7 +312,7 @@ export const useLinkSubticketMutation = () => {
 export const useUnlinkSubticketMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: EpicSubticketUnlinkInput) => runRelayRpc("ticket:unlinkSubticket", input),
+    mutationFn: (input: EpicSubticketUnlinkInput) => relayApi.tickets.unlinkSubticket(input),
     onSuccess: async (_board, input) => {
       await invalidateTicketData(queryClient, input.projectPath, input.epicId);
     }
@@ -320,14 +320,14 @@ export const useUnlinkSubticketMutation = () => {
 };
 
 export const useRevealTicketFileMutation = () =>
-  useMutation({ mutationFn: ({ projectPath, ticketId }: { projectPath: string; ticketId: string }) => runRelayRpc("ticket:revealFile", { projectPath, ticketId }) });
+  useMutation({ mutationFn: ({ projectPath, ticketId }: { projectPath: string; ticketId: string }) => relayApi.tickets.revealFile({ projectPath, ticketId }) });
 
 export const useRepositoryChatMutation = () =>
   useMutation({
-    mutationFn: (input: RepositoryChatInput) => runRelayRpc("codex:sendRepositoryChatMessage", input)
+    mutationFn: (input: RepositoryChatInput) => relayApi.codex.sendRepositoryChatMessage(input)
   });
 
-export const useRunEventSubscription = (listener: (event: RendererRunEvent) => void): (() => void) => subscribeRelayRunEvents(listener);
+export const useRunEventSubscription = (listener: (event: RendererRunEvent) => void): (() => void) => relayApi.subscribeRunEvents(listener);
 
 export type BoardMoveInput = DragEndEvent;
 export type TicketMutationResult = TicketRecord | BoardSnapshot | void;
