@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "projectId": "prj_01kra319cjc75r48c64ahjc805",
+  "projectId": "prj_01krq2pqv96gdv3p7r1nezpttr",
   "name": "relay",
-  "createdAt": "2026-05-10T23:19:52.978Z",
-  "updatedAt": "2026-05-10T23:19:52.978Z",
+  "createdAt": "2026-05-16T00:24:14.953Z",
+  "updatedAt": "2026-05-16T00:24:14.953Z",
   "columns": [
     {
       "id": "todo",
@@ -12,30 +12,55 @@
       "terminal": false
     },
     {
+      "id": "ready",
+      "name": "Ready",
+      "position": 2000,
+      "terminal": false
+    },
+    {
       "id": "in_progress",
       "name": "In Progress",
-      "position": 2000,
+      "position": 3000,
       "terminal": false
     },
     {
       "id": "needs_clarification",
       "name": "Needs Clarification",
-      "position": 3000,
+      "position": 4000,
       "terminal": false
+    },
+    {
+      "id": "review",
+      "name": "Review",
+      "position": 5000,
+      "terminal": false
+    },
+    {
+      "id": "not_doing",
+      "name": "Not Doing",
+      "position": 6000,
+      "terminal": true
     },
     {
       "id": "completed",
       "name": "Completed",
-      "position": 5000,
+      "position": 7000,
       "terminal": true
     }
   ],
   "settings": {
     "defaultModel": null,
+    "defaultModelReasoningEffort": null,
+    "defaultTicketEffort": "medium",
     "defaultApprovalPolicy": "on-request",
     "defaultSandboxMode": "workspace-write",
+    "defaultAgentProvider": "codex",
     "allowNonGitCodexRuns": false,
     "ticketDraftingEnabled": true,
-    "codexExecutionEnabled": true
+    "codexExecutionEnabled": true,
+    "codexNetworkAccessEnabled": false,
+    "codexWebSearchMode": "disabled",
+    "codexAdditionalDirectories": [],
+    "agentConcurrency": 1
   }
 }
